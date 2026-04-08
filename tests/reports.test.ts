@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
 import { openDb, resolveDbPath, createSqliteReader } from "@/db";
+import { createReader } from "@/reader";
 import type { Reader } from "@/reader";
 import { renderSummary } from "@/reports/summary";
 import { renderToolDrillDown } from "@/reports/tool";
@@ -118,5 +119,33 @@ describe("Thinking report", () => {
     expect(parsed.report).toBe("thinking");
     expect(parsed.overview).toHaveProperty("estimated_thinking_tokens");
     expect(parsed.overview).toHaveProperty("turns_with_thinking");
+  });
+});
+
+describe("Reports via JSONL reader", () => {
+  let jsonlReader: Reader;
+  beforeAll(() => { jsonlReader = createReader({ source: "jsonl" }); });
+  afterAll(() => { jsonlReader.close(); });
+
+  it("summary renders without throwing via JSONL", () => {
+    expect(() => renderSummary(jsonlReader, opts)).not.toThrow();
+  });
+
+  it("summary JSON has byTool array via JSONL", () => {
+    const output = capture(() => renderSummary(jsonlReader, { ...opts, json: true }));
+    const parsed = JSON.parse(output);
+    expect(parsed.report).toBe("summary");
+    expect(Array.isArray(parsed.byTool)).toBe(true);
+  });
+
+  it("session view renders sess-j1 via JSONL", () => {
+    expect(() => renderSessionView(jsonlReader, "sess-j1", false, "30d")).not.toThrow();
+  });
+
+  it("session view JSON for sess-j1 has 3 turns via JSONL", () => {
+    const output = capture(() => renderSessionView(jsonlReader, "sess-j1", true, "30d"));
+    const parsed = JSON.parse(output);
+    expect(parsed.report).toBe("session");
+    expect(parsed.turns.length).toBe(3);
   });
 });
