@@ -1,0 +1,20 @@
+{
+  "name": "token-scope",
+  "version": "1.0.0",
+  "description": "Analytics for Claude Code output token spend. Reads ~/.claude/__store.db in read-only mode.",
+  "bin": {
+    "token-scope": "./src/cli.ts"
+  },
+  "scripts": {
+    "typecheck": "bun tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/bun": "latest"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "keywords": ["claude-code", "tokens", "analytics", "sqlite"],
+  "license": "MIT"
+}
