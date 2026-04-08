@@ -1,0 +1,339 @@
+import { readdirSync, readFileSync, existsSync } from "fs";
+import { join } from "path";
+import { getPricing } from "@/pricing";
+import { parseContentBlocks, resolveDominantTool } from "@/parse";
+import type {
+  SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow,
+  WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool,
+} from "@/reader";
+import type { Reader } from "@/reader";
+
+interface JsonlTurn {
+  uuid: string;
+  sessionId: string;
+  cwd: string;
+  timestampMs: number;
+  model: string;
+  outputTokens: number;
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  stopReason: string | null;
+  messageJson: string;
+  costUsd: number | null;
+}
+
+function computeCost(
+  model: string,
+  out: number,
+  inp: number,
+  cacheRead: number,
+  cacheWrite: number,
+): number | null {
+  const p = getPricing(model);
+  if (!p) return null;
+  return (
+    out * p.outputPerMillion +
+    inp * p.inputPerMillion +
+    cacheRead * p.cacheReadPerMillion +
+    cacheWrite * p.cacheWritePerMillion
+  ) / 1_000_000;
+}
+
+function scanJsonlFiles(dir: string): string[] {
+  const files: string[] = [];
+  if (!existsSync(dir)) return files;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const projectDir = join(dir, entry.name);
+    for (const f of readdirSync(projectDir, { withFileTypes: true })) {
+      if (f.isDirectory() && f.name === "subagents") continue;
+      if (f.isFile() && f.name.endsWith(".jsonl")) {
+        files.push(join(projectDir, f.name));
+      }
+    }
+  }
+  return files;
+}
+
+function loadTurns(dir: string): JsonlTurn[] {
+  const turns: JsonlTurn[] = [];
+  for (const file of scanJsonlFiles(dir)) {
+    let raw: string;
+    try { raw = readFileSync(file, "utf8"); } catch { continue; }
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      let obj: Record<string, unknown>;
+      try { obj = JSON.parse(line); } catch { continue; }
+      if (obj["type"] !== "assistant") continue;
+      const msg = obj["message"] as Record<string, unknown> | undefined;
+      if (!msg) continue;
+      const usage = msg["usage"] as Record<string, unknown> | undefined;
+      if (!usage) continue;
+      const out = Number(usage["output_tokens"] ?? 0);
+      if (out <= 0) continue;
+      const model = String(msg["model"] ?? "");
+      const inp = Number(usage["input_tokens"] ?? 0);
+      const cacheRead = Number(usage["cache_read_input_tokens"] ?? 0);
+      const cacheWrite = Number(usage["cache_creation_input_tokens"] ?? 0);
+      turns.push({
+        uuid: String(obj["uuid"] ?? ""),
+        sessionId: String(obj["sessionId"] ?? ""),
+        cwd: String(obj["cwd"] ?? ""),
+        timestampMs: new Date(String(obj["timestamp"] ?? "")).getTime(),
+        model,
+        outputTokens: out,
+        inputTokens: inp,
+        cacheReadTokens: cacheRead,
+        cacheWriteTokens: cacheWrite,
+        stopReason: msg["stop_reason"] ? String(msg["stop_reason"]) : null,
+        messageJson: JSON.stringify(msg),
+        costUsd: computeCost(model, out, inp, cacheRead, cacheWrite),
+      });
+    }
+  }
+  return turns;
+}
+
+export class JsonlReader implements Reader {
+  private readonly turns: JsonlTurn[];
+
+  constructor(projectsDir: string) {
+    this.turns = loadTurns(projectsDir);
+  }
+
+  private filter(since: number): JsonlTurn[] {
+    const sinceMs = since * 1000;
+    return this.turns.filter((t) => t.timestampMs > sinceMs);
+  }
+
+  querySummaryTotals(since: number): SummaryTotals {
+    const turns = this.filter(since);
+    const sessionCount = new Set(turns.map((t) => t.sessionId)).size;
+    const totalOutputTokens = turns.reduce((s, t) => s + t.outputTokens, 0);
+    const totalInputTokens = turns.reduce((s, t) => s + t.inputTokens, 0);
+    const totalCacheReadTokens = turns.reduce((s, t) => s + t.cacheReadTokens, 0);
+    const totalCacheWriteTokens = turns.reduce((s, t) => s + t.cacheWriteTokens, 0);
+    const costsKnown = turns.filter((t) => t.costUsd !== null);
+    const totalCostUsd = costsKnown.length > 0
+      ? costsKnown.reduce((s, t) => s + t.costUsd!, 0)
+      : null;
+    const avgCostPerSession =
+      totalCostUsd !== null && sessionCount > 0 ? totalCostUsd / sessionCount : null;
+    const avgCostPerTurn =
+      totalCostUsd !== null && turns.length > 0 ? totalCostUsd / turns.length : null;
+    return {
+      totalOutputTokens, totalInputTokens, totalCacheReadTokens, totalCacheWriteTokens,
+      totalCostUsd, sessionCount, turnCount: turns.length,
+      avgCostPerSession, avgCostPerTurn,
+    };
+  }
+
+  queryRawTurnsForTool(since: number): RawTurnForTool[] {
+    return this.filter(since).map((t) => ({
+      uuid: t.uuid,
+      outputTokens: t.outputTokens,
+      costUsd: t.costUsd,
+      message: t.messageJson,
+    }));
+  }
+
+  queryByTool(since: number, limit: number): ToolRow[] {
+    const turns = this.filter(since);
+    const totalOutput = turns.reduce((s, t) => s + t.outputTokens, 0);
+    const totalCost = turns.reduce((s, t) => s + (t.costUsd ?? 0), 0);
+    const byTool = new Map<string, { turns: number; outputTokens: number; costUsd: number }>();
+    for (const t of turns) {
+      const tool = resolveDominantTool(parseContentBlocks(t.messageJson));
+      const e = byTool.get(tool) ?? { turns: 0, outputTokens: 0, costUsd: 0 };
+      byTool.set(tool, {
+        turns: e.turns + 1,
+        outputTokens: e.outputTokens + t.outputTokens,
+        costUsd: e.costUsd + (t.costUsd ?? 0),
+      });
+    }
+    return Array.from(byTool.entries())
+      .map(([tool, d]) => ({
+        tool, turns: d.turns, outputTokens: d.outputTokens,
+        outputPct: totalOutput > 0 ? (d.outputTokens / totalOutput) * 100 : 0,
+        avgOutputPerTurn: d.turns > 0 ? d.outputTokens / d.turns : 0,
+        totalCostUsd: d.costUsd > 0 ? d.costUsd : null,
+        costPct: totalCost > 0 ? (d.costUsd / totalCost) * 100 : null,
+      }))
+      .sort((a, b) => b.outputTokens - a.outputTokens)
+      .slice(0, limit);
+  }
+
+  queryByProject(since: number, limit: number): ProjectRow[] {
+    const turns = this.filter(since);
+    const byProject = new Map<string, {
+      sessions: Set<string>; turns: number; outputTokens: number;
+      costUsd: number; costKnown: boolean;
+    }>();
+    for (const t of turns) {
+      const e = byProject.get(t.cwd) ?? {
+        sessions: new Set(), turns: 0, outputTokens: 0, costUsd: 0, costKnown: false,
+      };
+      e.sessions.add(t.sessionId);
+      e.turns++;
+      e.outputTokens += t.outputTokens;
+      if (t.costUsd !== null) { e.costUsd += t.costUsd; e.costKnown = true; }
+      byProject.set(t.cwd, e);
+    }
+    return Array.from(byProject.entries())
+      .map(([cwd, d]) => {
+        const totalCostUsd = d.costKnown ? d.costUsd : null;
+        const sessions = d.sessions.size;
+        return {
+          cwd, sessions, turns: d.turns, outputTokens: d.outputTokens, totalCostUsd,
+          avgSessionCost: totalCostUsd !== null && sessions > 0 ? totalCostUsd / sessions : null,
+        };
+      })
+      .sort((a, b) => (b.totalCostUsd ?? 0) - (a.totalCostUsd ?? 0))
+      .slice(0, limit);
+  }
+
+  queryWeeklyTrend(since: number): WeekRow[] {
+    const turns = this.filter(since);
+    const byWeek = new Map<string, {
+      sessions: Set<string>; turns: number; outputTokens: number;
+      costUsd: number; costKnown: boolean;
+    }>();
+    for (const t of turns) {
+      const d = new Date(t.timestampMs);
+      const year = d.getUTCFullYear();
+      const jan1 = new Date(Date.UTC(year, 0, 1));
+      const week = Math.ceil(((d.getTime() - jan1.getTime()) / 86400000 + jan1.getUTCDay() + 1) / 7);
+      const label = `${year}-W${String(week).padStart(2, "0")}`;
+      const e = byWeek.get(label) ?? {
+        sessions: new Set(), turns: 0, outputTokens: 0, costUsd: 0, costKnown: false,
+      };
+      e.sessions.add(t.sessionId);
+      e.turns++;
+      e.outputTokens += t.outputTokens;
+      if (t.costUsd !== null) { e.costUsd += t.costUsd; e.costKnown = true; }
+      byWeek.set(label, e);
+    }
+    return Array.from(byWeek.entries())
+      .map(([weekLabel, d]) => ({
+        weekLabel, sessions: d.sessions.size, turns: d.turns, outputTokens: d.outputTokens,
+        totalCostUsd: d.costKnown ? d.costUsd : null,
+      }))
+      .sort((a, b) => b.weekLabel.localeCompare(a.weekLabel))
+      .slice(0, 5);
+  }
+
+  querySessions(since: number, limit: number): SessionRow[] {
+    const turns = this.filter(since);
+    const bySession = new Map<string, {
+      cwd: string; timestamps: number[]; outputTokens: number;
+      inputTokens: number; cacheReadTokens: number; costUsd: number; costKnown: boolean;
+    }>();
+    for (const t of turns) {
+      const e = bySession.get(t.sessionId) ?? {
+        cwd: t.cwd, timestamps: [], outputTokens: 0, inputTokens: 0,
+        cacheReadTokens: 0, costUsd: 0, costKnown: false,
+      };
+      e.timestamps.push(t.timestampMs);
+      e.outputTokens += t.outputTokens;
+      e.inputTokens += t.inputTokens;
+      e.cacheReadTokens += t.cacheReadTokens;
+      if (t.costUsd !== null) { e.costUsd += t.costUsd; e.costKnown = true; }
+      bySession.set(t.sessionId, e);
+    }
+    return Array.from(bySession.entries())
+      .map(([sessionId, d]) => {
+        const sorted = d.timestamps.slice().sort((a, b) => a - b);
+        const startedAt = sorted[0]!;
+        const endedAt = sorted.at(-1)!;
+        const totalInput = d.inputTokens + d.cacheReadTokens;
+        const cacheHitPct = totalInput > 0 ? (d.cacheReadTokens / totalInput) * 100 : null;
+        return {
+          sessionId, cwd: d.cwd, startedAt,
+          durationMs: sorted.length > 1 ? endedAt - startedAt : null,
+          turnCount: d.timestamps.length,
+          outputTokens: d.outputTokens,
+          cacheHitPct,
+          totalCostUsd: d.costKnown ? d.costUsd : null,
+        };
+      })
+      .sort((a, b) => (b.totalCostUsd ?? 0) - (a.totalCostUsd ?? 0))
+      .slice(0, limit);
+  }
+
+  querySessionTurns(sessionId: string): TurnRow[] {
+    return this.turns
+      .filter((t) => t.sessionId === sessionId)
+      .sort((a, b) => a.timestampMs - b.timestampMs)
+      .map((t) => ({
+        uuid: t.uuid,
+        timestamp: t.timestampMs,
+        outputTokens: t.outputTokens,
+        inputTokens: t.inputTokens,
+        cacheReadTokens: t.cacheReadTokens,
+        cacheWriteTokens: t.cacheWriteTokens,
+        costUsd: t.costUsd,
+        durationMs: null,
+        model: t.model,
+        stopReason: t.stopReason,
+        message: t.messageJson,
+      }));
+  }
+
+  queryThinkingTurns(since: number): ThinkingTurnRow[] {
+    return this.filter(since)
+      .map((t) => {
+        const blocks = parseContentBlocks(t.messageJson);
+        let thinkingChars = 0;
+        let textChars = 0;
+        for (const b of blocks) {
+          if (b.type === "thinking") thinkingChars += (b.thinking ?? "").length;
+          else if (b.type === "text") textChars += (b.text ?? "").length;
+        }
+        return {
+          uuid: t.uuid, sessionId: t.sessionId, cwd: t.cwd,
+          timestamp: t.timestampMs, outputTokens: t.outputTokens, costUsd: t.costUsd,
+          thinkingChars, textChars, message: t.messageJson,
+        };
+      })
+      .filter((t) => t.thinkingChars > 0);
+  }
+
+  queryBashTurns(since: number): BashCommandRow[] {
+    return this.filter(since)
+      .filter((t) => {
+        const blocks = parseContentBlocks(t.messageJson);
+        return blocks.some(
+          (b) => b.type === "tool_use" && (b.name ?? "").toLowerCase() === "bash",
+        );
+      })
+      .map((t) => {
+        const blocks = parseContentBlocks(t.messageJson);
+        const bashBlock = blocks.find(
+          (b) => b.type === "tool_use" && (b.name ?? "").toLowerCase() === "bash",
+        );
+        const command =
+          bashBlock?.input && typeof bashBlock.input === "object" && "command" in bashBlock.input
+            ? String((bashBlock.input as Record<string, unknown>)["command"])
+            : null;
+        return {
+          uuid: t.uuid, sessionId: t.sessionId, timestamp: t.timestampMs,
+          outputTokens: t.outputTokens, costUsd: t.costUsd, command: command ?? "",
+        };
+      });
+  }
+
+  queryProjectMatches(fragment: string): ProjectMatch[] {
+    const seen = new Set<string>();
+    const results: ProjectMatch[] = [];
+    for (const t of this.turns) {
+      if (!seen.has(t.cwd) && t.cwd.toLowerCase().includes(fragment.toLowerCase())) {
+        seen.add(t.cwd);
+        results.push({ cwd: t.cwd });
+      }
+    }
+    return results;
+  }
+
+  close(): void {}
+}
