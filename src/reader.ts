@@ -24,43 +24,45 @@ export interface Reader {
 export interface ReaderOptions {
   source?: "jsonl" | "sqlite" | "auto";
   dbPath?: string;
-  projectsDir?: string;
+  projectsDirs?: string[];
 }
 
-function resolveProjectsDir(override?: string): string {
-  if (override) return override;
+function resolveProjectsDirs(override?: string[]): string[] {
+  if (override && override.length > 0) return override;
   const env = process.env["TOKEN_SCOPE_PROJECTS_DIR"];
-  if (env) return env;
-  return join(process.env["HOME"] ?? "~", ".claude", "projects");
+  if (env) return env.split(":").filter(Boolean);
+  const home = process.env["HOME"] ?? "~";
+  const candidates = [
+    join(home, ".claude", "projects"),
+    join(home, "Library", "Application Support", "Claude", "projects"),
+  ];
+  return candidates.filter(existsSync);
 }
 
-function hasJsonlData(dir: string): boolean {
-  if (!existsSync(dir)) return false;
-  try {
-    const entries = readdirSync(dir, { withFileTypes: true });
-    return entries.some((e) => e.isDirectory());
-  } catch {
-    return false;
-  }
+function hasJsonlData(dirs: string[]): boolean {
+  return dirs.some((dir) => {
+    try {
+      return readdirSync(dir, { withFileTypes: true }).some((e) => e.isDirectory());
+    } catch {
+      return false;
+    }
+  });
 }
 
 export function createReader(opts: ReaderOptions = {}): Reader {
   const source = opts.source ?? "auto";
-  const projectsDir = resolveProjectsDir(opts.projectsDir);
+  const projectsDirs = resolveProjectsDirs(opts.projectsDirs);
 
-  const useJsonl = source === "jsonl" || (source === "auto" && hasJsonlData(projectsDir));
+  const useJsonl = source === "jsonl" || (source === "auto" && hasJsonlData(projectsDirs));
 
   if (useJsonl) {
-    // @ts-ignore - JsonlReader will be added in a subsequent task
     const { JsonlReader } = require("./jsonl") as typeof import("./jsonl");
-    // @ts-ignore
-    return new JsonlReader(projectsDir);
+    return new JsonlReader(projectsDirs);
   }
 
   // @ts-ignore - createSqliteReader will be added in a subsequent task
   const { resolveDbPath, openDb, createSqliteReader } = require("./db") as typeof import("./db");
   const { path } = resolveDbPath(opts.dbPath);
   const db = openDb(path);
-  // @ts-ignore - createSqliteReader will be added in a subsequent task
   return createSqliteReader(db);
 }

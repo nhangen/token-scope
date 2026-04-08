@@ -56,9 +56,9 @@ function scanJsonlFiles(dir: string): string[] {
   return files;
 }
 
-function loadTurns(dir: string): JsonlTurn[] {
+function loadTurns(dirs: string[]): JsonlTurn[] {
   const turns: JsonlTurn[] = [];
-  for (const file of scanJsonlFiles(dir)) {
+  for (const file of dirs.flatMap(scanJsonlFiles)) {
     let raw: string;
     try { raw = readFileSync(file, "utf8"); } catch { continue; }
     for (const line of raw.split("\n")) {
@@ -98,8 +98,8 @@ function loadTurns(dir: string): JsonlTurn[] {
 export class JsonlReader implements Reader {
   private readonly turns: JsonlTurn[];
 
-  constructor(projectsDir: string) {
-    this.turns = loadTurns(projectsDir);
+  constructor(projectsDirs: string | string[]) {
+    this.turns = loadTurns(Array.isArray(projectsDirs) ? projectsDirs : [projectsDirs]);
   }
 
   private filter(since: number): JsonlTurn[] {

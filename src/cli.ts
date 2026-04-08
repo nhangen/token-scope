@@ -24,12 +24,13 @@ SHARED FLAGS
   --limit <n>             Cap rows in tables (default: 20)
   --json                  Machine-readable JSON output
   --db <path>             Override SQLite database path (overrides TOKEN_SCOPE_DB)
+  --projects-dir <path>   JSONL projects dir; repeat or colon-separate for multiple
   --version               Print version and exit
   --help                  Show this help
 
 ENVIRONMENT
   TOKEN_SCOPE_DB           Override SQLite database path
-  TOKEN_SCOPE_PROJECTS_DIR Override JSONL projects directory (default: ~/.claude/projects)
+  TOKEN_SCOPE_PROJECTS_DIR Colon-separated JSONL project dirs (auto-detects if unset)
   TOKEN_SCOPE_PRICING_FILE Override pricing constants JSON file
   NO_COLOR                 Disable ANSI color output
 
@@ -41,6 +42,7 @@ EXAMPLES
   token-scope --thinking --since 90d
   token-scope --sessions --limit 50
   token-scope --source sqlite
+  token-scope --projects-dir ~/.claude/projects --projects-dir ~/Library/Application\\ Support/Claude/projects
 `.trim();
 
 interface CliArgs {
@@ -53,10 +55,11 @@ interface CliArgs {
   json: boolean;
   dbPath?: string;
   source?: "jsonl" | "sqlite" | "auto";
+  projectsDirs: string[];
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { mode: "summary", since: "30d", limit: 20, json: false };
+  const args: CliArgs = { mode: "summary", since: "30d", limit: 20, json: false, projectsDirs: [] };
   let modeSet = false;
 
   const setMode = (mode: CliArgs["mode"]) => {
@@ -110,6 +113,12 @@ function parseArgs(argv: string[]): CliArgs {
         args.dbPath = argv[++i];
         if (!args.dbPath) { process.stderr.write("Error: --db requires a path argument.\n"); process.exit(1); }
         break;
+      case "--projects-dir": {
+        const d = argv[++i];
+        if (!d) { process.stderr.write("Error: --projects-dir requires a path argument.\n"); process.exit(1); }
+        args.projectsDirs.push(...d.split(":").filter(Boolean));
+        break;
+      }
       case "--source": {
         const s = argv[++i];
         if (s !== "jsonl" && s !== "sqlite" && s !== "auto") {
@@ -134,7 +143,11 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv);
 
-  const reader = createReader({ source: args.source ?? "auto", dbPath: args.dbPath });
+  const reader = createReader({
+    source: args.source ?? "auto",
+    dbPath: args.dbPath,
+    projectsDirs: args.projectsDirs.length > 0 ? args.projectsDirs : undefined,
+  });
 
   let since: number;
   try {
