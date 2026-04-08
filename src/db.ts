@@ -1,0 +1,343 @@
+import { Database } from "bun:sqlite";
+import { existsSync } from "fs";
+import { join } from "path";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface DbPathResult {
+  path: string;
+  source: "flag" | "env" | "xdg" | "default";
+}
+
+export interface SummaryTotals {
+  totalOutputTokens: number;
+  totalInputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheWriteTokens: number;
+  totalCostUsd: number | null;
+  sessionCount: number;
+  turnCount: number;
+  avgCostPerSession: number | null;
+  avgCostPerTurn: number | null;
+}
+
+export interface ToolRow {
+  tool: string;
+  turns: number;
+  outputTokens: number;
+  outputPct: number;
+  avgOutputPerTurn: number;
+  totalCostUsd: number | null;
+  costPct: number | null;
+}
+
+export interface ProjectRow {
+  cwd: string;
+  sessions: number;
+  turns: number;
+  outputTokens: number;
+  totalCostUsd: number | null;
+  avgSessionCost: number | null;
+}
+
+export interface SessionRow {
+  sessionId: string;
+  cwd: string | null;
+  startedAt: number;
+  durationMs: number | null;
+  turnCount: number;
+  outputTokens: number;
+  cacheHitPct: number | null;
+  totalCostUsd: number | null;
+}
+
+export interface TurnRow {
+  uuid: string;
+  timestamp: number;
+  outputTokens: number;
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number | null;
+  durationMs: number | null;
+  model: string | null;
+  stopReason: string | null;
+  message: string;
+}
+
+export interface WeekRow {
+  weekLabel: string;
+  sessions: number;
+  turns: number;
+  outputTokens: number;
+  totalCostUsd: number | null;
+}
+
+export interface ThinkingTurnRow {
+  uuid: string;
+  sessionId: string;
+  cwd: string | null;
+  timestamp: number;
+  outputTokens: number;
+  costUsd: number | null;
+  thinkingChars: number;
+  textChars: number;
+  message: string;
+}
+
+export interface ProjectMatch { cwd: string; }
+
+export interface BashCommandRow {
+  command: string;
+  outputTokens: number;
+  costUsd: number | null;
+  uuid: string;
+  timestamp: number;
+  sessionId: string;
+}
+
+export interface RawTurnForTool {
+  uuid: string;
+  outputTokens: number;
+  costUsd: number | null;
+  message: string;
+}
+
+// ─── DB Path Resolution ───────────────────────────────────────────────────────
+
+export function resolveDbPath(flagPath?: string): DbPathResult {
+  if (flagPath) return { path: flagPath, source: "flag" };
+  const envPath = process.env["TOKEN_SCOPE_DB"];
+  if (envPath) return { path: envPath, source: "env" };
+  const xdgConfig = process.env["XDG_CONFIG_HOME"];
+  if (xdgConfig) {
+    const xdgPath = join(xdgConfig, "claude", "__store.db");
+    if (existsSync(xdgPath)) return { path: xdgPath, source: "xdg" };
+  }
+  const defaultPath = join(process.env["HOME"] ?? "~", ".claude", "__store.db");
+  return { path: defaultPath, source: "default" };
+}
+
+// ─── DB Open ─────────────────────────────────────────────────────────────────
+
+export function openDb(path: string): Database {
+  if (!existsSync(path)) {
+    process.stderr.write(`Database not found at "${path}". Set TOKEN_SCOPE_DB to override.\n`);
+    process.exit(1);
+  }
+  try {
+    return new Database(path, { readonly: true });
+  } catch (e: unknown) {
+    const msg = String(e);
+    if (msg.includes("SQLITE_BUSY") || msg.includes("database is locked")) {
+      process.stderr.write(`Database is locked ("${path}"). Wait for other processes to finish, then retry.\n`);
+    } else if (msg.includes("SQLITE_CORRUPT") || msg.includes("malformed")) {
+      process.stderr.write(`Database at "${path}" appears corrupted. Try pointing to a backup copy via TOKEN_SCOPE_DB.\n`);
+    } else if (msg.includes("EACCES") || msg.includes("permission denied")) {
+      process.stderr.write(`Cannot read "${path}": permission denied. Check file permissions or set TOKEN_SCOPE_DB.\n`);
+    } else {
+      process.stderr.write(`Failed to open database at "${path}": ${msg}\n`);
+    }
+    process.exit(1);
+  }
+}
+
+// ─── Time Helpers ─────────────────────────────────────────────────────────────
+
+export function parseSince(since: string): number {
+  const now = Date.now();
+  const match = /^(\d+)(h|d|w)$/.exec(since);
+  if (!match) throw new Error(`Invalid --since format: "${since}". Use Nh, Nd, or Nw.`);
+  const n = parseInt(match[1]!, 10);
+  const unit = match[2]!;
+  const multipliers: Record<string, number> = { h: 3_600_000, d: 86_400_000, w: 604_800_000 };
+  return now - n * multipliers[unit]!;
+}
+
+// ─── Base join fragment ───────────────────────────────────────────────────────
+
+const JOIN = `
+FROM assistant_messages am
+JOIN base_messages bm ON am.uuid = bm.uuid
+WHERE bm.timestamp > ?
+  AND json_valid(am.message) = 1
+`;
+
+// ─── Summary Totals ───────────────────────────────────────────────────────────
+
+export function querySummaryTotals(db: Database, since: number): SummaryTotals {
+  const row = db.query<{
+    totalOutputTokens: number; totalInputTokens: number;
+    totalCacheReadTokens: number; totalCacheWriteTokens: number;
+    totalCostUsd: number | null; sessionCount: number; turnCount: number;
+  }, [number]>(`
+    SELECT
+      SUM(CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER)) AS totalOutputTokens,
+      SUM(CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER)) AS totalInputTokens,
+      SUM(CAST(json_extract(am.message, '$.usage.cache_read_input_tokens') AS INTEGER)) AS totalCacheReadTokens,
+      SUM(CAST(json_extract(am.message, '$.usage.cache_creation_input_tokens') AS INTEGER)) AS totalCacheWriteTokens,
+      SUM(am.cost_usd) AS totalCostUsd,
+      COUNT(DISTINCT bm.session_id) AS sessionCount,
+      COUNT(*) AS turnCount
+    ${JOIN}
+  `).get(since);
+
+  if (!row) return { totalOutputTokens: 0, totalInputTokens: 0, totalCacheReadTokens: 0, totalCacheWriteTokens: 0, totalCostUsd: null, sessionCount: 0, turnCount: 0, avgCostPerSession: null, avgCostPerTurn: null };
+
+  return {
+    ...row,
+    avgCostPerSession: row.totalCostUsd != null && row.sessionCount > 0 ? row.totalCostUsd / row.sessionCount : null,
+    avgCostPerTurn: row.totalCostUsd != null && row.turnCount > 0 ? row.totalCostUsd / row.turnCount : null,
+  };
+}
+
+// ─── Raw Turns (for dominant-tool grouping in JS) ─────────────────────────────
+
+export function queryRawTurnsForTool(db: Database, since: number): RawTurnForTool[] {
+  return db.query<RawTurnForTool, [number]>(`
+    SELECT am.uuid,
+      CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER) AS outputTokens,
+      am.cost_usd AS costUsd, am.message
+    ${JOIN}
+  `).all(since);
+}
+
+// ─── By-Tool (dominant tool resolved via parse.ts) ────────────────────────────
+
+export function queryByTool(db: Database, since: number, limit: number): ToolRow[] {
+  const { parseContentBlocks, resolveDominantTool } = require("./parse") as typeof import("./parse");
+  const turns = queryRawTurnsForTool(db, since);
+  const totalOutput = turns.reduce((s, t) => s + t.outputTokens, 0);
+  const totalCost = turns.reduce((s, t) => s + (t.costUsd ?? 0), 0);
+
+  const byTool = new Map<string, { turns: number; outputTokens: number; costUsd: number }>();
+  for (const turn of turns) {
+    const tool = resolveDominantTool(parseContentBlocks(turn.message));
+    const e = byTool.get(tool) ?? { turns: 0, outputTokens: 0, costUsd: 0 };
+    byTool.set(tool, { turns: e.turns + 1, outputTokens: e.outputTokens + turn.outputTokens, costUsd: e.costUsd + (turn.costUsd ?? 0) });
+  }
+
+  return Array.from(byTool.entries())
+    .map(([tool, d]) => ({
+      tool, turns: d.turns, outputTokens: d.outputTokens,
+      outputPct: totalOutput > 0 ? (d.outputTokens / totalOutput) * 100 : 0,
+      avgOutputPerTurn: d.turns > 0 ? d.outputTokens / d.turns : 0,
+      totalCostUsd: d.costUsd > 0 ? d.costUsd : null,
+      costPct: totalCost > 0 ? (d.costUsd / totalCost) * 100 : null,
+    }))
+    .sort((a, b) => b.outputTokens - a.outputTokens)
+    .slice(0, limit);
+}
+
+// ─── By-Project ───────────────────────────────────────────────────────────────
+
+export function queryByProject(db: Database, since: number, limit: number): ProjectRow[] {
+  return db.query<ProjectRow, [number, number]>(`
+    SELECT bm.cwd,
+      COUNT(DISTINCT bm.session_id) AS sessions,
+      COUNT(*) AS turns,
+      SUM(CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER)) AS outputTokens,
+      SUM(am.cost_usd) AS totalCostUsd,
+      CASE WHEN COUNT(DISTINCT bm.session_id) > 0 THEN SUM(am.cost_usd) / COUNT(DISTINCT bm.session_id) ELSE NULL END AS avgSessionCost
+    ${JOIN}
+    GROUP BY bm.cwd ORDER BY totalCostUsd DESC NULLS LAST LIMIT ?
+  `).all(since, limit);
+}
+
+// ─── Sessions List ────────────────────────────────────────────────────────────
+
+export function querySessions(db: Database, since: number, limit: number): SessionRow[] {
+  return db.query<SessionRow, [number, number]>(`
+    SELECT bm.session_id AS sessionId, bm.cwd,
+      MIN(bm.timestamp) AS startedAt,
+      CASE WHEN COUNT(*) > 1 THEN MAX(bm.timestamp) - MIN(bm.timestamp) ELSE NULL END AS durationMs,
+      COUNT(*) AS turnCount,
+      SUM(CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER)) AS outputTokens,
+      CASE WHEN SUM(CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER) +
+                   CAST(json_extract(am.message, '$.usage.cache_read_input_tokens') AS INTEGER)) > 0
+           THEN CAST(SUM(CAST(json_extract(am.message, '$.usage.cache_read_input_tokens') AS INTEGER)) AS REAL) /
+                SUM(CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER) +
+                    CAST(json_extract(am.message, '$.usage.cache_read_input_tokens') AS INTEGER)) * 100
+           ELSE NULL END AS cacheHitPct,
+      SUM(am.cost_usd) AS totalCostUsd
+    ${JOIN}
+    GROUP BY bm.session_id ORDER BY totalCostUsd DESC NULLS LAST LIMIT ?
+  `).all(since, limit);
+}
+
+// ─── Session Turns ────────────────────────────────────────────────────────────
+
+export function querySessionTurns(db: Database, sessionId: string): TurnRow[] {
+  return db.query<TurnRow, [string]>(`
+    SELECT am.uuid, bm.timestamp,
+      CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER) AS outputTokens,
+      CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER) AS inputTokens,
+      CAST(json_extract(am.message, '$.usage.cache_read_input_tokens') AS INTEGER) AS cacheReadTokens,
+      CAST(json_extract(am.message, '$.usage.cache_creation_input_tokens') AS INTEGER) AS cacheWriteTokens,
+      am.cost_usd AS costUsd, am.duration_ms AS durationMs, am.model,
+      json_extract(am.message, '$.stop_reason') AS stopReason, am.message
+    FROM assistant_messages am
+    JOIN base_messages bm ON am.uuid = bm.uuid
+    WHERE bm.session_id = ? AND json_valid(am.message) = 1
+    ORDER BY bm.timestamp ASC
+  `).all(sessionId);
+}
+
+// ─── Weekly Trend ─────────────────────────────────────────────────────────────
+
+export function queryWeeklyTrend(db: Database, since: number): WeekRow[] {
+  return db.query<WeekRow, [number]>(`
+    SELECT
+      strftime('%Y-W%W', datetime(bm.timestamp / 1000, 'unixepoch')) AS weekLabel,
+      COUNT(DISTINCT bm.session_id) AS sessions, COUNT(*) AS turns,
+      SUM(CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER)) AS outputTokens,
+      SUM(am.cost_usd) AS totalCostUsd
+    ${JOIN}
+    GROUP BY weekLabel ORDER BY weekLabel DESC LIMIT 5
+  `).all(since);
+}
+
+// ─── Thinking Turns ───────────────────────────────────────────────────────────
+
+export function queryThinkingTurns(db: Database, since: number): ThinkingTurnRow[] {
+  return db.query<ThinkingTurnRow, [number]>(`
+    SELECT am.uuid, bm.session_id AS sessionId, bm.cwd, bm.timestamp,
+      CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER) AS outputTokens,
+      am.cost_usd AS costUsd,
+      SUM(CASE WHEN json_extract(block.value, '$.type') = 'thinking'
+               THEN LENGTH(COALESCE(json_extract(block.value, '$.thinking'), '')) ELSE 0 END) AS thinkingChars,
+      SUM(CASE WHEN json_extract(block.value, '$.type') = 'text'
+               THEN LENGTH(COALESCE(json_extract(block.value, '$.text'), '')) ELSE 0 END) AS textChars,
+      am.message
+    FROM assistant_messages am
+    JOIN base_messages bm ON am.uuid = bm.uuid
+    CROSS JOIN json_each(am.message, '$.content') AS block
+    WHERE bm.timestamp > ? AND json_valid(am.message) = 1
+    GROUP BY am.uuid HAVING thinkingChars > 0
+  `).all(since);
+}
+
+// ─── Project Lookup ───────────────────────────────────────────────────────────
+
+export function queryProjectMatches(db: Database, fragment: string): ProjectMatch[] {
+  return db.query<ProjectMatch, [string]>(`
+    SELECT DISTINCT bm.cwd FROM base_messages bm
+    WHERE LOWER(bm.cwd) LIKE LOWER(?) AND bm.cwd IS NOT NULL ORDER BY bm.cwd
+  `).all(`%${fragment}%`);
+}
+
+// ─── Bash Command Rows ────────────────────────────────────────────────────────
+
+export function queryBashTurns(db: Database, since: number): BashCommandRow[] {
+  return db.query<BashCommandRow, [number]>(`
+    SELECT json_extract(block.value, '$.input.command') AS command,
+      CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER) AS outputTokens,
+      am.cost_usd AS costUsd, am.uuid, bm.timestamp, bm.session_id AS sessionId
+    FROM assistant_messages am
+    JOIN base_messages bm ON am.uuid = bm.uuid
+    CROSS JOIN json_each(am.message, '$.content') AS block
+    WHERE bm.timestamp > ? AND json_valid(am.message) = 1
+      AND json_extract(block.value, '$.type') = 'tool_use'
+      AND json_extract(block.value, '$.name') = 'Bash'
+  `).all(since);
+}
