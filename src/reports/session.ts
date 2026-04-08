@@ -120,7 +120,7 @@ export function renderSessionsList(reader: Reader, opts: Options): void {
     return;
   }
 
-  console.log(renderHeader(`token-scope — Sessions  (last ${opts.since})`));
+  console.log(renderHeader(`token-scope — Sessions  (last ${opts.sinceStr})`));
   console.log(renderTable(
     [
       { header: "Session ID", align: "left", width: 14 },

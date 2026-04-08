@@ -212,14 +212,15 @@ export class JsonlReader implements Reader {
   querySessions(since: number, limit: number): SessionRow[] {
     const turns = this.filter(since);
     const bySession = new Map<string, {
-      cwd: string; timestamps: number[]; outputTokens: number;
+      cwdCounts: Map<string, number>; timestamps: number[]; outputTokens: number;
       inputTokens: number; cacheReadTokens: number; costUsd: number; costKnown: boolean;
     }>();
     for (const t of turns) {
       const e = bySession.get(t.sessionId) ?? {
-        cwd: t.cwd, timestamps: [], outputTokens: 0, inputTokens: 0,
+        cwdCounts: new Map<string, number>(), timestamps: [], outputTokens: 0, inputTokens: 0,
         cacheReadTokens: 0, costUsd: 0, costKnown: false,
       };
+      e.cwdCounts.set(t.cwd, (e.cwdCounts.get(t.cwd) ?? 0) + 1);
       e.timestamps.push(t.timestampMs);
       e.outputTokens += t.outputTokens;
       e.inputTokens += t.inputTokens;
@@ -234,8 +235,9 @@ export class JsonlReader implements Reader {
         const endedAt = sorted.at(-1)!;
         const totalInput = d.inputTokens + d.cacheReadTokens;
         const cacheHitPct = totalInput > 0 ? (d.cacheReadTokens / totalInput) * 100 : null;
+        const cwd = [...d.cwdCounts.entries()].sort((a, b) => (b[1] as number) - (a[1] as number))[0]![0];
         return {
-          sessionId, cwd: d.cwd, startedAt,
+          sessionId, cwd, startedAt,
           durationMs: sorted.length > 1 ? endedAt - startedAt : null,
           turnCount: d.timestamps.length,
           outputTokens: d.outputTokens,

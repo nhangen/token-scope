@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { parseSince } from "@/db";
 import { createReader } from "@/reader";
 import type { Reader } from "@/reader";
