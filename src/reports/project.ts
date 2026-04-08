@@ -1,7 +1,7 @@
 import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, formatTokens, formatUsd, formatTimestamp, bold } from "@/format";
 
-interface Options { since: number; limit: number; json: boolean }
+interface Options { since: number; sinceStr: string; limit: number; json: boolean }
 
 export function renderProjectDrillDown(reader: Reader, fragment: string, opts: Options): void {
   const matches = reader.queryProjectMatches(fragment);
@@ -23,11 +23,11 @@ export function renderProjectDrillDown(reader: Reader, fragment: string, opts: O
   const project = allProjects.find((p) => p.cwd === cwd);
 
   if (!project) {
-    console.log(`No data for project "${cwd}" in the last ${opts.since}.`);
+    console.log(`No data for project "${cwd}" in the last ${opts.sinceStr}.`);
     return;
   }
 
-  const sessions = reader.querySessions(opts.since, opts.limit).filter((s) => s.cwd === cwd);
+  const sessions = reader.querySessions(opts.since, 1000).filter((s) => s.cwd === cwd).slice(0, opts.limit);
 
   if (opts.json) {
     console.log(JSON.stringify({

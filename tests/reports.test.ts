@@ -9,7 +9,7 @@ import { renderSessionView, renderSessionsList } from "@/reports/session";
 import { renderThinkingReport } from "@/reports/thinking";
 
 let reader: Reader;
-const opts = { since: 0, limit: 20, json: false };
+const opts = { since: 0, sinceStr: "all", limit: 20, json: false };
 
 beforeAll(() => { reader = createSqliteReader(openDb(resolveDbPath().path)); });
 afterAll(() => { reader.close(); });

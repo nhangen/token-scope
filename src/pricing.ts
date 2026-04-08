@@ -28,7 +28,16 @@ function loadPricingMap(): Record<string, ModelPricing> {
     try {
       const fs = require("fs") as typeof import("fs");
       const raw = fs.readFileSync(overridePath, "utf8") as string;
-      overrideMap = JSON.parse(raw) as Record<string, ModelPricing>;
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const valid = Object.values(parsed).every(
+        (v) => v !== null && typeof v === "object" &&
+          typeof (v as Record<string, unknown>)["inputPerMillion"] === "number" &&
+          typeof (v as Record<string, unknown>)["outputPerMillion"] === "number" &&
+          typeof (v as Record<string, unknown>)["cacheReadPerMillion"] === "number" &&
+          typeof (v as Record<string, unknown>)["cacheWritePerMillion"] === "number",
+      );
+      if (!valid) throw new Error("entries missing required numeric pricing fields");
+      overrideMap = parsed as Record<string, ModelPricing>;
       return overrideMap;
     } catch (e) {
       process.stderr.write(`Warning: Could not load TOKEN_SCOPE_PRICING_FILE at "${overridePath}": ${String(e)}\n`);
@@ -41,6 +50,15 @@ function loadPricingMap(): Record<string, ModelPricing> {
 /** Returns pricing for a model, or null if the model is not in the map. */
 export function getPricing(model: string): ModelPricing | null {
   return loadPricingMap()[model] ?? null;
+}
+
+/** Computes total cost for a turn. Returns null if model pricing is unknown. */
+export function computeTurnCost(
+  model: string, out: number, inp: number, cacheRead: number, cacheWrite: number,
+): number | null {
+  const p = getPricing(model);
+  if (!p) return null;
+  return (out * p.outputPerMillion + inp * p.inputPerMillion + cacheRead * p.cacheReadPerMillion + cacheWrite * p.cacheWritePerMillion) / 1_000_000;
 }
 
 /**

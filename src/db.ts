@@ -338,7 +338,7 @@ export function queryBashTurns(db: Database, since: number): BashCommandRow[] {
     CROSS JOIN json_each(am.message, '$.content') AS block
     WHERE bm.timestamp > ? AND json_valid(am.message) = 1
       AND json_extract(block.value, '$.type') = 'tool_use'
-      AND json_extract(block.value, '$.name') = 'Bash'
+      AND LOWER(json_extract(block.value, '$.name')) = 'bash'
   `).all(since);
 }
 

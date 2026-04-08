@@ -2,7 +2,7 @@ import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, formatTokens, formatUsd, formatPct, truncate, bold } from "@/format";
 import { parseContentBlocks, resolveDominantTool, categorizeBashCommand } from "@/parse";
 
-interface Options { since: number; limit: number; json: boolean }
+interface Options { since: number; sinceStr: string; limit: number; json: boolean }
 
 export function renderToolDrillDown(reader: Reader, toolName: string, opts: Options): void {
   const normalizedName = toolName.charAt(0).toUpperCase() + toolName.slice(1).toLowerCase();
@@ -12,7 +12,7 @@ export function renderToolDrillDown(reader: Reader, toolName: string, opts: Opti
   const toolTurns = allTurns.filter((t) => resolveDominantTool(parseContentBlocks(t.message)).toLowerCase() === toolName.toLowerCase());
 
   if (toolTurns.length === 0) {
-    console.log(`No turns found for tool "${normalizedName}" in the last ${opts.since}.`);
+    console.log(`No turns found for tool "${normalizedName}" in the last ${opts.sinceStr}.`);
     return;
   }
 

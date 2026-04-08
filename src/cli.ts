@@ -164,7 +164,7 @@ async function main() {
     return;
   }
 
-  const options = { since, limit: args.limit, json: args.json };
+  const options = { since, sinceStr: args.since, limit: args.limit, json: args.json };
 
   switch (args.mode) {
     case "summary": {

@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { getPricing } from "@/pricing";
+import { computeTurnCost } from "@/pricing";
 import { parseContentBlocks, resolveDominantTool } from "@/parse";
 import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow,
@@ -23,22 +23,6 @@ interface JsonlTurn {
   costUsd: number | null;
 }
 
-function computeCost(
-  model: string,
-  out: number,
-  inp: number,
-  cacheRead: number,
-  cacheWrite: number,
-): number | null {
-  const p = getPricing(model);
-  if (!p) return null;
-  return (
-    out * p.outputPerMillion +
-    inp * p.inputPerMillion +
-    cacheRead * p.cacheReadPerMillion +
-    cacheWrite * p.cacheWritePerMillion
-  ) / 1_000_000;
-}
 
 function scanJsonlFiles(dir: string): string[] {
   const files: string[] = [];
@@ -88,7 +72,7 @@ function loadTurns(dirs: string[]): JsonlTurn[] {
         cacheWriteTokens: cacheWrite,
         stopReason: msg["stop_reason"] ? String(msg["stop_reason"]) : null,
         messageJson: JSON.stringify(msg),
-        costUsd: computeCost(model, out, inp, cacheRead, cacheWrite),
+        costUsd: computeTurnCost(model, out, inp, cacheRead, cacheWrite),
       });
     }
   }
@@ -203,7 +187,8 @@ export class JsonlReader implements Reader {
       const d = new Date(t.timestampMs);
       const year = d.getUTCFullYear();
       const jan1 = new Date(Date.UTC(year, 0, 1));
-      const week = Math.ceil(((d.getTime() - jan1.getTime()) / 86400000 + jan1.getUTCDay() + 1) / 7);
+      const dayOfYear = Math.floor((d.getTime() - jan1.getTime()) / 86400000);
+      const week = Math.floor((dayOfYear + jan1.getUTCDay()) / 7);
       const label = `${year}-W${String(week).padStart(2, "0")}`;
       const e = byWeek.get(label) ?? {
         sessions: new Set(), turns: 0, outputTokens: 0, costUsd: 0, costKnown: false,

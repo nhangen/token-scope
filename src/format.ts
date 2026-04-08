@@ -85,7 +85,7 @@ export function renderTable(columns: Column[], rows: string[][]): string {
 
   const separator = widths.map((w) => "─".repeat(w)).join("─┼─");
   const header = widths
-    .map((w, i) => pad(bold(columns[i]!.header), w + (USE_COLOR ? bold("").length : 0)))
+    .map((w, i) => pad(bold(columns[i]!.header), w))
     .join(" │ ");
   const rowLines = rows.map((row) =>
     widths.map((w, i) => pad(row[i] ?? "", w, columns[i]?.align ?? "left")).join(" │ ")

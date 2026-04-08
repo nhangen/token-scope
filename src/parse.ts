@@ -66,7 +66,8 @@ export function categorizeBashCommand(command: string): string {
   if (!command.trim()) return "Other";
   let segment = command;
   segment = segment.trim();
-  segment = segment.replace(/^(export\s+)?[A-Z_][A-Z0-9_]*=[^\s;]+\s*;?\s*/gi, "").trim();
+  let prev = "";
+  while (prev !== segment) { prev = segment; segment = segment.replace(/^(export\s+)?[A-Z_][A-Z0-9_]*=[^\s;]+\s*;?\s*/gi, "").trim(); }
   segment = segment.replace(/^cd\s+\S+\s*&&\s*/, "").trim();
   segment = segment.replace(/^sudo\s+/, "").trim();
   const firstToken = segment.split(/\s+/)[0] ?? "";
