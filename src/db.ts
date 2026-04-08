@@ -341,3 +341,35 @@ export function queryBashTurns(db: Database, since: number): BashCommandRow[] {
       AND json_extract(block.value, '$.name') = 'Bash'
   `).all(since);
 }
+
+// ─── SQLite Reader Adapter ────────────────────────────────────────────────────
+
+interface SqliteReaderInterface {
+  querySummaryTotals(since: number): SummaryTotals;
+  queryRawTurnsForTool(since: number): RawTurnForTool[];
+  queryByTool(since: number, limit: number): ToolRow[];
+  queryByProject(since: number, limit: number): ProjectRow[];
+  queryWeeklyTrend(since: number): WeekRow[];
+  querySessions(since: number, limit: number): SessionRow[];
+  querySessionTurns(sessionId: string): TurnRow[];
+  queryThinkingTurns(since: number): ThinkingTurnRow[];
+  queryBashTurns(since: number): BashCommandRow[];
+  queryProjectMatches(fragment: string): ProjectMatch[];
+  close(): void;
+}
+
+export function createSqliteReader(db: Database): SqliteReaderInterface {
+  return {
+    querySummaryTotals: (since) => querySummaryTotals(db, since),
+    queryRawTurnsForTool: (since) => queryRawTurnsForTool(db, since),
+    queryByTool: (since, limit) => queryByTool(db, since, limit),
+    queryByProject: (since, limit) => queryByProject(db, since, limit),
+    queryWeeklyTrend: (since) => queryWeeklyTrend(db, since),
+    querySessions: (since, limit) => querySessions(db, since, limit),
+    querySessionTurns: (sessionId) => querySessionTurns(db, sessionId),
+    queryThinkingTurns: (since) => queryThinkingTurns(db, since),
+    queryBashTurns: (since) => queryBashTurns(db, since),
+    queryProjectMatches: (fragment) => queryProjectMatches(db, fragment),
+    close: () => db.close(),
+  };
+}

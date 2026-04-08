@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
-import { openDb, resolveDbPath, querySummaryTotals, queryByTool, queryByProject, querySessions, querySessionTurns } from "@/db";
+import { openDb, resolveDbPath, querySummaryTotals, queryByTool, queryByProject, querySessions, querySessionTurns, createSqliteReader } from "@/db";
 import type { Database } from "bun:sqlite";
 
 let db: Database;
@@ -120,5 +120,27 @@ describe("querySessionTurns", () => {
       expect(turn).toHaveProperty("outputTokens");
       expect(turn).toHaveProperty("costUsd");
     }
+  });
+});
+
+describe("createSqliteReader", () => {
+  it("returns an object implementing Reader interface", () => {
+    const db = openDb(resolveDbPath().path);
+    const reader = createSqliteReader(db);
+    expect(typeof reader.querySummaryTotals).toBe("function");
+    expect(typeof reader.queryByTool).toBe("function");
+    expect(typeof reader.queryProjectMatches).toBe("function");
+    expect(typeof reader.close).toBe("function");
+    reader.close();
+  });
+
+  it("querySummaryTotals returns same result as direct call", () => {
+    const db = openDb(resolveDbPath().path);
+    const reader = createSqliteReader(db);
+    const direct = querySummaryTotals(db, 0);
+    const via = reader.querySummaryTotals(0);
+    expect(via.turnCount).toBe(direct.turnCount);
+    expect(via.totalOutputTokens).toBe(direct.totalOutputTokens);
+    reader.close();
   });
 });
