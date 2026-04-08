@@ -122,6 +122,7 @@ describe("Thinking report", () => {
     expect(parsed.report).toBe("thinking");
     expect(parsed.overview).toHaveProperty("estimated_thinking_tokens");
     expect(parsed.overview).toHaveProperty("turns_with_thinking");
+    expect(Array.isArray(parsed.byProject)).toBe(true);
   });
 });
 
