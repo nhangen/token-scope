@@ -1,14 +1,13 @@
-import type { Database } from "bun:sqlite";
-import { querySummaryTotals, queryByTool, queryByProject, queryWeeklyTrend } from "@/db";
+import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, renderFootnote, formatTokens, formatUsd, formatPct, bold } from "@/format";
 
 interface Options { since: number; limit: number; json: boolean }
 
-export function renderSummary(db: Database, opts: Options): void {
-  const totals = querySummaryTotals(db, opts.since);
-  const byTool = queryByTool(db, opts.since, opts.limit);
-  const byProject = queryByProject(db, opts.since, opts.limit);
-  const weekly = queryWeeklyTrend(db, opts.since);
+export function renderSummary(reader: Reader, opts: Options): void {
+  const totals = reader.querySummaryTotals(opts.since);
+  const byTool = reader.queryByTool(opts.since, opts.limit);
+  const byProject = reader.queryByProject(opts.since, opts.limit);
+  const weekly = reader.queryWeeklyTrend(opts.since);
 
   if (opts.json) {
     console.log(JSON.stringify({

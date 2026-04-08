@@ -1,14 +1,13 @@
-import type { Database } from "bun:sqlite";
-import { queryThinkingTurns, querySummaryTotals, querySessions } from "@/db";
+import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, renderFootnote, formatTokens, formatUsd, formatPct, formatTimestamp, approx, bold, dim } from "@/format";
 import { estimateThinkingTokens, parseContentBlocks, resolveDominantTool } from "@/parse";
 
 interface Options { since: number; limit: number; json: boolean }
 
-export function renderThinkingReport(db: Database, opts: Options): void {
-  const thinkingTurns = queryThinkingTurns(db, opts.since);
-  const totals = querySummaryTotals(db, opts.since);
-  const allSessions = querySessions(db, opts.since, 10000);
+export function renderThinkingReport(reader: Reader, opts: Options): void {
+  const thinkingTurns = reader.queryThinkingTurns(opts.since);
+  const totals = reader.querySummaryTotals(opts.since);
+  const allSessions = reader.querySessions(opts.since, 10000);
 
   const sessionIdsWithThinking = new Set(thinkingTurns.map((t) => t.sessionId));
   const sessionsWithThinking = allSessions.filter((s) => sessionIdsWithThinking.has(s.sessionId));

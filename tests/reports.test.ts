@@ -1,17 +1,17 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
-import { openDb, resolveDbPath } from "@/db";
-import type { Database } from "bun:sqlite";
+import { openDb, resolveDbPath, createSqliteReader } from "@/db";
+import type { Reader } from "@/reader";
 import { renderSummary } from "@/reports/summary";
 import { renderToolDrillDown } from "@/reports/tool";
 import { renderProjectDrillDown } from "@/reports/project";
 import { renderSessionView, renderSessionsList } from "@/reports/session";
 import { renderThinkingReport } from "@/reports/thinking";
 
-let db: Database;
+let reader: Reader;
 const opts = { since: 0, limit: 20, json: false };
 
-beforeAll(() => { db = openDb(resolveDbPath().path); });
-afterAll(() => { db.close(); });
+beforeAll(() => { reader = createSqliteReader(openDb(resolveDbPath().path)); });
+afterAll(() => { reader.close(); });
 
 function capture(fn: () => void): string {
   const lines: string[] = [];
@@ -23,11 +23,11 @@ function capture(fn: () => void): string {
 
 describe("Summary report", () => {
   it("renders without throwing", () => {
-    expect(() => renderSummary(db, opts)).not.toThrow();
+    expect(() => renderSummary(reader, opts)).not.toThrow();
   });
 
   it("renders valid JSON with report=summary and required keys", () => {
-    const output = capture(() => renderSummary(db, { ...opts, json: true }));
+    const output = capture(() => renderSummary(reader, { ...opts, json: true }));
     const parsed = JSON.parse(output);
     expect(parsed.report).toBe("summary");
     expect(parsed.meta).toHaveProperty("generated_at");
@@ -39,48 +39,48 @@ describe("Summary report", () => {
 
 describe("Tool report", () => {
   it("renders bash without throwing", () => {
-    expect(() => renderToolDrillDown(db, "bash", opts)).not.toThrow();
+    expect(() => renderToolDrillDown(reader, "bash", opts)).not.toThrow();
   });
 
   it("renders non-bash tool without throwing", () => {
-    expect(() => renderToolDrillDown(db, "read", opts)).not.toThrow();
+    expect(() => renderToolDrillDown(reader, "read", opts)).not.toThrow();
   });
 
   it("renders valid JSON for bash with toolName field", () => {
-    const output = capture(() => renderToolDrillDown(db, "bash", { ...opts, json: true }));
+    const output = capture(() => renderToolDrillDown(reader, "bash", { ...opts, json: true }));
     const parsed = JSON.parse(output);
     expect(parsed.report).toBe("tool");
     expect(parsed.toolName).toBe("Bash");
   });
 
   it("handles unknown tool gracefully without throwing", () => {
-    expect(() => renderToolDrillDown(db, "nonexistent-tool-xyz", opts)).not.toThrow();
+    expect(() => renderToolDrillDown(reader, "nonexistent-tool-xyz", opts)).not.toThrow();
   });
 });
 
 describe("Project report", () => {
   it("renders single-match project without throwing", () => {
-    expect(() => renderProjectDrillDown(db, "token-scope", opts)).not.toThrow();
+    expect(() => renderProjectDrillDown(reader, "token-scope", opts)).not.toThrow();
   });
 
   it("prints disambiguation for multi-match without throwing", () => {
-    expect(() => renderProjectDrillDown(db, "projects", opts)).not.toThrow();
-    const output = capture(() => renderProjectDrillDown(db, "projects", opts));
+    expect(() => renderProjectDrillDown(reader, "projects", opts)).not.toThrow();
+    const output = capture(() => renderProjectDrillDown(reader, "projects", opts));
     expect(output).toContain("Multiple projects match");
   });
 
   it("handles no-match gracefully without throwing", () => {
-    expect(() => renderProjectDrillDown(db, "zzz-nonexistent-xyz", opts)).not.toThrow();
+    expect(() => renderProjectDrillDown(reader, "zzz-nonexistent-xyz", opts)).not.toThrow();
   });
 });
 
 describe("Session view", () => {
   it("renders sess-a1 without throwing", () => {
-    expect(() => renderSessionView(db, "sess-a1", false, "30d")).not.toThrow();
+    expect(() => renderSessionView(reader, "sess-a1", false, "30d")).not.toThrow();
   });
 
   it("renders valid JSON with 3 turns for sess-a1", () => {
-    const output = capture(() => renderSessionView(db, "sess-a1", true, "30d"));
+    const output = capture(() => renderSessionView(reader, "sess-a1", true, "30d"));
     const parsed = JSON.parse(output);
     expect(parsed.report).toBe("session");
     expect(Array.isArray(parsed.turns)).toBe(true);
@@ -88,17 +88,17 @@ describe("Session view", () => {
   });
 
   it("handles unknown session gracefully without throwing", () => {
-    expect(() => renderSessionView(db, "unknown-session-id", false, "30d")).not.toThrow();
+    expect(() => renderSessionView(reader, "unknown-session-id", false, "30d")).not.toThrow();
   });
 });
 
 describe("Sessions list", () => {
   it("renders without throwing", () => {
-    expect(() => renderSessionsList(db, opts)).not.toThrow();
+    expect(() => renderSessionsList(reader, opts)).not.toThrow();
   });
 
   it("renders valid JSON with sessions array and totals", () => {
-    const output = capture(() => renderSessionsList(db, { ...opts, json: true }));
+    const output = capture(() => renderSessionsList(reader, { ...opts, json: true }));
     const parsed = JSON.parse(output);
     expect(parsed.report).toBe("sessions");
     expect(Array.isArray(parsed.sessions)).toBe(true);
@@ -109,11 +109,11 @@ describe("Sessions list", () => {
 
 describe("Thinking report", () => {
   it("renders without throwing", () => {
-    expect(() => renderThinkingReport(db, opts)).not.toThrow();
+    expect(() => renderThinkingReport(reader, opts)).not.toThrow();
   });
 
   it("renders valid JSON with overview.estimated_thinking_tokens", () => {
-    const output = capture(() => renderThinkingReport(db, { ...opts, json: true }));
+    const output = capture(() => renderThinkingReport(reader, { ...opts, json: true }));
     const parsed = JSON.parse(output);
     expect(parsed.report).toBe("thinking");
     expect(parsed.overview).toHaveProperty("estimated_thinking_tokens");

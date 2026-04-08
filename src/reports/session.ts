@@ -1,12 +1,11 @@
-import type { Database } from "bun:sqlite";
-import { querySessionTurns, querySessions } from "@/db";
+import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, renderFootnote, formatTokens, formatUsd, formatPct, formatDuration, formatTimestamp, approx, truncate, bold, dim } from "@/format";
 import { parseContentBlocks, resolveDominantTool, estimateThinkingTokens } from "@/parse";
 
 interface Options { since: number; limit: number; json: boolean }
 
-export function renderSessionView(db: Database, sessionId: string, json: boolean, sinceStr: string): void {
-  const allSessions = querySessions(db, 0, 10000);
+export function renderSessionView(reader: Reader, sessionId: string, json: boolean, sinceStr: string): void {
+  const allSessions = reader.querySessions(0, 10000);
   const matching = allSessions.filter((s) => s.sessionId.startsWith(sessionId));
 
   if (matching.length === 0) {
@@ -21,7 +20,7 @@ export function renderSessionView(db: Database, sessionId: string, json: boolean
   }
 
   const session = matching[0]!;
-  const turns = querySessionTurns(db, session.sessionId);
+  const turns = reader.querySessionTurns(session.sessionId);
 
   if (turns.length === 0) {
     console.log(`Session "${sessionId}" has no valid turns.`);
@@ -103,8 +102,8 @@ export function renderSessionView(db: Database, sessionId: string, json: boolean
   console.log("");
 }
 
-export function renderSessionsList(db: Database, opts: Options): void {
-  const sessions = querySessions(db, opts.since, opts.limit);
+export function renderSessionsList(reader: Reader, opts: Options): void {
+  const sessions = reader.querySessions(opts.since, opts.limit);
 
   if (opts.json) {
     const total = sessions.reduce((s, r) => s + (r.totalCostUsd ?? 0), 0);

@@ -1,14 +1,13 @@
-import type { Database } from "bun:sqlite";
-import { queryRawTurnsForTool, queryBashTurns, querySummaryTotals } from "@/db";
+import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, formatTokens, formatUsd, formatPct, truncate, bold } from "@/format";
 import { parseContentBlocks, resolveDominantTool, categorizeBashCommand } from "@/parse";
 
 interface Options { since: number; limit: number; json: boolean }
 
-export function renderToolDrillDown(db: Database, toolName: string, opts: Options): void {
+export function renderToolDrillDown(reader: Reader, toolName: string, opts: Options): void {
   const normalizedName = toolName.charAt(0).toUpperCase() + toolName.slice(1).toLowerCase();
-  const allTurns = queryRawTurnsForTool(db, opts.since);
-  const allTotals = querySummaryTotals(db, opts.since);
+  const allTurns = reader.queryRawTurnsForTool(opts.since);
+  const allTotals = reader.querySummaryTotals(opts.since);
 
   const toolTurns = allTurns.filter((t) => resolveDominantTool(parseContentBlocks(t.message)).toLowerCase() === toolName.toLowerCase());
 
@@ -46,7 +45,7 @@ export function renderToolDrillDown(db: Database, toolName: string, opts: Option
   ]));
 
   if (toolName.toLowerCase() === "bash") {
-    const bashTurns = queryBashTurns(db, opts.since);
+    const bashTurns = reader.queryBashTurns(opts.since);
     const categories = new Map<string, { turns: number; outputTokens: number; costUsd: number }>();
     for (const t of bashTurns) {
       const cat = categorizeBashCommand(t.command ?? "");

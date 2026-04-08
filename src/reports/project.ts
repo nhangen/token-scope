@@ -1,11 +1,10 @@
-import type { Database } from "bun:sqlite";
-import { queryProjectMatches, queryByProject, querySessions } from "@/db";
-import { renderHeader, renderKV, renderTable, formatTokens, formatUsd, formatTimestamp, truncate, bold } from "@/format";
+import type { Reader } from "@/reader";
+import { renderHeader, renderKV, renderTable, formatTokens, formatUsd, formatTimestamp, bold } from "@/format";
 
 interface Options { since: number; limit: number; json: boolean }
 
-export function renderProjectDrillDown(db: Database, fragment: string, opts: Options): void {
-  const matches = queryProjectMatches(db, fragment);
+export function renderProjectDrillDown(reader: Reader, fragment: string, opts: Options): void {
+  const matches = reader.queryProjectMatches(fragment);
 
   if (matches.length === 0) {
     console.log(`No projects found matching "${fragment}".`);
@@ -20,7 +19,7 @@ export function renderProjectDrillDown(db: Database, fragment: string, opts: Opt
   }
 
   const cwd = matches[0]!.cwd;
-  const allProjects = queryByProject(db, opts.since, 1000);
+  const allProjects = reader.queryByProject(opts.since, 1000);
   const project = allProjects.find((p) => p.cwd === cwd);
 
   if (!project) {
@@ -28,7 +27,7 @@ export function renderProjectDrillDown(db: Database, fragment: string, opts: Opt
     return;
   }
 
-  const sessions = querySessions(db, opts.since, opts.limit).filter((s) => s.cwd === cwd);
+  const sessions = reader.querySessions(opts.since, opts.limit).filter((s) => s.cwd === cwd);
 
   if (opts.json) {
     console.log(JSON.stringify({
