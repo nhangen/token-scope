@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { computeTurnCost } from "@/pricing";
+import { computeTurnCost, computeCacheSavings } from "@/pricing";
 import { parseContentBlocks, resolveDominantTool } from "@/parse";
 import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow,
@@ -332,8 +332,42 @@ export class JsonlReader implements Reader {
     return rows.sort((a, b) => (b.bloatRatio ?? 0) - (a.bloatRatio ?? 0)).slice(0, limit);
   }
 
-  queryCacheStats(_since: number, _limit: number): CacheStatRow[] {
-    throw new Error("queryCacheStats not yet implemented");
+  queryCacheStats(since: number, limit: number): CacheStatRow[] {
+    const turns = this.filter(since);
+    const byProject = new Map<string, {
+      sessions: Set<string>; turns: number;
+      totalInputTokens: number; totalCacheReadTokens: number; totalCacheWriteTokens: number;
+      savings: number;
+    }>();
+    for (const t of turns) {
+      const e = byProject.get(t.cwd) ?? {
+        sessions: new Set(), turns: 0,
+        totalInputTokens: 0, totalCacheReadTokens: 0, totalCacheWriteTokens: 0,
+        savings: 0,
+      };
+      e.sessions.add(t.sessionId);
+      e.turns++;
+      e.totalInputTokens += t.inputTokens;
+      e.totalCacheReadTokens += t.cacheReadTokens;
+      e.totalCacheWriteTokens += t.cacheWriteTokens;
+      const s = computeCacheSavings(t.model, t.cacheReadTokens);
+      if (s !== null) e.savings += s;
+      byProject.set(t.cwd, e);
+    }
+    return Array.from(byProject.entries())
+      .map(([cwd, d]) => ({
+        cwd,
+        sessions: d.sessions.size,
+        turns: d.turns,
+        totalInputTokens: d.totalInputTokens,
+        totalCacheReadTokens: d.totalCacheReadTokens,
+        totalCacheWriteTokens: d.totalCacheWriteTokens,
+        cacheHitPct: d.totalInputTokens + d.totalCacheReadTokens > 0
+          ? (d.totalCacheReadTokens / (d.totalInputTokens + d.totalCacheReadTokens)) * 100 : null,
+        estimatedSavingsUsd: d.savings > 0 ? d.savings : null,
+      }))
+      .sort((a, b) => (b.estimatedSavingsUsd ?? 0) - (a.estimatedSavingsUsd ?? 0))
+      .slice(0, limit);
   }
 
   close(): void {}

@@ -119,6 +119,50 @@ describe("JsonlReader — close", () => {
   });
 });
 
+describe("JsonlReader — cache stats", () => {
+  it("returns a row for each project", () => {
+    const rows = reader.queryCacheStats(0, 20);
+    expect(rows.length).toBe(3);
+  });
+
+  it("beacon project has 2 sessions", () => {
+    const rows = reader.queryCacheStats(0, 20);
+    const beacon = rows.find((r) => r.cwd.includes("beacon"));
+    expect(beacon?.sessions).toBe(2);
+  });
+
+  it("beacon project totalCacheReadTokens is 165000", () => {
+    const rows = reader.queryCacheStats(0, 20);
+    const beacon = rows.find((r) => r.cwd.includes("beacon"));
+    expect(beacon?.totalCacheReadTokens).toBe(165000);
+  });
+
+  it("cacheHitPct is between 0 and 100 for all projects", () => {
+    const rows = reader.queryCacheStats(0, 20);
+    for (const r of rows) {
+      if (r.cacheHitPct !== null) {
+        expect(r.cacheHitPct).toBeGreaterThan(0);
+        expect(r.cacheHitPct).toBeLessThanOrEqual(100);
+      }
+    }
+  });
+
+  it("estimatedSavingsUsd is positive for projects with cache reads", () => {
+    const rows = reader.queryCacheStats(0, 20);
+    for (const r of rows.filter((r) => r.totalCacheReadTokens > 0)) {
+      expect(r.estimatedSavingsUsd).not.toBeNull();
+      expect(r.estimatedSavingsUsd!).toBeGreaterThan(0);
+    }
+  });
+
+  it("rows are sorted by estimatedSavingsUsd desc", () => {
+    const rows = reader.queryCacheStats(0, 20);
+    for (let i = 0; i < rows.length - 1; i++) {
+      expect(rows[i]!.estimatedSavingsUsd ?? 0).toBeGreaterThanOrEqual(rows[i + 1]!.estimatedSavingsUsd ?? 0);
+    }
+  });
+});
+
 describe("JsonlReader — context stats", () => {
   it("returns sessions with 6+ turns", () => {
     const rows = reader.queryContextStats(0, 20);
