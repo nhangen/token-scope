@@ -362,13 +362,38 @@ export function queryBashTurns(db: Database, since: number): BashCommandRow[] {
   `).all(since);
 }
 
-// ─── Context Stats (implemented in Task 2) ────────────────────────────────────
+// ─── Context Stats ────────────────────────────────────────────────────────────
 
 export function queryContextStats(db: Database, since: number, limit: number): ContextStatRow[] {
-  throw new Error("queryContextStats not yet implemented");
+  return db.query<ContextStatRow, [number, number]>(`
+    WITH ordered AS (
+      SELECT
+        bm.session_id,
+        bm.cwd,
+        CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER) AS inp,
+        ROW_NUMBER() OVER (PARTITION BY bm.session_id ORDER BY bm.timestamp) AS rn,
+        COUNT(*) OVER (PARTITION BY bm.session_id) AS turn_total
+      FROM assistant_messages am
+      JOIN base_messages bm ON am.uuid = bm.uuid
+      WHERE bm.timestamp > ? AND json_valid(am.message) = 1
+    )
+    SELECT
+      session_id AS sessionId,
+      MAX(cwd) AS cwd,
+      COUNT(*) AS turnCount,
+      AVG(CASE WHEN rn <= 3 THEN CAST(inp AS REAL) END) AS avgEarlyInput,
+      AVG(CASE WHEN rn > turn_total - 3 THEN CAST(inp AS REAL) END) AS avgLateInput,
+      (AVG(CASE WHEN rn > turn_total - 3 THEN CAST(inp AS REAL) END) /
+       NULLIF(AVG(CASE WHEN rn <= 3 THEN CAST(inp AS REAL) END), 0)) AS bloatRatio
+    FROM ordered
+    GROUP BY session_id
+    HAVING COUNT(*) >= 6
+    ORDER BY bloatRatio DESC NULLS LAST
+    LIMIT ?
+  `).all(since, limit);
 }
 
-// ─── Cache Stats (implemented in Task 2) ──────────────────────────────────────
+// ─── Cache Stats ──────────────────────────────────────────────────────────────
 
 export function queryCacheStats(db: Database, since: number, limit: number): CacheStatRow[] {
   throw new Error("queryCacheStats not yet implemented");

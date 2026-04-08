@@ -5,6 +5,7 @@ import { parseContentBlocks, resolveDominantTool } from "@/parse";
 import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow,
   WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool,
+  ContextStatRow, CacheStatRow,
 } from "@/reader";
 import type { Reader } from "@/reader";
 
@@ -307,6 +308,32 @@ export class JsonlReader implements Reader {
       }
     }
     return results;
+  }
+
+  queryContextStats(since: number, limit: number): ContextStatRow[] {
+    const turns = this.filter(since);
+    const bySession = new Map<string, { cwd: string; turns: JsonlTurn[] }>();
+    for (const t of turns) {
+      const e = bySession.get(t.sessionId) ?? { cwd: t.cwd, turns: [] };
+      e.turns.push(t);
+      bySession.set(t.sessionId, e);
+    }
+    const rows: ContextStatRow[] = [];
+    for (const [sessionId, d] of bySession.entries()) {
+      if (d.turns.length < 6) continue;
+      const sorted = d.turns.slice().sort((a, b) => a.timestampMs - b.timestampMs);
+      const early = sorted.slice(0, 3);
+      const late = sorted.slice(-3);
+      const avgEarlyInput = early.reduce((s, t) => s + t.inputTokens, 0) / 3;
+      const avgLateInput = late.reduce((s, t) => s + t.inputTokens, 0) / 3;
+      const bloatRatio = avgEarlyInput > 0 ? avgLateInput / avgEarlyInput : null;
+      rows.push({ sessionId, cwd: d.cwd, turnCount: d.turns.length, avgEarlyInput, avgLateInput, bloatRatio });
+    }
+    return rows.sort((a, b) => (b.bloatRatio ?? 0) - (a.bloatRatio ?? 0)).slice(0, limit);
+  }
+
+  queryCacheStats(_since: number, _limit: number): CacheStatRow[] {
+    throw new Error("queryCacheStats not yet implemented");
   }
 
   close(): void {}

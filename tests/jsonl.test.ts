@@ -11,24 +11,24 @@ beforeAll(() => {
 describe("JsonlReader — summary totals", () => {
   it("counts all turns with since=0", () => {
     const totals = reader.querySummaryTotals(0);
-    expect(totals.turnCount).toBe(6);
+    expect(totals.turnCount).toBe(13);
   });
 
   it("counts sessions with since=0", () => {
     const totals = reader.querySummaryTotals(0);
-    expect(totals.sessionCount).toBe(3);
+    expect(totals.sessionCount).toBe(4);
   });
 
   it("sums output tokens with since=0", () => {
     const totals = reader.querySummaryTotals(0);
-    expect(totals.totalOutputTokens).toBe(2050);
+    expect(totals.totalOutputTokens).toBe(2750);
   });
 
   it("excludes old session with 30d window", () => {
     const since = Math.floor(Date.now() / 1000) - 30 * 86400;
     const totals = reader.querySummaryTotals(since);
-    expect(totals.turnCount).toBe(5);
-    expect(totals.sessionCount).toBe(2);
+    expect(totals.turnCount).toBe(12);
+    expect(totals.sessionCount).toBe(3);
   });
 });
 
@@ -60,9 +60,9 @@ describe("JsonlReader — by-project", () => {
 });
 
 describe("JsonlReader — sessions", () => {
-  it("returns 3 sessions with since=0", () => {
+  it("returns 4 sessions with since=0", () => {
     const sessions = reader.querySessions(0, 20);
-    expect(sessions.length).toBe(3);
+    expect(sessions.length).toBe(4);
   });
 
   it("sess-j1 has 3 turns", () => {
@@ -116,5 +116,42 @@ describe("JsonlReader — bash turns", () => {
 describe("JsonlReader — close", () => {
   it("close() does not throw", () => {
     expect(() => reader.close()).not.toThrow();
+  });
+});
+
+describe("JsonlReader — context stats", () => {
+  it("returns sessions with 6+ turns", () => {
+    const rows = reader.queryContextStats(0, 20);
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.sessionId).toBe("sess-j4");
+  });
+
+  it("sess-j4 has correct turnCount", () => {
+    const rows = reader.queryContextStats(0, 20);
+    expect(rows[0]!.turnCount).toBe(7);
+  });
+
+  it("avgEarlyInput is average of first 3 turns", () => {
+    const rows = reader.queryContextStats(0, 20);
+    // first 3 turns: 1000, 1200, 1400 → avg 1200
+    expect(rows[0]!.avgEarlyInput).toBeCloseTo(1200, 0);
+  });
+
+  it("avgLateInput is average of last 3 turns", () => {
+    const rows = reader.queryContextStats(0, 20);
+    // last 3 turns: 6000, 8000, 9500 → avg 7833.33
+    expect(rows[0]!.avgLateInput).toBeCloseTo(7833, 0);
+  });
+
+  it("bloatRatio is avgLateInput / avgEarlyInput", () => {
+    const rows = reader.queryContextStats(0, 20);
+    // 7833.33 / 1200 ≈ 6.53
+    expect(rows[0]!.bloatRatio).toBeCloseTo(6.5, 0);
+  });
+
+  it("returns empty for since that excludes sess-j4", () => {
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    const rows = reader.queryContextStats(future, 20);
+    expect(rows.length).toBe(0);
   });
 });
