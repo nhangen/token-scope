@@ -19,6 +19,7 @@ REPORT MODES (mutually exclusive)
   --sessions              List recent sessions with stats
   --context               Context bloat analysis (sessions with 6+ turns)
   --cache                 Cache efficiency by project
+  --efficiency            Session efficiency (per-turn cost by session length)
 
 SHARED FLAGS
   --source <jsonl|sqlite> Data source (default: auto-detect)
@@ -48,7 +49,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -83,6 +84,7 @@ function parseArgs(argv: string[]): CliArgs {
       case "--sessions": setMode("sessions"); break;
       case "--context": setMode("context"); break;
       case "--cache": setMode("cache"); break;
+      case "--efficiency": setMode("efficiency"); break;
       case "--tool":
         setMode("tool");
         args.toolName = argv[++i];
@@ -198,6 +200,10 @@ async function main() {
     case "cache": {
       const { renderCacheReport } = await import("@/reports/cache");
       renderCacheReport(reader, options); break;
+    }
+    case "efficiency": {
+      const { renderEfficiencyReport } = await import("@/reports/efficiency");
+      renderEfficiencyReport(reader, options); break;
     }
   }
 

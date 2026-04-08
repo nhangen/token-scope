@@ -9,6 +9,7 @@ import { renderSessionView, renderSessionsList } from "@/reports/session";
 import { renderThinkingReport } from "@/reports/thinking";
 import { renderContextReport } from "@/reports/context";
 import { renderCacheReport } from "@/reports/cache";
+import { renderEfficiencyReport } from "@/reports/efficiency";
 
 let reader: Reader;
 const opts = { since: 0, sinceStr: "all", limit: 20, json: false };
@@ -192,5 +193,28 @@ describe("Cache report", () => {
       expect(row).toHaveProperty("cacheHitPct");
       expect(row).toHaveProperty("estimatedSavingsUsd");
     }
+  });
+});
+
+describe("Efficiency report", () => {
+  let jsonlReader: Reader;
+  beforeAll(() => { jsonlReader = createReader({ source: "jsonl" }); });
+  afterAll(() => { jsonlReader.close(); });
+
+  it("renders without throwing via JSONL", () => {
+    expect(() => renderEfficiencyReport(jsonlReader, opts)).not.toThrow();
+  });
+
+  it("renders valid JSON with buckets array", () => {
+    const output = capture(() => renderEfficiencyReport(jsonlReader, { ...opts, json: true }));
+    const parsed = JSON.parse(output);
+    expect(parsed.report).toBe("efficiency");
+    expect(Array.isArray(parsed.buckets)).toBe(true);
+  });
+
+  it("buckets cover 1-5, 6-15, 16-30, 31-50, 51+", () => {
+    const output = capture(() => renderEfficiencyReport(jsonlReader, { ...opts, json: true }));
+    const parsed = JSON.parse(output);
+    expect(parsed.buckets.map((b: any) => b.bucket)).toEqual(["1–5", "6–15", "16–30", "31–50", "51+"]);
   });
 });
