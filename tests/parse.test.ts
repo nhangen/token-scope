@@ -120,3 +120,39 @@ describe("categorizeBashCommand", () => {
     expect(categorizeBashCommand("")).toBe("Other");
   });
 });
+
+import { getPricing, computeCacheSavings } from "@/pricing";
+
+describe("getPricing", () => {
+  it("returns pricing for a known model", () => {
+    const p = getPricing("claude-sonnet-4-6");
+    expect(p).not.toBeNull();
+    expect(p!.inputPerMillion).toBe(3.00);
+    expect(p!.cacheReadPerMillion).toBe(0.30);
+    expect(p!.outputPerMillion).toBe(15.00);
+  });
+
+  it("returns null for an unknown model", () => {
+    expect(getPricing("claude-unknown-99")).toBeNull();
+  });
+
+  it("returns pricing for haiku", () => {
+    expect(getPricing("claude-haiku-4-5-20251001")!.outputPerMillion).toBe(4.00);
+  });
+});
+
+describe("computeCacheSavings", () => {
+  it("calculates savings for a known model", () => {
+    // sonnet: (3.00 - 0.30) = 2.70 per million
+    const savings = computeCacheSavings("claude-sonnet-4-6", 1_000_000);
+    expect(savings).toBeCloseTo(2.70, 4);
+  });
+
+  it("returns null for an unknown model", () => {
+    expect(computeCacheSavings("unknown-model", 1_000_000)).toBeNull();
+  });
+
+  it("returns 0 for zero cache read tokens", () => {
+    expect(computeCacheSavings("claude-sonnet-4-6", 0)).toBe(0);
+  });
+});
