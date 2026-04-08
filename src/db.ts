@@ -145,12 +145,12 @@ export function openDb(path: string): Database {
 // ─── Time Helpers ─────────────────────────────────────────────────────────────
 
 export function parseSince(since: string): number {
-  const now = Date.now();
+  const now = Math.floor(Date.now() / 1000);
   const match = /^(\d+)(h|d|w)$/.exec(since);
   if (!match) throw new Error(`Invalid --since format: "${since}". Use Nh, Nd, or Nw.`);
   const n = parseInt(match[1]!, 10);
   const unit = match[2]!;
-  const multipliers: Record<string, number> = { h: 3_600_000, d: 86_400_000, w: 604_800_000 };
+  const multipliers: Record<string, number> = { h: 3_600, d: 86_400, w: 604_800 };
   return now - n * multipliers[unit]!;
 }
 
@@ -249,8 +249,8 @@ export function queryByProject(db: Database, since: number, limit: number): Proj
 export function querySessions(db: Database, since: number, limit: number): SessionRow[] {
   return db.query<SessionRow, [number, number]>(`
     SELECT bm.session_id AS sessionId, bm.cwd,
-      MIN(bm.timestamp) AS startedAt,
-      CASE WHEN COUNT(*) > 1 THEN MAX(bm.timestamp) - MIN(bm.timestamp) ELSE NULL END AS durationMs,
+      MIN(bm.timestamp) * 1000 AS startedAt,
+      CASE WHEN COUNT(*) > 1 THEN (MAX(bm.timestamp) - MIN(bm.timestamp)) * 1000 ELSE NULL END AS durationMs,
       COUNT(*) AS turnCount,
       SUM(CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER)) AS outputTokens,
       CASE WHEN SUM(CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER) +
@@ -269,7 +269,7 @@ export function querySessions(db: Database, since: number, limit: number): Sessi
 
 export function querySessionTurns(db: Database, sessionId: string): TurnRow[] {
   return db.query<TurnRow, [string]>(`
-    SELECT am.uuid, bm.timestamp,
+    SELECT am.uuid, bm.timestamp * 1000 AS timestamp,
       CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER) AS outputTokens,
       CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER) AS inputTokens,
       CAST(json_extract(am.message, '$.usage.cache_read_input_tokens') AS INTEGER) AS cacheReadTokens,
@@ -288,7 +288,7 @@ export function querySessionTurns(db: Database, sessionId: string): TurnRow[] {
 export function queryWeeklyTrend(db: Database, since: number): WeekRow[] {
   return db.query<WeekRow, [number]>(`
     SELECT
-      strftime('%Y-W%W', datetime(bm.timestamp / 1000, 'unixepoch')) AS weekLabel,
+      strftime('%Y-W%W', datetime(bm.timestamp, 'unixepoch')) AS weekLabel,
       COUNT(DISTINCT bm.session_id) AS sessions, COUNT(*) AS turns,
       SUM(CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER)) AS outputTokens,
       SUM(am.cost_usd) AS totalCostUsd
@@ -301,7 +301,7 @@ export function queryWeeklyTrend(db: Database, since: number): WeekRow[] {
 
 export function queryThinkingTurns(db: Database, since: number): ThinkingTurnRow[] {
   return db.query<ThinkingTurnRow, [number]>(`
-    SELECT am.uuid, bm.session_id AS sessionId, bm.cwd, bm.timestamp,
+    SELECT am.uuid, bm.session_id AS sessionId, bm.cwd, bm.timestamp * 1000 AS timestamp,
       CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER) AS outputTokens,
       am.cost_usd AS costUsd,
       SUM(CASE WHEN json_extract(block.value, '$.type') = 'thinking'

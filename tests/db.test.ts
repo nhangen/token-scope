@@ -33,8 +33,8 @@ describe("querySummaryTotals", () => {
   });
 
   it("time filter excludes old sessions", () => {
-    // 2026-03-01 00:00:00 UTC in ms = 1740787200000
-    const result = querySummaryTotals(db, 1740787200000);
+    // 2026-03-01 00:00:00 UTC in seconds = 1740787200
+    const result = querySummaryTotals(db, 1740787200);
     // Old session (sess-c1) had 310+195=505 tokens - excluded
     // Recent: 210+850+1528+420+380+77+145 = 3610
     expect(result.totalOutputTokens).toBe(3610);

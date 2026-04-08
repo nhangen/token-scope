@@ -18,7 +18,7 @@ export function renderSummary(db: Database, opts: Options): void {
     return;
   }
 
-  const sinceDate = new Date(opts.since).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const sinceDate = new Date(opts.since * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   console.log(renderHeader(`token-scope — Summary  (${sinceDate} → now)`));
   console.log(`  Sessions: ${bold(String(totals.sessionCount))}   Turns: ${bold(String(totals.turnCount))}\n`);
 
