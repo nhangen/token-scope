@@ -103,6 +103,26 @@ export interface RawTurnForTool {
   message: string;
 }
 
+export interface ContextStatRow {
+  sessionId: string;
+  cwd: string | null;
+  turnCount: number;
+  avgEarlyInput: number;
+  avgLateInput: number;
+  bloatRatio: number | null;
+}
+
+export interface CacheStatRow {
+  cwd: string;
+  sessions: number;
+  turns: number;
+  totalInputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheWriteTokens: number;
+  cacheHitPct: number | null;
+  estimatedSavingsUsd: number | null;
+}
+
 // ─── DB Path Resolution ───────────────────────────────────────────────────────
 
 export function resolveDbPath(flagPath?: string): DbPathResult {
@@ -342,6 +362,18 @@ export function queryBashTurns(db: Database, since: number): BashCommandRow[] {
   `).all(since);
 }
 
+// ─── Context Stats (implemented in Task 2) ────────────────────────────────────
+
+export function queryContextStats(db: Database, since: number, limit: number): ContextStatRow[] {
+  throw new Error("queryContextStats not yet implemented");
+}
+
+// ─── Cache Stats (implemented in Task 2) ──────────────────────────────────────
+
+export function queryCacheStats(db: Database, since: number, limit: number): CacheStatRow[] {
+  throw new Error("queryCacheStats not yet implemented");
+}
+
 // ─── SQLite Reader Adapter ────────────────────────────────────────────────────
 
 interface SqliteReaderInterface {
@@ -355,6 +387,8 @@ interface SqliteReaderInterface {
   queryThinkingTurns(since: number): ThinkingTurnRow[];
   queryBashTurns(since: number): BashCommandRow[];
   queryProjectMatches(fragment: string): ProjectMatch[];
+  queryContextStats(since: number, limit: number): ContextStatRow[];
+  queryCacheStats(since: number, limit: number): CacheStatRow[];
   close(): void;
 }
 
@@ -370,6 +404,8 @@ export function createSqliteReader(db: Database): SqliteReaderInterface {
     queryThinkingTurns: (since) => queryThinkingTurns(db, since),
     queryBashTurns: (since) => queryBashTurns(db, since),
     queryProjectMatches: (fragment) => queryProjectMatches(db, fragment),
+    queryContextStats: (since, limit) => queryContextStats(db, since, limit),
+    queryCacheStats: (since, limit) => queryCacheStats(db, since, limit),
     close: () => db.close(),
   };
 }
