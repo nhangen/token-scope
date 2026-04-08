@@ -18,6 +18,7 @@ REPORT MODES (mutually exclusive)
   --thinking              Thinking token analysis
   --sessions              List recent sessions with stats
   --context               Context bloat analysis (sessions with 6+ turns)
+  --cache                 Cache efficiency by project
 
 SHARED FLAGS
   --source <jsonl|sqlite> Data source (default: auto-detect)
@@ -47,7 +48,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -81,6 +82,7 @@ function parseArgs(argv: string[]): CliArgs {
       case "--thinking": setMode("thinking"); break;
       case "--sessions": setMode("sessions"); break;
       case "--context": setMode("context"); break;
+      case "--cache": setMode("cache"); break;
       case "--tool":
         setMode("tool");
         args.toolName = argv[++i];
@@ -192,6 +194,10 @@ async function main() {
     case "context": {
       const { renderContextReport } = await import("@/reports/context");
       renderContextReport(reader, options); break;
+    }
+    case "cache": {
+      const { renderCacheReport } = await import("@/reports/cache");
+      renderCacheReport(reader, options); break;
     }
   }
 
