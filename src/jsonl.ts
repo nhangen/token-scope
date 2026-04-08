@@ -43,16 +43,16 @@ function computeCost(
 function scanJsonlFiles(dir: string): string[] {
   const files: string[] = [];
   if (!existsSync(dir)) return files;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const projectDir = join(dir, entry.name);
-    for (const f of readdirSync(projectDir, { withFileTypes: true })) {
-      if (f.isDirectory() && f.name === "subagents") continue;
-      if (f.isFile() && f.name.endsWith(".jsonl")) {
-        files.push(join(projectDir, f.name));
+  function walk(current: string) {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (entry.name !== "subagents") walk(join(current, entry.name));
+      } else if (entry.name.endsWith(".jsonl")) {
+        files.push(join(current, entry.name));
       }
     }
   }
+  walk(dir);
   return files;
 }
 
@@ -301,25 +301,14 @@ export class JsonlReader implements Reader {
 
   queryBashTurns(since: number): BashCommandRow[] {
     return this.filter(since)
-      .filter((t) => {
+      .flatMap((t) => {
         const blocks = parseContentBlocks(t.messageJson);
-        return blocks.some(
-          (b) => b.type === "tool_use" && (b.name ?? "").toLowerCase() === "bash",
-        );
-      })
-      .map((t) => {
-        const blocks = parseContentBlocks(t.messageJson);
-        const bashBlock = blocks.find(
-          (b) => b.type === "tool_use" && (b.name ?? "").toLowerCase() === "bash",
-        );
-        const command =
-          bashBlock?.input && typeof bashBlock.input === "object" && "command" in bashBlock.input
-            ? String((bashBlock.input as Record<string, unknown>)["command"])
-            : null;
-        return {
-          uuid: t.uuid, sessionId: t.sessionId, timestamp: t.timestampMs,
-          outputTokens: t.outputTokens, costUsd: t.costUsd, command: command ?? "",
-        };
+        const bashBlock = blocks.find((b) => b.type === "tool_use" && (b.name ?? "").toLowerCase() === "bash");
+        if (!bashBlock) return [];
+        const command = bashBlock.input && typeof bashBlock.input === "object" && "command" in bashBlock.input
+          ? String((bashBlock.input as Record<string, unknown>)["command"])
+          : "";
+        return [{ uuid: t.uuid, sessionId: t.sessionId, timestamp: t.timestampMs, outputTokens: t.outputTokens, costUsd: t.costUsd, command }];
       });
   }
 
