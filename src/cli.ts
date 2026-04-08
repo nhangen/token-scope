@@ -1,4 +1,6 @@
-import { resolveDbPath, openDb, parseSince } from "@/db";
+import { parseSince } from "@/db";
+import { createReader } from "@/reader";
+import type { Reader } from "@/reader";
 
 const VERSION = "1.0.0";
 
@@ -17,15 +19,17 @@ REPORT MODES (mutually exclusive)
   --sessions              List recent sessions with stats
 
 SHARED FLAGS
+  --source <jsonl|sqlite> Data source (default: auto-detect)
   --since <duration>      Time window: Nh hours, Nd days, Nw weeks (default: 30d)
   --limit <n>             Cap rows in tables (default: 20)
   --json                  Machine-readable JSON output
-  --db <path>             Override database path (overrides TOKEN_SCOPE_DB)
+  --db <path>             Override SQLite database path (overrides TOKEN_SCOPE_DB)
   --version               Print version and exit
   --help                  Show this help
 
 ENVIRONMENT
-  TOKEN_SCOPE_DB           Override database path
+  TOKEN_SCOPE_DB           Override SQLite database path
+  TOKEN_SCOPE_PROJECTS_DIR Override JSONL projects directory (default: ~/.claude/projects)
   TOKEN_SCOPE_PRICING_FILE Override pricing constants JSON file
   NO_COLOR                 Disable ANSI color output
 
@@ -36,6 +40,7 @@ EXAMPLES
   token-scope --session abc123def --json
   token-scope --thinking --since 90d
   token-scope --sessions --limit 50
+  token-scope --source sqlite
 `.trim();
 
 interface CliArgs {
@@ -47,6 +52,7 @@ interface CliArgs {
   limit: number;
   json: boolean;
   dbPath?: string;
+  source?: "jsonl" | "sqlite" | "auto";
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -104,6 +110,15 @@ function parseArgs(argv: string[]): CliArgs {
         args.dbPath = argv[++i];
         if (!args.dbPath) { process.stderr.write("Error: --db requires a path argument.\n"); process.exit(1); }
         break;
+      case "--source": {
+        const s = argv[++i];
+        if (s !== "jsonl" && s !== "sqlite" && s !== "auto") {
+          process.stderr.write(`Error: --source must be jsonl, sqlite, or auto.\n`);
+          process.exit(1);
+        }
+        args.source = s;
+        break;
+      }
       default:
         if (arg.startsWith("--")) {
           process.stderr.write(`Error: Unknown flag "${arg}". Run token-scope --help for usage.\n`);
@@ -118,8 +133,8 @@ function parseArgs(argv: string[]): CliArgs {
 async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv);
-  const { path: dbPath } = resolveDbPath(args.dbPath);
-  const db = openDb(dbPath);
+
+  const reader = createReader({ source: args.source ?? "auto", dbPath: args.dbPath });
 
   let since: number;
   try {
@@ -130,10 +145,9 @@ async function main() {
   }
 
   if (args.mode === "session") {
-    // @ts-ignore (reports/session not yet created)
     const { renderSessionView } = await import("@/reports/session");
-    await renderSessionView(db, args.sessionId!, args.json, args.since);
-    db.close();
+    await renderSessionView(reader, args.sessionId!, args.json, args.since);
+    reader.close();
     return;
   }
 
@@ -141,33 +155,28 @@ async function main() {
 
   switch (args.mode) {
     case "summary": {
-      // @ts-ignore (reports/summary not yet created)
       const { renderSummary } = await import("@/reports/summary");
-      renderSummary(db, options); break;
+      renderSummary(reader, options); break;
     }
     case "tool": {
-      // @ts-ignore (reports/tool not yet created)
       const { renderToolDrillDown } = await import("@/reports/tool");
-      renderToolDrillDown(db, args.toolName!, options); break;
+      renderToolDrillDown(reader, args.toolName!, options); break;
     }
     case "project": {
-      // @ts-ignore (reports/project not yet created)
       const { renderProjectDrillDown } = await import("@/reports/project");
-      renderProjectDrillDown(db, args.projectFragment!, options); break;
+      renderProjectDrillDown(reader, args.projectFragment!, options); break;
     }
     case "sessions": {
-      // @ts-ignore (reports/session not yet created)
       const { renderSessionsList } = await import("@/reports/session");
-      renderSessionsList(db, options); break;
+      renderSessionsList(reader, options); break;
     }
     case "thinking": {
-      // @ts-ignore (reports/thinking not yet created)
       const { renderThinkingReport } = await import("@/reports/thinking");
-      renderThinkingReport(db, options); break;
+      renderThinkingReport(reader, options); break;
     }
   }
 
-  db.close();
+  reader.close();
 }
 
 main().catch((e) => {
