@@ -10,6 +10,7 @@ import { renderThinkingReport } from "@/reports/thinking";
 import { renderContextReport } from "@/reports/context";
 import { renderCacheReport } from "@/reports/cache";
 import { renderEfficiencyReport } from "@/reports/efficiency";
+import { renderToolingReport } from "@/reports/tools";
 
 let reader: Reader;
 const opts = { since: 0, sinceStr: "all", limit: 20, json: false };
@@ -217,5 +218,31 @@ describe("Efficiency report", () => {
     const output = capture(() => renderEfficiencyReport(jsonlReader, { ...opts, json: true }));
     const parsed = JSON.parse(output);
     expect(parsed.buckets.map((b: any) => b.bucket)).toEqual(["1–5", "6–15", "16–30", "31–50", "51+"]);
+  });
+});
+
+describe("Tooling report", () => {
+  let jsonlReader: Reader;
+  beforeAll(() => { jsonlReader = createReader({ source: "jsonl" }); });
+  afterAll(() => { jsonlReader.close(); });
+
+  it("renders without throwing via JSONL", () => {
+    expect(() => renderToolingReport(jsonlReader, opts)).not.toThrow();
+  });
+
+  it("renders valid JSON with layers and byTool arrays", () => {
+    const output = capture(() => renderToolingReport(jsonlReader, { ...opts, json: true }));
+    const parsed = JSON.parse(output);
+    expect(parsed.report).toBe("tools");
+    expect(Array.isArray(parsed.layers)).toBe(true);
+    expect(Array.isArray(parsed.byTool)).toBe(true);
+    expect(Array.isArray(parsed.unclassified)).toBe(true);
+    expect(parsed.summary).toHaveProperty("totalCalls");
+  });
+
+  it("has zero unclassified tools in fixture data", () => {
+    const output = capture(() => renderToolingReport(jsonlReader, { ...opts, json: true }));
+    const parsed = JSON.parse(output);
+    expect(parsed.unclassified.length).toBe(0);
   });
 });
