@@ -113,6 +113,18 @@ describe("JsonlReader — bash turns", () => {
   });
 });
 
+describe("JsonlReader — raw turns for tool", () => {
+  it("each row has sessionId and cwd fields", () => {
+    const rows = reader.queryRawTurnsForTool(0);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row).toHaveProperty("sessionId");
+      expect(row).toHaveProperty("cwd");
+      expect(typeof row.sessionId).toBe("string");
+    }
+  });
+});
+
 describe("JsonlReader — close", () => {
   it("close() does not throw", () => {
     expect(() => reader.close()).not.toThrow();
