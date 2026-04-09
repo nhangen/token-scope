@@ -11,7 +11,7 @@ beforeAll(() => {
 describe("JsonlReader — summary totals", () => {
   it("counts all turns with since=0", () => {
     const totals = reader.querySummaryTotals(0);
-    expect(totals.turnCount).toBe(13);
+    expect(totals.turnCount).toBe(17);
   });
 
   it("counts sessions with since=0", () => {
@@ -21,13 +21,13 @@ describe("JsonlReader — summary totals", () => {
 
   it("sums output tokens with since=0", () => {
     const totals = reader.querySummaryTotals(0);
-    expect(totals.totalOutputTokens).toBe(2750);
+    expect(totals.totalOutputTokens).toBe(3330);
   });
 
   it("excludes old session with 30d window", () => {
     const since = Math.floor(Date.now() / 1000) - 30 * 86400;
     const totals = reader.querySummaryTotals(since);
-    expect(totals.turnCount).toBe(12);
+    expect(totals.turnCount).toBe(16);
     expect(totals.sessionCount).toBe(3);
   });
 });
@@ -52,10 +52,10 @@ describe("JsonlReader — by-project", () => {
     expect(rows.length).toBe(3);
   });
 
-  it("token-scope project has 3 turns", () => {
+  it("token-scope project has 7 turns", () => {
     const rows = reader.queryByProject(0, 20);
     const ts = rows.find((r) => r.cwd?.includes("token-scope"));
-    expect(ts?.turns).toBe(3);
+    expect(ts?.turns).toBe(7);
   });
 });
 
@@ -65,17 +65,17 @@ describe("JsonlReader — sessions", () => {
     expect(sessions.length).toBe(4);
   });
 
-  it("sess-j1 has 3 turns", () => {
+  it("sess-j1 has 7 turns", () => {
     const sessions = reader.querySessions(0, 20);
     const s = sessions.find((r) => r.sessionId === "sess-j1");
-    expect(s?.turnCount).toBe(3);
+    expect(s?.turnCount).toBe(7);
   });
 });
 
 describe("JsonlReader — session turns", () => {
-  it("returns 3 turns for sess-j1", () => {
+  it("returns 7 turns for sess-j1", () => {
     const turns = reader.querySessionTurns("sess-j1");
-    expect(turns.length).toBe(3);
+    expect(turns.length).toBe(7);
   });
 
   it("turns are ordered by timestamp asc", () => {
@@ -108,8 +108,20 @@ describe("JsonlReader — thinking turns", () => {
 describe("JsonlReader — bash turns", () => {
   it("finds bash turns with since=0", () => {
     const turns = reader.queryBashTurns(0);
-    expect(turns.length).toBe(1);
+    expect(turns.length).toBe(2);
     expect(turns[0]!.command).toBe("bun test");
+  });
+});
+
+describe("JsonlReader — raw turns for tool", () => {
+  it("each row has sessionId and cwd fields", () => {
+    const rows = reader.queryRawTurnsForTool(0);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row).toHaveProperty("sessionId");
+      expect(row).toHaveProperty("cwd");
+      expect(typeof row.sessionId).toBe("string");
+    }
   });
 });
 
@@ -166,8 +178,9 @@ describe("JsonlReader — cache stats", () => {
 describe("JsonlReader — context stats", () => {
   it("returns sessions with 6+ turns", () => {
     const rows = reader.queryContextStats(0, 20);
-    expect(rows.length).toBe(1);
-    expect(rows[0]!.sessionId).toBe("sess-j4");
+    expect(rows.length).toBe(2);
+    const sess4 = rows.find((r) => r.sessionId === "sess-j4");
+    expect(sess4).toBeDefined();
   });
 
   it("sess-j4 has correct turnCount", () => {

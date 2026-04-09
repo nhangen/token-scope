@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
-import { openDb, resolveDbPath, querySummaryTotals, queryByTool, queryByProject, querySessions, querySessionTurns, createSqliteReader } from "@/db";
+import { openDb, resolveDbPath, querySummaryTotals, queryByTool, queryByProject, querySessions, querySessionTurns, queryRawTurnsForTool, createSqliteReader } from "@/db";
 import type { Database } from "bun:sqlite";
 
 let db: Database;
@@ -119,6 +119,18 @@ describe("querySessionTurns", () => {
       expect(turn).toHaveProperty("message");
       expect(turn).toHaveProperty("outputTokens");
       expect(turn).toHaveProperty("costUsd");
+    }
+  });
+});
+
+describe("queryRawTurnsForTool", () => {
+  it("each row has sessionId and cwd fields", () => {
+    const rows = queryRawTurnsForTool(db, 0);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row).toHaveProperty("sessionId");
+      expect(row).toHaveProperty("cwd");
+      expect(typeof row.sessionId).toBe("string");
     }
   });
 });

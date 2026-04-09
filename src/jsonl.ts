@@ -117,6 +117,8 @@ export class JsonlReader implements Reader {
   queryRawTurnsForTool(since: number): RawTurnForTool[] {
     return this.filter(since).map((t) => ({
       uuid: t.uuid,
+      sessionId: t.sessionId,
+      cwd: t.cwd,
       outputTokens: t.outputTokens,
       costUsd: t.costUsd,
       message: t.messageJson,

@@ -98,6 +98,8 @@ export interface BashCommandRow {
 
 export interface RawTurnForTool {
   uuid: string;
+  sessionId: string;
+  cwd: string | null;
   outputTokens: number;
   costUsd: number | null;
   message: string;
@@ -215,7 +217,7 @@ export function querySummaryTotals(db: Database, since: number): SummaryTotals {
 
 export function queryRawTurnsForTool(db: Database, since: number): RawTurnForTool[] {
   return db.query<RawTurnForTool, [number]>(`
-    SELECT am.uuid,
+    SELECT am.uuid, bm.session_id AS sessionId, bm.cwd,
       CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER) AS outputTokens,
       am.cost_usd AS costUsd, am.message
     ${JOIN}
