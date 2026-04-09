@@ -1,5 +1,5 @@
 import type { Reader } from "@/reader";
-import { renderHeader, renderKV, renderTable, renderFootnote, formatTokens, formatUsd, formatPct, bold } from "@/format";
+import { renderHeader, renderKV, renderTable, renderFootnote, formatTokens, formatUsd, formatPct, bold, dim } from "@/format";
 
 interface Options { since: number; limit: number; json: boolean }
 
@@ -32,6 +32,18 @@ export function renderSummary(reader: Reader, opts: Options): void {
     ["Avg Cost / Turn", formatUsd(totals.avgCostPerTurn)],
   ]));
 
+  const totalKnownCost = (totals.outputCostUsd ?? 0) + (totals.inputCostUsd ?? 0)
+    + (totals.cacheReadCostUsd ?? 0) + (totals.cacheWriteCostUsd ?? 0);
+  if (totalKnownCost > 0) {
+    console.log(`\n${bold("  Cost by Token Type")}`);
+    console.log(renderKV([
+      ["Output (generation)", `${formatUsd(totals.outputCostUsd)} (${formatPct((totals.outputCostUsd ?? 0) / totalKnownCost * 100)})`],
+      ["Input (non-cached)", `${formatUsd(totals.inputCostUsd)} (${formatPct((totals.inputCostUsd ?? 0) / totalKnownCost * 100)})`],
+      ["Cache Read", `${formatUsd(totals.cacheReadCostUsd)} (${formatPct((totals.cacheReadCostUsd ?? 0) / totalKnownCost * 100)})`],
+      ["Cache Write", `${formatUsd(totals.cacheWriteCostUsd)} (${formatPct((totals.cacheWriteCostUsd ?? 0) / totalKnownCost * 100)})`],
+    ]));
+  }
+
   const cacheHitRate = totals.totalInputTokens + totals.totalCacheReadTokens > 0
     ? (totals.totalCacheReadTokens / (totals.totalInputTokens + totals.totalCacheReadTokens)) * 100
     : null;
@@ -39,23 +51,21 @@ export function renderSummary(reader: Reader, opts: Options): void {
   console.log(`\n${bold("  Cache Efficiency")}`);
   console.log(renderKV([
     ["Cache Hit Rate", formatPct(cacheHitRate)],
-    ["Est. Cache Savings", "— (requires model breakdown)"],
   ]));
 
-  console.log(`\n${bold("  Output Tokens by Tool")}`);
+  console.log(`\n${bold("  Cost by Tool")} ${dim("(dominant tool per turn)")}`);
   console.log(renderTable(
     [
       { header: "Tool", align: "left" },
       { header: "Turns", align: "right", width: 7 },
       { header: "Output Tokens", align: "right", width: 14 },
-      { header: "Output %", align: "right", width: 9 },
-      { header: "Avg/Turn", align: "right", width: 10 },
       { header: "Total Cost", align: "right", width: 11 },
       { header: "Cost %", align: "right", width: 7 },
+      { header: "Avg Cost/Turn", align: "right", width: 13 },
     ],
-    byTool.map((r) => [r.tool, String(r.turns), formatTokens(r.outputTokens), formatPct(r.outputPct), formatTokens(r.avgOutputPerTurn), formatUsd(r.totalCostUsd), formatPct(r.costPct)])
+    byTool.map((r) => [r.tool, String(r.turns), formatTokens(r.outputTokens), formatUsd(r.totalCostUsd), formatPct(r.costPct), formatUsd(r.totalCostUsd != null && r.turns > 0 ? r.totalCostUsd / r.turns : null)])
   ));
-  console.log(renderFootnote("Each turn attributed to its dominant tool by input character size. Output tokens are turn-level totals."));
+  console.log(renderFootnote("Cost includes input + output + cache tokens for each turn. Turn attributed to dominant tool by input payload size."));
 
   console.log(`\n${bold("  Output Tokens by Project")}`);
   console.log(renderTable(

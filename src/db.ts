@@ -15,6 +15,10 @@ export interface SummaryTotals {
   totalCacheReadTokens: number;
   totalCacheWriteTokens: number;
   totalCostUsd: number | null;
+  outputCostUsd: number | null;
+  inputCostUsd: number | null;
+  cacheReadCostUsd: number | null;
+  cacheWriteCostUsd: number | null;
   sessionCount: number;
   turnCount: number;
   avgCostPerSession: number | null;
@@ -204,10 +208,31 @@ export function querySummaryTotals(db: Database, since: number): SummaryTotals {
     ${JOIN}
   `).get(since);
 
-  if (!row) return { totalOutputTokens: 0, totalInputTokens: 0, totalCacheReadTokens: 0, totalCacheWriteTokens: 0, totalCostUsd: null, sessionCount: 0, turnCount: 0, avgCostPerSession: null, avgCostPerTurn: null };
+  if (!row) return { totalOutputTokens: 0, totalInputTokens: 0, totalCacheReadTokens: 0, totalCacheWriteTokens: 0, totalCostUsd: null, outputCostUsd: null, inputCostUsd: null, cacheReadCostUsd: null, cacheWriteCostUsd: null, sessionCount: 0, turnCount: 0, avgCostPerSession: null, avgCostPerTurn: null };
+
+  const { getPricing } = require("./pricing") as typeof import("./pricing");
+  const perTypeCosts = db.query<{ model: string; outTok: number; inpTok: number; crTok: number; cwTok: number }, [number]>(`
+    SELECT am.model,
+      CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER) AS outTok,
+      CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER) AS inpTok,
+      CAST(json_extract(am.message, '$.usage.cache_read_input_tokens') AS INTEGER) AS crTok,
+      CAST(json_extract(am.message, '$.usage.cache_creation_input_tokens') AS INTEGER) AS cwTok
+    ${JOIN}
+  `).all(since);
+
+  let outputCostUsd = 0, inputCostUsd = 0, cacheReadCostUsd = 0, cacheWriteCostUsd = 0;
+  for (const r of perTypeCosts) {
+    const p = getPricing(r.model);
+    if (!p) continue;
+    outputCostUsd += (r.outTok * p.outputPerMillion) / 1_000_000;
+    inputCostUsd += (r.inpTok * p.inputPerMillion) / 1_000_000;
+    cacheReadCostUsd += (r.crTok * p.cacheReadPerMillion) / 1_000_000;
+    cacheWriteCostUsd += (r.cwTok * p.cacheWritePerMillion) / 1_000_000;
+  }
 
   return {
     ...row,
+    outputCostUsd, inputCostUsd, cacheReadCostUsd, cacheWriteCostUsd,
     avgCostPerSession: row.totalCostUsd != null && row.sessionCount > 0 ? row.totalCostUsd / row.sessionCount : null,
     avgCostPerTurn: row.totalCostUsd != null && row.turnCount > 0 ? row.totalCostUsd / row.turnCount : null,
   };

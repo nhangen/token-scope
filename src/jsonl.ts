@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { computeTurnCost, computeCacheSavings } from "@/pricing";
+import { computeTurnCost, computeCacheSavings, getPricing } from "@/pricing";
 import { parseContentBlocks, resolveDominantTool } from "@/parse";
 import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow,
@@ -107,9 +107,21 @@ export class JsonlReader implements Reader {
       totalCostUsd !== null && sessionCount > 0 ? totalCostUsd / sessionCount : null;
     const avgCostPerTurn =
       totalCostUsd !== null && turns.length > 0 ? totalCostUsd / turns.length : null;
+
+    let outputCostUsd = 0, inputCostUsd = 0, cacheReadCostUsd = 0, cacheWriteCostUsd = 0;
+    for (const t of turns) {
+      const p = getPricing(t.model);
+      if (!p) continue;
+      outputCostUsd += (t.outputTokens * p.outputPerMillion) / 1_000_000;
+      inputCostUsd += (t.inputTokens * p.inputPerMillion) / 1_000_000;
+      cacheReadCostUsd += (t.cacheReadTokens * p.cacheReadPerMillion) / 1_000_000;
+      cacheWriteCostUsd += (t.cacheWriteTokens * p.cacheWritePerMillion) / 1_000_000;
+    }
+
     return {
       totalOutputTokens, totalInputTokens, totalCacheReadTokens, totalCacheWriteTokens,
-      totalCostUsd, sessionCount, turnCount: turns.length,
+      totalCostUsd, outputCostUsd, inputCostUsd, cacheReadCostUsd, cacheWriteCostUsd,
+      sessionCount, turnCount: turns.length,
       avgCostPerSession, avgCostPerTurn,
     };
   }
