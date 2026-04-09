@@ -21,6 +21,7 @@ REPORT MODES (mutually exclusive)
   --context               Context bloat analysis (sessions with 6+ turns)
   --cache                 Cache efficiency by project
   --efficiency            Session efficiency (per-turn cost by session length)
+  --tools                 Tooling analysis by layer (plugin, MCP, skill, meta, built-in)
 
 SHARED FLAGS
   --source <jsonl|sqlite> Data source (default: auto-detect)
@@ -50,7 +51,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -68,7 +69,7 @@ function parseArgs(argv: string[]): CliArgs {
 
   const setMode = (mode: CliArgs["mode"]) => {
     if (modeSet) {
-      process.stderr.write("Error: --tool, --project, --session, --thinking, and --sessions are mutually exclusive.\n");
+      process.stderr.write("Error: --tool, --project, --session, --thinking, --sessions, and --tools are mutually exclusive.\n");
       process.exit(1);
     }
     args.mode = mode;
@@ -86,6 +87,7 @@ function parseArgs(argv: string[]): CliArgs {
       case "--context": setMode("context"); break;
       case "--cache": setMode("cache"); break;
       case "--efficiency": setMode("efficiency"); break;
+      case "--tools": setMode("tools"); break;
       case "--tool":
         setMode("tool");
         args.toolName = argv[++i];
@@ -205,6 +207,10 @@ async function main() {
     case "efficiency": {
       const { renderEfficiencyReport } = await import("@/reports/efficiency");
       renderEfficiencyReport(reader, options); break;
+    }
+    case "tools": {
+      const { renderToolingReport } = await import("@/reports/tools");
+      renderToolingReport(reader, options); break;
     }
   }
 
