@@ -314,9 +314,10 @@ export class JsonlReader implements Reader {
 
   queryContextStats(since: number, limit: number): ContextStatRow[] {
     const turns = this.filter(since);
-    const bySession = new Map<string, { cwd: string; turns: JsonlTurn[] }>();
+    const bySession = new Map<string, { cwdCounts: Map<string, number>; turns: JsonlTurn[] }>();
     for (const t of turns) {
-      const e = bySession.get(t.sessionId) ?? { cwd: t.cwd, turns: [] };
+      const e = bySession.get(t.sessionId) ?? { cwdCounts: new Map<string, number>(), turns: [] };
+      e.cwdCounts.set(t.cwd, (e.cwdCounts.get(t.cwd) ?? 0) + 1);
       e.turns.push(t);
       bySession.set(t.sessionId, e);
     }
@@ -329,7 +330,8 @@ export class JsonlReader implements Reader {
       const avgEarlyInput = early.reduce((s, t) => s + t.inputTokens, 0) / 3;
       const avgLateInput = late.reduce((s, t) => s + t.inputTokens, 0) / 3;
       const bloatRatio = avgEarlyInput > 0 ? avgLateInput / avgEarlyInput : null;
-      rows.push({ sessionId, cwd: d.cwd, turnCount: d.turns.length, avgEarlyInput, avgLateInput, bloatRatio });
+      const cwd = [...d.cwdCounts.entries()].sort((a, b) => (b[1] as number) - (a[1] as number))[0]![0];
+      rows.push({ sessionId, cwd, turnCount: d.turns.length, avgEarlyInput, avgLateInput, bloatRatio });
     }
     return rows.sort((a, b) => (b.bloatRatio ?? 0) - (a.bloatRatio ?? 0)).slice(0, limit);
   }

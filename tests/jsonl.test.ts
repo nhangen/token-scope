@@ -198,4 +198,11 @@ describe("JsonlReader — context stats", () => {
     const rows = reader.queryContextStats(future, 20);
     expect(rows.length).toBe(0);
   });
+
+  it("uses dominant cwd when session spans multiple cwds", () => {
+    const rows = reader.queryContextStats(0, 20);
+    const sess4 = rows.find((r) => r.sessionId === "sess-j4");
+    expect(sess4).toBeDefined();
+    expect(sess4!.cwd).toBe("/Users/alice/projects/beacon");
+  });
 });
