@@ -397,7 +397,9 @@ export function queryContextStats(db: Database, since: number, limit: number): C
       SELECT
         bm.session_id,
         bm.cwd,
-        CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER) AS inp,
+        (CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER)
+         + CAST(json_extract(am.message, '$.usage.cache_read_input_tokens') AS INTEGER)
+         + CAST(json_extract(am.message, '$.usage.cache_creation_input_tokens') AS INTEGER)) AS inp,
         ROW_NUMBER() OVER (PARTITION BY bm.session_id ORDER BY bm.timestamp) AS rn,
         COUNT(*) OVER (PARTITION BY bm.session_id) AS turn_total
       FROM assistant_messages am

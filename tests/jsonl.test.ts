@@ -188,22 +188,22 @@ describe("JsonlReader — context stats", () => {
     expect(rows[0]!.turnCount).toBe(7);
   });
 
-  it("avgEarlyInput is average of first 3 turns", () => {
+  it("avgEarlyInput is average of first 3 turns (total context = input + cache_read + cache_write)", () => {
     const rows = reader.queryContextStats(0, 20);
-    // first 3 turns: 1000, 1200, 1400 → avg 1200
-    expect(rows[0]!.avgEarlyInput).toBeCloseTo(1200, 0);
+    // first 3 turns: (1000+5000+1000), (1200+15000+0), (1400+20000+0) → 7000, 16200, 21400 → avg 14866.67
+    expect(rows[0]!.avgEarlyInput).toBeCloseTo(14867, 0);
   });
 
-  it("avgLateInput is average of last 3 turns", () => {
+  it("avgLateInput is average of last 3 turns (total context = input + cache_read + cache_write)", () => {
     const rows = reader.queryContextStats(0, 20);
-    // last 3 turns: 6000, 8000, 9500 → avg 7833.33
-    expect(rows[0]!.avgLateInput).toBeCloseTo(7833, 0);
+    // last 3 turns: (6000+28000+0), (8000+32000+0), (9500+35000+0) → 34000, 40000, 44500 → avg 39500
+    expect(rows[0]!.avgLateInput).toBeCloseTo(39500, 0);
   });
 
   it("bloatRatio is avgLateInput / avgEarlyInput", () => {
     const rows = reader.queryContextStats(0, 20);
-    // 7833.33 / 1200 ≈ 6.53
-    expect(rows[0]!.bloatRatio).toBeCloseTo(6.5, 0);
+    // 39500 / 14866.67 ≈ 2.66
+    expect(rows[0]!.bloatRatio).toBeCloseTo(2.66, 1);
   });
 
   it("returns empty for since that excludes sess-j4", () => {

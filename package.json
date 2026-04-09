@@ -1,6 +1,6 @@
 {
   "name": "token-scope",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Analytics for Claude Code output token spend. Reads ~/.claude/__store.db in read-only mode.",
   "bin": {
     "token-scope": "./src/cli.ts"
