@@ -1,6 +1,6 @@
 import type { Reader } from "@/reader";
 import { analyzeTooling } from "@/tools";
-import type { ToolLayer } from "@/tools";
+import type { LayerKey } from "@/tools";
 import { renderHeader, renderKV, renderTable, formatUsd, formatPct, bold, dim, renderFootnote } from "@/format";
 
 interface Options { since: number; sinceStr: string; limit: number; json: boolean }
@@ -28,7 +28,7 @@ export function renderToolingReport(reader: Reader, opts: Options): void {
 
   console.log(renderHeader("token-scope — Tooling Analysis"));
   console.log(renderKV([
-    ["Total Tool Calls", String(analysis.summary.totalCalls)],
+    ["Total Turns Analyzed", String(analysis.summary.totalCalls)],
     ["Distinct Tools", String(analysis.summary.distinctTools)],
     ["Layers Active", `${analysis.summary.activeLayers} of 5`],
     ["Unclassified Tools", String(analysis.summary.unclassifiedCount)],
@@ -63,7 +63,7 @@ export function renderToolingReport(reader: Reader, opts: Options): void {
     ])
   ));
 
-  const renderLayerSection = (layer: ToolLayer | "(no tool)", title: string, showServer: boolean) => {
+  const renderLayerSection = (layer: LayerKey, title: string, showServer: boolean) => {
     const tools = analysis.byTool.filter((t) => t.layer === layer).slice(0, opts.limit);
     if (tools.length === 0) return;
 

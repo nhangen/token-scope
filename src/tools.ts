@@ -3,6 +3,7 @@ import type { ContentBlock } from "@/parse";
 import type { RawTurnForTool } from "@/reader";
 
 export type ToolLayer = "plugin" | "mcp" | "skill" | "meta" | "builtin";
+export type LayerKey = ToolLayer | "(no tool)";
 
 export interface ToolClassification {
   layer: ToolLayer;
@@ -37,7 +38,7 @@ export function classifyTool(name: string): ToolClassification {
 
 interface ToolEntry {
   name: string;
-  layer: ToolLayer;
+  layer: LayerKey;
   server: string | null;
   shortName: string | null;
   calls: number;
@@ -66,7 +67,6 @@ export interface ToolAnalysis {
 
 export function analyzeTooling(turns: RawTurnForTool[]): ToolAnalysis {
   const toolMap = new Map<string, ToolEntry>();
-  const unclassifiedSet = new Set<string>();
   let totalCalls = 0;
 
   for (const turn of turns) {
@@ -77,7 +77,7 @@ export function analyzeTooling(turns: RawTurnForTool[]): ToolAnalysis {
 
     if (toolBlocks.length === 0) {
       const key = "(no tool)";
-      const entry = toolMap.get(key) ?? { name: key, layer: "(no tool)" as ToolLayer, server: null, shortName: null, calls: 0, attributedCost: 0 };
+      const entry = toolMap.get(key) ?? { name: key, layer: "(no tool)" as LayerKey, server: null, shortName: null, calls: 0, attributedCost: 0 };
       entry.calls++;
       entry.attributedCost += turn.costUsd ?? 0;
       toolMap.set(key, entry);
@@ -144,10 +144,10 @@ export function analyzeTooling(turns: RawTurnForTool[]): ToolAnalysis {
       totalCalls,
       distinctTools: new Set(byTool.map((t) => t.name)).size,
       activeLayers,
-      unclassifiedCount: unclassifiedSet.size,
+      unclassifiedCount: 0,
     },
     layers,
     byTool,
-    unclassified: [...unclassifiedSet],
+    unclassified: [],
   };
 }

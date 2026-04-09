@@ -80,13 +80,13 @@ interface ToolCall {
 
 ### Classification rules (applied in order)
 
-1. **Plugin** — name starts with `mcp__plugin_`. Plugin name from third segment: `mcp__plugin_serena_serena__find_symbol` → plugin `serena`, tool `find_symbol`
+1. **Plugin** — name starts with `mcp__plugin_`. Plugin identifier is derived from the second `__`-delimited segment after removing the `plugin_` prefix: `mcp__plugin_serena_serena__find_symbol` → plugin `serena`, tool `find_symbol`
 2. **MCP** — name starts with `mcp__` (not plugin). Server from second segment: `mcp__zenhub__getSprint` → server `zenhub`, tool `getSprint`. Includes `mcp__claude_ai_*` integrations.
 3. **Skill** — name is exactly `Skill`. Skill name extracted from `input.skill` field if present.
 4. **Meta** — name in: `TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput, TaskStop, Task, TodoWrite, EnterPlanMode, ExitPlanMode, ToolSearch`
 5. **Built-in** — everything else: Bash, Read, Edit, Write, Grep, Glob, Agent, MultiEdit, WebFetch, WebSearch, etc.
 
-Any name not matching rules 1-5 goes to `unclassified` array and the report surfaces it.
+Rule 5 is a catch-all — `unclassified` is structurally empty by design. If a new tool category emerges that shouldn't be `builtin`, add a new rule.
 
 Hooks (e.g. obsidian commit capture) are shell commands triggered by events, not tool_use blocks. They are invisible to this report. Noted in footer.
 

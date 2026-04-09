@@ -69,7 +69,7 @@ function parseArgs(argv: string[]): CliArgs {
 
   const setMode = (mode: CliArgs["mode"]) => {
     if (modeSet) {
-      process.stderr.write("Error: --tool, --project, --session, --thinking, --sessions, and --tools are mutually exclusive.\n");
+      process.stderr.write("Error: --tool, --project, --session, --thinking, --sessions, --context, --cache, --efficiency, and --tools are mutually exclusive.\n");
       process.exit(1);
     }
     args.mode = mode;
