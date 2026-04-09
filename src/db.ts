@@ -103,6 +103,26 @@ export interface RawTurnForTool {
   message: string;
 }
 
+export interface ContextStatRow {
+  sessionId: string;
+  cwd: string | null;
+  turnCount: number;
+  avgEarlyInput: number;
+  avgLateInput: number;
+  bloatRatio: number | null;
+}
+
+export interface CacheStatRow {
+  cwd: string;
+  sessions: number;
+  turns: number;
+  totalInputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheWriteTokens: number;
+  cacheHitPct: number | null;
+  estimatedSavingsUsd: number | null;
+}
+
 // ─── DB Path Resolution ───────────────────────────────────────────────────────
 
 export function resolveDbPath(flagPath?: string): DbPathResult {
@@ -342,6 +362,95 @@ export function queryBashTurns(db: Database, since: number): BashCommandRow[] {
   `).all(since);
 }
 
+// ─── Context Stats ────────────────────────────────────────────────────────────
+
+export function queryContextStats(db: Database, since: number, limit: number): ContextStatRow[] {
+  return db.query<ContextStatRow, [number, number]>(`
+    WITH ordered AS (
+      SELECT
+        bm.session_id,
+        bm.cwd,
+        CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER) AS inp,
+        ROW_NUMBER() OVER (PARTITION BY bm.session_id ORDER BY bm.timestamp) AS rn,
+        COUNT(*) OVER (PARTITION BY bm.session_id) AS turn_total
+      FROM assistant_messages am
+      JOIN base_messages bm ON am.uuid = bm.uuid
+      WHERE bm.timestamp > ? AND json_valid(am.message) = 1
+    )
+    SELECT
+      session_id AS sessionId,
+      MAX(cwd) AS cwd,
+      COUNT(*) AS turnCount,
+      AVG(CASE WHEN rn <= 3 THEN CAST(inp AS REAL) END) AS avgEarlyInput,
+      AVG(CASE WHEN rn > turn_total - 3 THEN CAST(inp AS REAL) END) AS avgLateInput,
+      (AVG(CASE WHEN rn > turn_total - 3 THEN CAST(inp AS REAL) END) /
+       NULLIF(AVG(CASE WHEN rn <= 3 THEN CAST(inp AS REAL) END), 0)) AS bloatRatio
+    FROM ordered
+    GROUP BY session_id
+    HAVING COUNT(*) >= 6
+    ORDER BY bloatRatio DESC NULLS LAST
+    LIMIT ?
+  `).all(since, limit);
+}
+
+// ─── Cache Stats ──────────────────────────────────────────────────────────────
+
+export function queryCacheStats(db: Database, since: number, limit: number): CacheStatRow[] {
+  const rows = db.query<{
+    cwd: string; sessions: number; turns: number;
+    totalInputTokens: number; totalCacheReadTokens: number; totalCacheWriteTokens: number;
+    topModel: string | null;
+  }, [number]>(`
+    WITH raw AS (
+      SELECT
+        bm.cwd,
+        bm.session_id,
+        am.model,
+        CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER) AS inp,
+        CAST(json_extract(am.message, '$.usage.cache_read_input_tokens') AS INTEGER) AS cacheRead,
+        CAST(json_extract(am.message, '$.usage.cache_creation_input_tokens') AS INTEGER) AS cacheWrite
+      FROM assistant_messages am
+      JOIN base_messages bm ON am.uuid = bm.uuid
+      WHERE bm.timestamp > ? AND json_valid(am.message) = 1 AND bm.cwd IS NOT NULL
+    ),
+    top_model AS (
+      SELECT cwd, model,
+        ROW_NUMBER() OVER (PARTITION BY cwd ORDER BY COUNT(*) DESC) AS rk
+      FROM raw WHERE model IS NOT NULL
+      GROUP BY cwd, model
+    )
+    SELECT
+      r.cwd,
+      COUNT(DISTINCT r.session_id) AS sessions,
+      COUNT(*) AS turns,
+      SUM(r.inp) AS totalInputTokens,
+      SUM(r.cacheRead) AS totalCacheReadTokens,
+      SUM(r.cacheWrite) AS totalCacheWriteTokens,
+      -- topModel is the most-used model per project; savings are approximated using it
+      -- (the JSONL reader computes savings per-turn per-model for higher accuracy)
+      tm.model AS topModel
+    FROM raw r
+    LEFT JOIN top_model tm ON tm.cwd = r.cwd AND tm.rk = 1
+    GROUP BY r.cwd
+    ORDER BY totalCacheReadTokens DESC
+  `).all(since);
+
+  const { computeCacheSavings } = require("./pricing") as typeof import("./pricing");
+  return rows.map((r) => ({
+    cwd: r.cwd,
+    sessions: r.sessions,
+    turns: r.turns,
+    totalInputTokens: r.totalInputTokens,
+    totalCacheReadTokens: r.totalCacheReadTokens,
+    totalCacheWriteTokens: r.totalCacheWriteTokens,
+    cacheHitPct: r.totalInputTokens + r.totalCacheReadTokens > 0
+      ? (r.totalCacheReadTokens / (r.totalInputTokens + r.totalCacheReadTokens)) * 100 : null,
+    estimatedSavingsUsd: r.topModel ? computeCacheSavings(r.topModel, r.totalCacheReadTokens) : null,
+  }))
+  .sort((a, b) => (b.estimatedSavingsUsd ?? 0) - (a.estimatedSavingsUsd ?? 0))
+  .slice(0, limit);
+}
+
 // ─── SQLite Reader Adapter ────────────────────────────────────────────────────
 
 interface SqliteReaderInterface {
@@ -355,6 +464,8 @@ interface SqliteReaderInterface {
   queryThinkingTurns(since: number): ThinkingTurnRow[];
   queryBashTurns(since: number): BashCommandRow[];
   queryProjectMatches(fragment: string): ProjectMatch[];
+  queryContextStats(since: number, limit: number): ContextStatRow[];
+  queryCacheStats(since: number, limit: number): CacheStatRow[];
   close(): void;
 }
 
@@ -370,6 +481,8 @@ export function createSqliteReader(db: Database): SqliteReaderInterface {
     queryThinkingTurns: (since) => queryThinkingTurns(db, since),
     queryBashTurns: (since) => queryBashTurns(db, since),
     queryProjectMatches: (fragment) => queryProjectMatches(db, fragment),
+    queryContextStats: (since, limit) => queryContextStats(db, since, limit),
+    queryCacheStats: (since, limit) => queryCacheStats(db, since, limit),
     close: () => db.close(),
   };
 }

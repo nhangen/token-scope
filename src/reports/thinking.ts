@@ -33,6 +33,22 @@ export function renderThinkingReport(reader: Reader, opts: Options): void {
     byTool.set(t.dominantTool, { turns: e.turns + 1, estThinking: e.estThinking + t.estimatedThinkingTokens });
   }
 
+  const byProject = new Map<string, {
+    thinkingTurns: number; estThinking: number; sessions: Set<string>; outputTokens: number;
+  }>();
+  for (const t of enriched) {
+    const cwd = t.cwd ?? "(unknown)";
+    const e = byProject.get(cwd) ?? { thinkingTurns: 0, estThinking: 0, sessions: new Set(), outputTokens: 0 };
+    e.thinkingTurns++;
+    e.estThinking += t.estimatedThinkingTokens;
+    e.sessions.add(t.sessionId);
+    e.outputTokens += t.outputTokens;
+    byProject.set(cwd, e);
+  }
+  const byProjectRows = Array.from(byProject.entries())
+    .sort((a, b) => b[1].estThinking - a[1].estThinking)
+    .slice(0, opts.limit);
+
   if (opts.json) {
     console.log(JSON.stringify({
       meta: { generated_at: new Date().toISOString(), since: opts.since, limit: opts.limit, token_scope_version: "1.0.0" },
@@ -49,6 +65,12 @@ export function renderThinkingReport(reader: Reader, opts: Options): void {
         thinking_char_pct: totalThinkingChars + totalTextChars > 0 ? (totalThinkingChars / (totalThinkingChars + totalTextChars)) * 100 : 0,
         estimated_thinking_tokens: totalEstThinking,
       },
+      byProject: byProjectRows.map(([cwd, d]) => ({
+        cwd,
+        thinkingTurns: d.thinkingTurns,
+        sessionCount: d.sessions.size,
+        estimatedThinkingTokens: d.estThinking,
+      })),
     }, null, 2));
     return;
   }
@@ -91,6 +113,24 @@ export function renderThinkingReport(reader: Reader, opts: Options): void {
         { header: "~Total Thinking Tokens", align: "right", width: 22 },
       ],
       toolRows.map(([tool, d]) => [tool, String(d.turns), approx(formatTokens(d.estThinking / d.turns)), approx(formatTokens(d.estThinking))])
+    ));
+  }
+
+  if (byProjectRows.length > 0) {
+    console.log(`\n${bold("  By Project")}`);
+    console.log(renderTable(
+      [
+        { header: "Project", align: "left", width: 30 },
+        { header: "Thinking Sessions", align: "right", width: 18 },
+        { header: "Thinking Turns", align: "right", width: 15 },
+        { header: "~Total Thinking Tokens", align: "right", width: 22 },
+      ],
+      byProjectRows.map(([cwd, d]) => [
+        cwd.split("/").at(-1) ?? cwd,
+        String(d.sessions.size),
+        String(d.thinkingTurns),
+        approx(formatTokens(d.estThinking)),
+      ])
     ));
   }
 

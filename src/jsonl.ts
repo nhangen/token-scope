@@ -1,10 +1,11 @@
 import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { computeTurnCost } from "@/pricing";
+import { computeTurnCost, computeCacheSavings } from "@/pricing";
 import { parseContentBlocks, resolveDominantTool } from "@/parse";
 import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow,
   WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool,
+  ContextStatRow, CacheStatRow,
 } from "@/reader";
 import type { Reader } from "@/reader";
 
@@ -211,14 +212,15 @@ export class JsonlReader implements Reader {
   querySessions(since: number, limit: number): SessionRow[] {
     const turns = this.filter(since);
     const bySession = new Map<string, {
-      cwd: string; timestamps: number[]; outputTokens: number;
+      cwdCounts: Map<string, number>; timestamps: number[]; outputTokens: number;
       inputTokens: number; cacheReadTokens: number; costUsd: number; costKnown: boolean;
     }>();
     for (const t of turns) {
       const e = bySession.get(t.sessionId) ?? {
-        cwd: t.cwd, timestamps: [], outputTokens: 0, inputTokens: 0,
+        cwdCounts: new Map<string, number>(), timestamps: [], outputTokens: 0, inputTokens: 0,
         cacheReadTokens: 0, costUsd: 0, costKnown: false,
       };
+      e.cwdCounts.set(t.cwd, (e.cwdCounts.get(t.cwd) ?? 0) + 1);
       e.timestamps.push(t.timestampMs);
       e.outputTokens += t.outputTokens;
       e.inputTokens += t.inputTokens;
@@ -233,8 +235,9 @@ export class JsonlReader implements Reader {
         const endedAt = sorted.at(-1)!;
         const totalInput = d.inputTokens + d.cacheReadTokens;
         const cacheHitPct = totalInput > 0 ? (d.cacheReadTokens / totalInput) * 100 : null;
+        const cwd = [...d.cwdCounts.entries()].sort((a, b) => (b[1] as number) - (a[1] as number))[0]![0];
         return {
-          sessionId, cwd: d.cwd, startedAt,
+          sessionId, cwd, startedAt,
           durationMs: sorted.length > 1 ? endedAt - startedAt : null,
           turnCount: d.timestamps.length,
           outputTokens: d.outputTokens,
@@ -307,6 +310,68 @@ export class JsonlReader implements Reader {
       }
     }
     return results;
+  }
+
+  queryContextStats(since: number, limit: number): ContextStatRow[] {
+    const turns = this.filter(since);
+    const bySession = new Map<string, { cwdCounts: Map<string, number>; turns: JsonlTurn[] }>();
+    for (const t of turns) {
+      const e = bySession.get(t.sessionId) ?? { cwdCounts: new Map<string, number>(), turns: [] };
+      e.cwdCounts.set(t.cwd, (e.cwdCounts.get(t.cwd) ?? 0) + 1);
+      e.turns.push(t);
+      bySession.set(t.sessionId, e);
+    }
+    const rows: ContextStatRow[] = [];
+    for (const [sessionId, d] of bySession.entries()) {
+      if (d.turns.length < 6) continue;
+      const sorted = d.turns.slice().sort((a, b) => a.timestampMs - b.timestampMs);
+      const early = sorted.slice(0, 3);
+      const late = sorted.slice(-3);
+      const avgEarlyInput = early.reduce((s, t) => s + t.inputTokens, 0) / 3;
+      const avgLateInput = late.reduce((s, t) => s + t.inputTokens, 0) / 3;
+      const bloatRatio = avgEarlyInput > 0 ? avgLateInput / avgEarlyInput : null;
+      const cwd = [...d.cwdCounts.entries()].sort((a, b) => (b[1] as number) - (a[1] as number))[0]![0];
+      rows.push({ sessionId, cwd, turnCount: d.turns.length, avgEarlyInput, avgLateInput, bloatRatio });
+    }
+    return rows.sort((a, b) => (b.bloatRatio ?? 0) - (a.bloatRatio ?? 0)).slice(0, limit);
+  }
+
+  queryCacheStats(since: number, limit: number): CacheStatRow[] {
+    const turns = this.filter(since);
+    const byProject = new Map<string, {
+      sessions: Set<string>; turns: number;
+      totalInputTokens: number; totalCacheReadTokens: number; totalCacheWriteTokens: number;
+      savings: number;
+    }>();
+    for (const t of turns) {
+      const e = byProject.get(t.cwd) ?? {
+        sessions: new Set(), turns: 0,
+        totalInputTokens: 0, totalCacheReadTokens: 0, totalCacheWriteTokens: 0,
+        savings: 0,
+      };
+      e.sessions.add(t.sessionId);
+      e.turns++;
+      e.totalInputTokens += t.inputTokens;
+      e.totalCacheReadTokens += t.cacheReadTokens;
+      e.totalCacheWriteTokens += t.cacheWriteTokens;
+      const s = computeCacheSavings(t.model, t.cacheReadTokens);
+      if (s !== null) e.savings += s;
+      byProject.set(t.cwd, e);
+    }
+    return Array.from(byProject.entries())
+      .map(([cwd, d]) => ({
+        cwd,
+        sessions: d.sessions.size,
+        turns: d.turns,
+        totalInputTokens: d.totalInputTokens,
+        totalCacheReadTokens: d.totalCacheReadTokens,
+        totalCacheWriteTokens: d.totalCacheWriteTokens,
+        cacheHitPct: d.totalInputTokens + d.totalCacheReadTokens > 0
+          ? (d.totalCacheReadTokens / (d.totalInputTokens + d.totalCacheReadTokens)) * 100 : null,
+        estimatedSavingsUsd: d.savings > 0 ? d.savings : null,
+      }))
+      .sort((a, b) => (b.estimatedSavingsUsd ?? 0) - (a.estimatedSavingsUsd ?? 0))
+      .slice(0, limit);
   }
 
   close(): void {}

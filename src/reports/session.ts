@@ -2,7 +2,7 @@ import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, renderFootnote, formatTokens, formatUsd, formatPct, formatDuration, formatTimestamp, approx, truncate, bold, dim } from "@/format";
 import { parseContentBlocks, resolveDominantTool, estimateThinkingTokens } from "@/parse";
 
-interface Options { since: number; limit: number; json: boolean }
+interface Options { since: number; sinceStr: string; limit: number; json: boolean }
 
 export function renderSessionView(reader: Reader, sessionId: string, json: boolean, sinceStr: string): void {
   const allSessions = reader.querySessions(0, 10000);
@@ -120,7 +120,7 @@ export function renderSessionsList(reader: Reader, opts: Options): void {
     return;
   }
 
-  console.log(renderHeader(`token-scope — Sessions  (last ${opts.since})`));
+  console.log(renderHeader(`token-scope — Sessions  (last ${opts.sinceStr})`));
   console.log(renderTable(
     [
       { header: "Session ID", align: "left", width: 14 },

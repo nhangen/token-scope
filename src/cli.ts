@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { parseSince } from "@/db";
 import { createReader } from "@/reader";
 import type { Reader } from "@/reader";
@@ -17,6 +18,9 @@ REPORT MODES (mutually exclusive)
   --session <id>          Turn-by-turn breakdown of one session (min 6-char prefix)
   --thinking              Thinking token analysis
   --sessions              List recent sessions with stats
+  --context               Context bloat analysis (sessions with 6+ turns)
+  --cache                 Cache efficiency by project
+  --efficiency            Session efficiency (per-turn cost by session length)
 
 SHARED FLAGS
   --source <jsonl|sqlite> Data source (default: auto-detect)
@@ -46,7 +50,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -79,6 +83,9 @@ function parseArgs(argv: string[]): CliArgs {
       case "--json": args.json = true; break;
       case "--thinking": setMode("thinking"); break;
       case "--sessions": setMode("sessions"); break;
+      case "--context": setMode("context"); break;
+      case "--cache": setMode("cache"); break;
+      case "--efficiency": setMode("efficiency"); break;
       case "--tool":
         setMode("tool");
         args.toolName = argv[++i];
@@ -186,6 +193,18 @@ async function main() {
     case "thinking": {
       const { renderThinkingReport } = await import("@/reports/thinking");
       renderThinkingReport(reader, options); break;
+    }
+    case "context": {
+      const { renderContextReport } = await import("@/reports/context");
+      renderContextReport(reader, options); break;
+    }
+    case "cache": {
+      const { renderCacheReport } = await import("@/reports/cache");
+      renderCacheReport(reader, options); break;
+    }
+    case "efficiency": {
+      const { renderEfficiencyReport } = await import("@/reports/efficiency");
+      renderEfficiencyReport(reader, options); break;
     }
   }
 

@@ -7,6 +7,9 @@ import { renderToolDrillDown } from "@/reports/tool";
 import { renderProjectDrillDown } from "@/reports/project";
 import { renderSessionView, renderSessionsList } from "@/reports/session";
 import { renderThinkingReport } from "@/reports/thinking";
+import { renderContextReport } from "@/reports/context";
+import { renderCacheReport } from "@/reports/cache";
+import { renderEfficiencyReport } from "@/reports/efficiency";
 
 let reader: Reader;
 const opts = { since: 0, sinceStr: "all", limit: 20, json: false };
@@ -119,6 +122,24 @@ describe("Thinking report", () => {
     expect(parsed.report).toBe("thinking");
     expect(parsed.overview).toHaveProperty("estimated_thinking_tokens");
     expect(parsed.overview).toHaveProperty("turns_with_thinking");
+    expect(Array.isArray(parsed.byProject)).toBe(true);
+  });
+});
+
+describe("Context report", () => {
+  let jsonlReader: Reader;
+  beforeAll(() => { jsonlReader = createReader({ source: "jsonl" }); });
+  afterAll(() => { jsonlReader.close(); });
+
+  it("renders without throwing via JSONL", () => {
+    expect(() => renderContextReport(jsonlReader, opts)).not.toThrow();
+  });
+
+  it("renders valid JSON with rows array", () => {
+    const output = capture(() => renderContextReport(jsonlReader, { ...opts, json: true }));
+    const parsed = JSON.parse(output);
+    expect(parsed.report).toBe("context");
+    expect(Array.isArray(parsed.rows)).toBe(true);
   });
 });
 
@@ -147,5 +168,54 @@ describe("Reports via JSONL reader", () => {
     const parsed = JSON.parse(output);
     expect(parsed.report).toBe("session");
     expect(parsed.turns.length).toBe(3);
+  });
+});
+
+describe("Cache report", () => {
+  let jsonlReader: Reader;
+  beforeAll(() => { jsonlReader = createReader({ source: "jsonl" }); });
+  afterAll(() => { jsonlReader.close(); });
+
+  it("renders without throwing via JSONL", () => {
+    expect(() => renderCacheReport(jsonlReader, opts)).not.toThrow();
+  });
+
+  it("renders valid JSON with rows array", () => {
+    const output = capture(() => renderCacheReport(jsonlReader, { ...opts, json: true }));
+    const parsed = JSON.parse(output);
+    expect(parsed.report).toBe("cache");
+    expect(Array.isArray(parsed.rows)).toBe(true);
+  });
+
+  it("each row has cacheHitPct and estimatedSavingsUsd", () => {
+    const output = capture(() => renderCacheReport(jsonlReader, { ...opts, json: true }));
+    const parsed = JSON.parse(output);
+    for (const row of parsed.rows) {
+      expect(row).toHaveProperty("cacheHitPct");
+      expect(row).toHaveProperty("estimatedSavingsUsd");
+    }
+  });
+});
+
+describe("Efficiency report", () => {
+  let jsonlReader: Reader;
+  beforeAll(() => { jsonlReader = createReader({ source: "jsonl" }); });
+  afterAll(() => { jsonlReader.close(); });
+
+  it("renders without throwing via JSONL", () => {
+    expect(() => renderEfficiencyReport(jsonlReader, opts)).not.toThrow();
+  });
+
+  it("renders valid JSON with buckets array", () => {
+    const output = capture(() => renderEfficiencyReport(jsonlReader, { ...opts, json: true }));
+    const parsed = JSON.parse(output);
+    expect(parsed.report).toBe("efficiency");
+    expect(Array.isArray(parsed.buckets)).toBe(true);
+  });
+
+  it("buckets cover 1-5, 6-15, 16-30, 31-50, 51+", () => {
+    const output = capture(() => renderEfficiencyReport(jsonlReader, { ...opts, json: true }));
+    const parsed = JSON.parse(output);
+    expect(parsed.buckets.map((b: any) => b.bucket)).toEqual(["1–5", "6–15", "16–30", "31–50", "51+"]);
   });
 });
