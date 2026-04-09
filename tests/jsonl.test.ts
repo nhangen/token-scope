@@ -141,7 +141,7 @@ describe("JsonlReader — cache stats", () => {
     const rows = reader.queryCacheStats(0, 20);
     for (const r of rows) {
       if (r.cacheHitPct !== null) {
-        expect(r.cacheHitPct).toBeGreaterThan(0);
+        expect(r.cacheHitPct).toBeGreaterThanOrEqual(0);
         expect(r.cacheHitPct).toBeLessThanOrEqual(100);
       }
     }

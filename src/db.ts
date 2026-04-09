@@ -400,7 +400,7 @@ export function queryCacheStats(db: Database, since: number, limit: number): Cac
     cwd: string; sessions: number; turns: number;
     totalInputTokens: number; totalCacheReadTokens: number; totalCacheWriteTokens: number;
     topModel: string | null;
-  }, [number, number]>(`
+  }, [number]>(`
     WITH raw AS (
       SELECT
         bm.cwd,
@@ -426,13 +426,14 @@ export function queryCacheStats(db: Database, since: number, limit: number): Cac
       SUM(r.inp) AS totalInputTokens,
       SUM(r.cacheRead) AS totalCacheReadTokens,
       SUM(r.cacheWrite) AS totalCacheWriteTokens,
+      -- topModel is the most-used model per project; savings are approximated using it
+      -- (the JSONL reader computes savings per-turn per-model for higher accuracy)
       tm.model AS topModel
     FROM raw r
     LEFT JOIN top_model tm ON tm.cwd = r.cwd AND tm.rk = 1
     GROUP BY r.cwd
     ORDER BY totalCacheReadTokens DESC
-    LIMIT ?
-  `).all(since, limit);
+  `).all(since);
 
   const { computeCacheSavings } = require("./pricing") as typeof import("./pricing");
   return rows.map((r) => ({
@@ -445,7 +446,9 @@ export function queryCacheStats(db: Database, since: number, limit: number): Cac
     cacheHitPct: r.totalInputTokens + r.totalCacheReadTokens > 0
       ? (r.totalCacheReadTokens / (r.totalInputTokens + r.totalCacheReadTokens)) * 100 : null,
     estimatedSavingsUsd: r.topModel ? computeCacheSavings(r.topModel, r.totalCacheReadTokens) : null,
-  }));
+  }))
+  .sort((a, b) => (b.estimatedSavingsUsd ?? 0) - (a.estimatedSavingsUsd ?? 0))
+  .slice(0, limit);
 }
 
 // ─── SQLite Reader Adapter ────────────────────────────────────────────────────
