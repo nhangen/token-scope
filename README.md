@@ -266,6 +266,35 @@ Classifies every tool call into five layers and attributes cost proportionally b
 
 ---
 
+## Cost Alert Hook
+
+Real-time in-session cost alerts for Claude Code. Fires after each response and warns when:
+- Session cost crosses **$5, $10, $25, or $50**
+- Last 3 turns cost **>3× the session average** (context bloat spike)
+
+### Install
+
+Add to `~/.claude/settings.json` under `hooks.Stop`:
+
+```json
+{
+  "type": "command",
+  "command": "bash \"~/ML-AI/token-scope/hooks/cost-alert.sh\"",
+  "timeout": 5000
+}
+```
+
+Replace the path with wherever you cloned token-scope. Requires `bun` in PATH (or set `BUN_PATH`).
+
+### Example output
+
+```
+⚠ Cost spiking: $0.467/turn vs $0.135 avg [$150.06 / 1112 turns]
+⚠ Session crossed $25 [$25.18 / 247 turns]
+```
+
+---
+
 ## Flags
 
 | Flag | Default | Description |
