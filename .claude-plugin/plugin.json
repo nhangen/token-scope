@@ -1,0 +1,10 @@
+{
+  "name": "token-scope",
+  "version": "1.0.0",
+  "description": "Token spend analytics and cost alerts for Claude Code. 10 report modes, tooling analysis by layer, auto-checkpoint hook for session cost control.",
+  "author": {
+    "name": "nhangen"
+  },
+  "license": "MIT",
+  "keywords": ["tokens", "analytics", "cost", "cache", "efficiency", "tools", "alerts"]
+}
