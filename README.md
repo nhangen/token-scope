@@ -237,6 +237,35 @@ Thinking token estimates use a character-ratio proxy (±15–30% error). All thi
 
 ---
 
+### Tooling analysis
+
+```bash
+token-scope --tools --since 30d
+```
+
+```
+token-scope — Tooling Analysis
+────────────────────────────────────────────────────────────
+  Total Tool Calls             4,716
+  Distinct Tools               23
+  Layers Active                4 of 5
+  Unclassified Tools           0
+
+  Cost by Layer
+Layer        │ Calls  │ Attributed Cost │ Cost %  │ Avg/Call
+─────────────┼────────┼─────────────────┼─────────┼──────────
+Built-in     │  3,890 │        $342.18  │   85.2% │   $0.088
+MCP          │     61 │         $12.40  │    3.1% │   $0.203
+Plugin       │     17 │          $4.80  │    1.2% │   $0.282
+Skill        │     67 │          $3.42  │    0.9% │   $0.051
+Meta         │    241 │          $5.26  │    1.3% │   $0.022
+(no tool)    │    440 │         $33.57  │    8.4% │   $0.076
+```
+
+Classifies every tool call into five layers and attributes cost proportionally by input payload size. Plugins are MCP servers provided by Claude Code plugins (`mcp__plugin_*`). Hooks are invisible (shell commands, not tool_use blocks).
+
+---
+
 ## Flags
 
 | Flag | Default | Description |
@@ -262,13 +291,15 @@ Thinking token estimates use a character-ratio proxy (±15–30% error). All thi
 - **Costs** — computed from Anthropic pricing constants in `src/pricing.ts`
 - **Thinking tokens** — character-ratio estimates (±15–30% error), prefixed with `~`
 - **Cache savings** — estimated from cache read vs full input pricing differential
-- **Tool attribution** — per-turn dominant tool (largest input payload); MCP tools with small inputs may be outcompeted by Bash/Read/Edit in the same turn
+- **Tool attribution** — `--tools` report counts ALL tool_use blocks per turn and splits cost proportionally by input payload size. Other reports use per-turn dominant tool (largest input).
 
 ## Roadmap
 
 - **Phase 1:** Core terminal reports (summary, tool, project, session, thinking)
-- **Phase 2 (current):** Cost efficiency analytics (cache, efficiency, context bloat, per-project thinking)
-- **Phase 3:** Full MCP tool attribution; count all tool calls per turn, not just dominant
+- **Phase 2:** Cost efficiency analytics (cache, efficiency, context bloat, per-project thinking)
+- **Phase 3 (current):** Tooling analysis by layer with proportional cost attribution
+- **Phase 4:** Full MCP tool drill-down, per-project tool usage breakdown
+- **Phase 5:** Export any report to Markdown / Obsidian
 
 ## License
 
