@@ -271,8 +271,19 @@ export class JsonlReader implements Reader {
   }
 
   queryThinkingTurns(since: number): ThinkingTurnRow[] {
-    return this.filter(since)
-      .map((t) => {
+    const turns = this.filter(since);
+    const bySession = new Map<string, JsonlTurn[]>();
+    for (const t of turns) {
+      const arr = bySession.get(t.sessionId) ?? [];
+      arr.push(t);
+      bySession.set(t.sessionId, arr);
+    }
+
+    const results: ThinkingTurnRow[] = [];
+    for (const arr of bySession.values()) {
+      arr.sort((a, b) => a.timestampMs - b.timestampMs);
+      for (let i = 0; i < arr.length; i++) {
+        const t = arr[i]!;
         const blocks = parseContentBlocks(t.messageJson);
         let thinkingChars = 0;
         let textChars = 0;
@@ -280,13 +291,33 @@ export class JsonlReader implements Reader {
           if (b.type === "thinking") thinkingChars += (b.thinking ?? "").length;
           else if (b.type === "text") textChars += (b.text ?? "").length;
         }
-        return {
+        if (thinkingChars === 0) continue;
+
+        const isThinkingOnly = blocks.every((b) => b.type === "thinking");
+        let mergedMessage = t.messageJson;
+        let mergedOutputTokens = t.outputTokens;
+        let mergedCost = t.costUsd;
+
+        if (isThinkingOnly && i + 1 < arr.length) {
+          const next = arr[i + 1]!;
+          const nextBlocks = parseContentBlocks(next.messageJson);
+          for (const b of nextBlocks) {
+            if (b.type === "text") textChars += (b.text ?? "").length;
+          }
+          mergedMessage = next.messageJson;
+          mergedOutputTokens += next.outputTokens;
+          if (next.costUsd !== null) mergedCost = (mergedCost ?? 0) + next.costUsd;
+          i++;
+        }
+
+        results.push({
           uuid: t.uuid, sessionId: t.sessionId, cwd: t.cwd,
-          timestamp: t.timestampMs, outputTokens: t.outputTokens, costUsd: t.costUsd,
-          thinkingChars, textChars, message: t.messageJson,
-        };
-      })
-      .filter((t) => t.thinkingChars > 0);
+          timestamp: t.timestampMs, outputTokens: mergedOutputTokens, costUsd: mergedCost,
+          thinkingChars, textChars, message: mergedMessage,
+        });
+      }
+    }
+    return results;
   }
 
   queryBashTurns(since: number): BashCommandRow[] {
