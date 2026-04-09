@@ -163,11 +163,11 @@ describe("Reports via JSONL reader", () => {
     expect(() => renderSessionView(jsonlReader, "sess-j1", false, "30d")).not.toThrow();
   });
 
-  it("session view JSON for sess-j1 has 3 turns via JSONL", () => {
+  it("session view JSON for sess-j1 has 7 turns via JSONL", () => {
     const output = capture(() => renderSessionView(jsonlReader, "sess-j1", true, "30d"));
     const parsed = JSON.parse(output);
     expect(parsed.report).toBe("session");
-    expect(parsed.turns.length).toBe(3);
+    expect(parsed.turns.length).toBe(7);
   });
 });
 
