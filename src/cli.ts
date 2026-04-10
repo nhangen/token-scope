@@ -3,7 +3,7 @@ import { parseSince } from "@/db";
 import { createReader } from "@/reader";
 import type { Reader } from "@/reader";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 
 const HELP = `
 token-scope — Claude Code output token analytics

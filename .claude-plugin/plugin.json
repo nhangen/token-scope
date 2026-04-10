@@ -1,7 +1,7 @@
 {
   "name": "token-scope",
-  "version": "1.0.1",
-  "description": "Token spend analytics and cost alerts for Claude Code. 10 report modes, tooling analysis by layer, auto-checkpoint hook for session cost control.",
+  "version": "1.1.0",
+  "description": "Token spend analytics and cost alerts for Claude Code. 14 report modes including cache intelligence, tooling analysis by layer, auto-checkpoint hook for session cost control.",
   "author": {
     "name": "nhangen"
   },
