@@ -116,6 +116,9 @@ export interface ContextStatRow {
   avgEarlyInput: number;
   avgLateInput: number;
   bloatRatio: number | null;
+  totalCacheRead: number;
+  totalCacheWrite: number;
+  avgTurnCacheWrite: number;
 }
 
 export interface CacheStatRow {
@@ -445,6 +448,8 @@ export function queryContextStats(db: Database, since: number, limit: number): C
         (CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER)
          + CAST(json_extract(am.message, '$.usage.cache_read_input_tokens') AS INTEGER)
          + CAST(json_extract(am.message, '$.usage.cache_creation_input_tokens') AS INTEGER)) AS inp,
+        CAST(json_extract(am.message, '$.usage.cache_read_input_tokens') AS INTEGER) AS cr,
+        CAST(json_extract(am.message, '$.usage.cache_creation_input_tokens') AS INTEGER) AS cw,
         ROW_NUMBER() OVER (PARTITION BY bm.session_id ORDER BY bm.timestamp) AS rn,
         COUNT(*) OVER (PARTITION BY bm.session_id) AS turn_total
       FROM assistant_messages am
@@ -458,7 +463,10 @@ export function queryContextStats(db: Database, since: number, limit: number): C
       AVG(CASE WHEN rn <= 3 THEN CAST(inp AS REAL) END) AS avgEarlyInput,
       AVG(CASE WHEN rn > turn_total - 3 THEN CAST(inp AS REAL) END) AS avgLateInput,
       (AVG(CASE WHEN rn > turn_total - 3 THEN CAST(inp AS REAL) END) /
-       NULLIF(AVG(CASE WHEN rn <= 3 THEN CAST(inp AS REAL) END), 0)) AS bloatRatio
+       NULLIF(AVG(CASE WHEN rn <= 3 THEN CAST(inp AS REAL) END), 0)) AS bloatRatio,
+      SUM(cr) AS totalCacheRead,
+      SUM(cw) AS totalCacheWrite,
+      AVG(CAST(cw AS REAL)) AS avgTurnCacheWrite
     FROM ordered
     GROUP BY session_id
     HAVING COUNT(*) >= 6

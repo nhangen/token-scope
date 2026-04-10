@@ -39,6 +39,8 @@ export function renderContextReport(reader: Reader, opts: Options): void {
       { header: "Early Avg Input", align: "right", width: 16 },
       { header: "Late Avg Input", align: "right", width: 15 },
       { header: "Bloat", align: "right", width: 8 },
+      { header: "Avg CW/Turn", align: "right", width: 12 },
+      { header: "Total CW", align: "right", width: 12 },
     ],
     rows.map((r) => [
       r.sessionId.slice(0, 14),
@@ -47,6 +49,8 @@ export function renderContextReport(reader: Reader, opts: Options): void {
       formatTokens(Math.round(r.avgEarlyInput)),
       formatTokens(Math.round(r.avgLateInput)),
       r.bloatRatio != null ? `${r.bloatRatio.toFixed(1)}×` : "—",
+      formatTokens(Math.round(r.avgTurnCacheWrite)),
+      formatTokens(r.totalCacheWrite),
     ])
   ));
 

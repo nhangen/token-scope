@@ -212,6 +212,13 @@ describe("JsonlReader — context stats", () => {
     expect(rows.length).toBe(0);
   });
 
+  it("includes cache breakdown fields", () => {
+    const rows = reader.queryContextStats(0, 20);
+    expect(rows[0]!.totalCacheRead).toBeGreaterThan(0);
+    expect(rows[0]!.totalCacheWrite).toBeGreaterThan(0);
+    expect(rows[0]!.avgTurnCacheWrite).toBeGreaterThan(0);
+  });
+
   it("uses dominant cwd when session spans multiple cwds", () => {
     const rows = reader.queryContextStats(0, 20);
     const sess4 = rows.find((r) => r.sessionId === "sess-j4");

@@ -376,8 +376,11 @@ export class JsonlReader implements Reader {
       const avgEarlyInput = early.reduce((s, t) => s + t.inputTokens + t.cacheReadTokens + t.cacheWriteTokens, 0) / 3;
       const avgLateInput = late.reduce((s, t) => s + t.inputTokens + t.cacheReadTokens + t.cacheWriteTokens, 0) / 3;
       const bloatRatio = avgEarlyInput > 0 ? avgLateInput / avgEarlyInput : null;
+      const totalCacheRead = sorted.reduce((s, t) => s + t.cacheReadTokens, 0);
+      const totalCacheWrite = sorted.reduce((s, t) => s + t.cacheWriteTokens, 0);
+      const avgTurnCacheWrite = totalCacheWrite / sorted.length;
       const cwd = [...d.cwdCounts.entries()].sort((a, b) => (b[1] as number) - (a[1] as number))[0]![0];
-      rows.push({ sessionId, cwd, turnCount: d.turns.length, avgEarlyInput, avgLateInput, bloatRatio });
+      rows.push({ sessionId, cwd, turnCount: d.turns.length, avgEarlyInput, avgLateInput, bloatRatio, totalCacheRead, totalCacheWrite, avgTurnCacheWrite });
     }
     return rows.sort((a, b) => (b.bloatRatio ?? 0) - (a.bloatRatio ?? 0)).slice(0, limit);
   }
