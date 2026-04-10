@@ -129,6 +129,16 @@ export interface CacheStatRow {
   estimatedSavingsUsd: number | null;
 }
 
+export interface ContributorRow {
+  tool: string;
+  turns: number;
+  totalCacheWrite: number;
+  avgCacheWrite: number;
+  maxCacheWrite: number;
+  pctOfTotal: number;
+  estimatedCostUsd: number | null;
+}
+
 // ─── DB Path Resolution ───────────────────────────────────────────────────────
 
 export function resolveDbPath(flagPath?: string): DbPathResult {
@@ -480,6 +490,45 @@ export function queryCacheStats(db: Database, since: number, limit: number): Cac
   .slice(0, limit);
 }
 
+// ─── Context Contributors ────────────────────────────────────────────────────
+
+export function queryContextContributors(db: Database, since: number, limit: number): ContributorRow[] {
+  const turns = db.query<{ uuid: string; cacheWrite: number; costUsd: number | null; message: string }, [number]>(`
+    SELECT am.uuid,
+      CAST(json_extract(am.message, '$.usage.cache_creation_input_tokens') AS INTEGER) AS cacheWrite,
+      am.cost_usd AS costUsd, am.message
+    ${JOIN}
+  `).all(since);
+
+  const { parseContentBlocks, resolveDominantTool } = require("./parse") as typeof import("./parse");
+  const totalCW = turns.reduce((s, t) => s + t.cacheWrite, 0);
+
+  const byTool = new Map<string, { turns: number; totalCW: number; maxCW: number; costUsd: number }>();
+  for (const turn of turns) {
+    const tool = resolveDominantTool(parseContentBlocks(turn.message));
+    const e = byTool.get(tool) ?? { turns: 0, totalCW: 0, maxCW: 0, costUsd: 0 };
+    byTool.set(tool, {
+      turns: e.turns + 1,
+      totalCW: e.totalCW + turn.cacheWrite,
+      maxCW: Math.max(e.maxCW, turn.cacheWrite),
+      costUsd: e.costUsd + (turn.costUsd ?? 0),
+    });
+  }
+
+  return Array.from(byTool.entries())
+    .map(([tool, d]) => ({
+      tool,
+      turns: d.turns,
+      totalCacheWrite: d.totalCW,
+      avgCacheWrite: d.turns > 0 ? d.totalCW / d.turns : 0,
+      maxCacheWrite: d.maxCW,
+      pctOfTotal: totalCW > 0 ? (d.totalCW / totalCW) * 100 : 0,
+      estimatedCostUsd: d.costUsd > 0 ? d.costUsd : null,
+    }))
+    .sort((a, b) => b.totalCacheWrite - a.totalCacheWrite)
+    .slice(0, limit);
+}
+
 // ─── SQLite Reader Adapter ────────────────────────────────────────────────────
 
 interface SqliteReaderInterface {
@@ -495,6 +544,7 @@ interface SqliteReaderInterface {
   queryProjectMatches(fragment: string): ProjectMatch[];
   queryContextStats(since: number, limit: number): ContextStatRow[];
   queryCacheStats(since: number, limit: number): CacheStatRow[];
+  queryContextContributors(since: number, limit: number): ContributorRow[];
   close(): void;
 }
 
@@ -512,6 +562,7 @@ export function createSqliteReader(db: Database): SqliteReaderInterface {
     queryProjectMatches: (fragment) => queryProjectMatches(db, fragment),
     queryContextStats: (since, limit) => queryContextStats(db, since, limit),
     queryCacheStats: (since, limit) => queryCacheStats(db, since, limit),
+    queryContextContributors: (since, limit) => queryContextContributors(db, since, limit),
     close: () => db.close(),
   };
 }

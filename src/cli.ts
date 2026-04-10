@@ -22,6 +22,7 @@ REPORT MODES (mutually exclusive)
   --cache                 Cache efficiency by project
   --efficiency            Session efficiency (per-turn cost by session length)
   --tools                 Tooling analysis by layer (plugin, MCP, skill, meta, built-in)
+  --contributors          Context contributors: which tools add most to context window
 
 SHARED FLAGS
   --source <jsonl|sqlite> Data source (default: auto-detect)
@@ -51,7 +52,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -69,7 +70,7 @@ function parseArgs(argv: string[]): CliArgs {
 
   const setMode = (mode: CliArgs["mode"]) => {
     if (modeSet) {
-      process.stderr.write("Error: --tool, --project, --session, --thinking, --sessions, --context, --cache, --efficiency, and --tools are mutually exclusive.\n");
+      process.stderr.write("Error: --tool, --project, --session, --thinking, --sessions, --context, --cache, --efficiency, --tools, and --contributors are mutually exclusive.\n");
       process.exit(1);
     }
     args.mode = mode;
@@ -88,6 +89,7 @@ function parseArgs(argv: string[]): CliArgs {
       case "--cache": setMode("cache"); break;
       case "--efficiency": setMode("efficiency"); break;
       case "--tools": setMode("tools"); break;
+      case "--contributors": setMode("contributors"); break;
       case "--tool":
         setMode("tool");
         args.toolName = argv[++i];
@@ -211,6 +213,10 @@ async function main() {
     case "tools": {
       const { renderToolingReport } = await import("@/reports/tools");
       renderToolingReport(reader, options); break;
+    }
+    case "contributors": {
+      const { renderContributorsReport } = await import("@/reports/context-contributors");
+      renderContributorsReport(reader, options); break;
     }
   }
 

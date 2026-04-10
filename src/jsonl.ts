@@ -5,7 +5,7 @@ import { parseContentBlocks, resolveDominantTool } from "@/parse";
 import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow,
   WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool,
-  ContextStatRow, CacheStatRow,
+  ContextStatRow, CacheStatRow, ContributorRow,
 } from "@/reader";
 import type { Reader } from "@/reader";
 
@@ -416,6 +416,36 @@ export class JsonlReader implements Reader {
         estimatedSavingsUsd: d.savings > 0 ? d.savings : null,
       }))
       .sort((a, b) => (b.estimatedSavingsUsd ?? 0) - (a.estimatedSavingsUsd ?? 0))
+      .slice(0, limit);
+  }
+
+  queryContextContributors(since: number, limit: number): ContributorRow[] {
+    const turns = this.filter(since);
+    const totalCW = turns.reduce((s, t) => s + t.cacheWriteTokens, 0);
+
+    const byTool = new Map<string, { turns: number; totalCW: number; maxCW: number; costUsd: number }>();
+    for (const t of turns) {
+      const tool = resolveDominantTool(parseContentBlocks(t.messageJson));
+      const e = byTool.get(tool) ?? { turns: 0, totalCW: 0, maxCW: 0, costUsd: 0 };
+      byTool.set(tool, {
+        turns: e.turns + 1,
+        totalCW: e.totalCW + t.cacheWriteTokens,
+        maxCW: Math.max(e.maxCW, t.cacheWriteTokens),
+        costUsd: e.costUsd + (t.costUsd ?? 0),
+      });
+    }
+
+    return Array.from(byTool.entries())
+      .map(([tool, d]) => ({
+        tool,
+        turns: d.turns,
+        totalCacheWrite: d.totalCW,
+        avgCacheWrite: d.turns > 0 ? d.totalCW / d.turns : 0,
+        maxCacheWrite: d.maxCW,
+        pctOfTotal: totalCW > 0 ? (d.totalCW / totalCW) * 100 : 0,
+        estimatedCostUsd: d.costUsd > 0 ? d.costUsd : null,
+      }))
+      .sort((a, b) => b.totalCacheWrite - a.totalCacheWrite)
       .slice(0, limit);
   }
 
