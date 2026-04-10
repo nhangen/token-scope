@@ -1,12 +1,12 @@
 import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow, WeekRow,
   ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool,
-  ContextStatRow, CacheStatRow, ContributorRow,
+  ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow,
 } from "@/db";
 import { existsSync, readdirSync } from "fs";
 import { join } from "path";
 
-export type { SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow, WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, ContextStatRow, CacheStatRow, ContributorRow };
+export type { SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow, WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow };
 
 export interface Reader {
   querySummaryTotals(since: number): SummaryTotals;
@@ -22,6 +22,7 @@ export interface Reader {
   queryContextStats(since: number, limit: number): ContextStatRow[];
   queryCacheStats(since: number, limit: number): CacheStatRow[];
   queryContextContributors(since: number, limit: number): ContributorRow[];
+  queryBaseLoad(since: number, limit: number): BaseLoadRow[];
   close(): void;
 }
 

@@ -139,6 +139,17 @@ export interface ContributorRow {
   estimatedCostUsd: number | null;
 }
 
+export interface BaseLoadRow {
+  cwd: string;
+  sessions: number;
+  avgBaseTokens: number;
+  avgCacheWrite: number;
+  avgCacheRead: number;
+  minBaseTokens: number;
+  maxBaseTokens: number;
+  estimatedBaseCostUsd: number | null;
+}
+
 // ─── DB Path Resolution ───────────────────────────────────────────────────────
 
 export function resolveDbPath(flagPath?: string): DbPathResult {
@@ -529,6 +540,56 @@ export function queryContextContributors(db: Database, since: number, limit: num
     .slice(0, limit);
 }
 
+// ─── Base Load ───────────────────────────────────────────────────────────────
+
+export function queryBaseLoad(db: Database, since: number, limit: number): BaseLoadRow[] {
+  const rows = db.query<{
+    cwd: string; sessions: number; avgBaseTokens: number;
+    avgCacheWrite: number; avgCacheRead: number;
+    minBaseTokens: number; maxBaseTokens: number; topModel: string | null;
+  }, [number, number]>(`
+    WITH first_turns AS (
+      SELECT bm.session_id, bm.cwd,
+        (CAST(json_extract(am.message, '$.usage.cache_creation_input_tokens') AS INTEGER)
+         + CAST(json_extract(am.message, '$.usage.cache_read_input_tokens') AS INTEGER)
+         + CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER)) AS total,
+        CAST(json_extract(am.message, '$.usage.cache_creation_input_tokens') AS INTEGER) AS cw,
+        CAST(json_extract(am.message, '$.usage.cache_read_input_tokens') AS INTEGER) AS cr,
+        am.model,
+        ROW_NUMBER() OVER (PARTITION BY bm.session_id ORDER BY bm.timestamp) AS rn
+      ${JOIN}
+    ),
+    top_model AS (
+      SELECT cwd, model,
+        ROW_NUMBER() OVER (PARTITION BY cwd ORDER BY COUNT(*) DESC) AS rk
+      FROM first_turns WHERE rn = 1 AND model IS NOT NULL
+      GROUP BY cwd, model
+    )
+    SELECT
+      ft.cwd,
+      COUNT(*) AS sessions,
+      ROUND(AVG(ft.total)) AS avgBaseTokens,
+      ROUND(AVG(ft.cw)) AS avgCacheWrite,
+      ROUND(AVG(ft.cr)) AS avgCacheRead,
+      MIN(ft.total) AS minBaseTokens,
+      MAX(ft.total) AS maxBaseTokens,
+      tm.model AS topModel
+    FROM first_turns ft
+    LEFT JOIN top_model tm ON tm.cwd = ft.cwd AND tm.rk = 1
+    WHERE ft.rn = 1
+    GROUP BY ft.cwd
+    ORDER BY avgBaseTokens DESC
+    LIMIT ?
+  `).all(since, limit);
+
+  const { getPricing } = require("./pricing") as typeof import("./pricing");
+  return rows.map((r) => {
+    const p = r.topModel ? getPricing(r.topModel) : null;
+    const baseCost = p ? (r.avgBaseTokens * p.cacheWritePerMillion / 1_000_000) * r.sessions : null;
+    return { ...r, estimatedBaseCostUsd: baseCost };
+  });
+}
+
 // ─── SQLite Reader Adapter ────────────────────────────────────────────────────
 
 interface SqliteReaderInterface {
@@ -545,6 +606,7 @@ interface SqliteReaderInterface {
   queryContextStats(since: number, limit: number): ContextStatRow[];
   queryCacheStats(since: number, limit: number): CacheStatRow[];
   queryContextContributors(since: number, limit: number): ContributorRow[];
+  queryBaseLoad(since: number, limit: number): BaseLoadRow[];
   close(): void;
 }
 
@@ -563,6 +625,7 @@ export function createSqliteReader(db: Database): SqliteReaderInterface {
     queryContextStats: (since, limit) => queryContextStats(db, since, limit),
     queryCacheStats: (since, limit) => queryCacheStats(db, since, limit),
     queryContextContributors: (since, limit) => queryContextContributors(db, since, limit),
+    queryBaseLoad: (since, limit) => queryBaseLoad(db, since, limit),
     close: () => db.close(),
   };
 }

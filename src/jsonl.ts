@@ -5,7 +5,7 @@ import { parseContentBlocks, resolveDominantTool } from "@/parse";
 import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow,
   WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool,
-  ContextStatRow, CacheStatRow, ContributorRow,
+  ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow,
 } from "@/reader";
 import type { Reader } from "@/reader";
 
@@ -446,6 +446,66 @@ export class JsonlReader implements Reader {
         estimatedCostUsd: d.costUsd > 0 ? d.costUsd : null,
       }))
       .sort((a, b) => b.totalCacheWrite - a.totalCacheWrite)
+      .slice(0, limit);
+  }
+
+  queryBaseLoad(since: number, limit: number): BaseLoadRow[] {
+    const turns = this.filter(since);
+    const bySession = new Map<string, JsonlTurn[]>();
+    for (const t of turns) {
+      const arr = bySession.get(t.sessionId) ?? [];
+      arr.push(t);
+      bySession.set(t.sessionId, arr);
+    }
+
+    const byProject = new Map<string, {
+      sessions: number;
+      totals: number[];
+      cacheWrites: number[];
+      cacheReads: number[];
+      models: Map<string, number>;
+    }>();
+
+    for (const arr of bySession.values()) {
+      arr.sort((a, b) => a.timestampMs - b.timestampMs);
+      const first = arr[0]!;
+      const total = first.inputTokens + first.cacheReadTokens + first.cacheWriteTokens;
+      const e = byProject.get(first.cwd) ?? {
+        sessions: 0, totals: [], cacheWrites: [], cacheReads: [], models: new Map(),
+      };
+      e.sessions++;
+      e.totals.push(total);
+      e.cacheWrites.push(first.cacheWriteTokens);
+      e.cacheReads.push(first.cacheReadTokens);
+      if (first.model) {
+        e.models.set(first.model, (e.models.get(first.model) ?? 0) + 1);
+      }
+      byProject.set(first.cwd, e);
+    }
+
+    return Array.from(byProject.entries())
+      .map(([cwd, d]) => {
+        const avgBaseTokens = d.totals.reduce((s, v) => s + v, 0) / d.sessions;
+        const avgCacheWrite = d.cacheWrites.reduce((s, v) => s + v, 0) / d.sessions;
+        const avgCacheRead = d.cacheReads.reduce((s, v) => s + v, 0) / d.sessions;
+        const minBaseTokens = Math.min(...d.totals);
+        const maxBaseTokens = Math.max(...d.totals);
+        const topModel = d.models.size > 0
+          ? [...d.models.entries()].sort((a, b) => b[1] - a[1])[0]![0]
+          : null;
+        const p = topModel ? getPricing(topModel) : null;
+        const estimatedBaseCostUsd = p
+          ? (avgBaseTokens * p.cacheWritePerMillion / 1_000_000) * d.sessions
+          : null;
+        return {
+          cwd, sessions: d.sessions,
+          avgBaseTokens: Math.round(avgBaseTokens),
+          avgCacheWrite: Math.round(avgCacheWrite),
+          avgCacheRead: Math.round(avgCacheRead),
+          minBaseTokens, maxBaseTokens, estimatedBaseCostUsd,
+        };
+      })
+      .sort((a, b) => b.avgBaseTokens - a.avgBaseTokens)
       .slice(0, limit);
   }
 
