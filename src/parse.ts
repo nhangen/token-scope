@@ -88,22 +88,3 @@ export function parseContentBlocks(messageJson: string): ContentBlock[] {
   }
 }
 
-/** Extracts usage fields from raw message JSON. Returns zeros on failure. */
-export function parseUsage(messageJson: string): {
-  outputTokens: number; inputTokens: number;
-  cacheReadTokens: number; cacheWriteTokens: number;
-} {
-  const defaults = { outputTokens: 0, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
-  try {
-    const parsed = JSON.parse(messageJson) as { usage?: Record<string, number> };
-    const u = parsed.usage ?? {};
-    return {
-      outputTokens: u["output_tokens"] ?? 0,
-      inputTokens: u["input_tokens"] ?? 0,
-      cacheReadTokens: u["cache_read_input_tokens"] ?? 0,
-      cacheWriteTokens: u["cache_creation_input_tokens"] ?? 0,
-    };
-  } catch {
-    return defaults;
-  }
-}

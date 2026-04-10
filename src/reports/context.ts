@@ -1,4 +1,4 @@
-import type { Reader, ContextStatRow } from "@/reader";
+import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, formatTokens, bold, dim } from "@/format";
 import { VERSION } from "@/version";
 

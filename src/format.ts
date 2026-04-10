@@ -8,8 +8,6 @@ function ansi(code: string, text: string): string {
 
 export const bold  = (s: string) => ansi("1",  s);
 export const dim   = (s: string) => ansi("2",  s);
-export const cyan  = (s: string) => ansi("36", s);
-export const green = (s: string) => ansi("32", s);
 
 /** Formats an integer with thousands separators: 1204389 → "1,204,389" */
 export function formatTokens(n: number | null | undefined): string {
@@ -110,7 +108,3 @@ export function renderFootnote(text: string): string {
   return `\n${dim(`  * ${text}`)}`;
 }
 
-/** Renders a dim footer line. */
-export function renderFooter(text: string): string {
-  return `\n${dim(text)}`;
-}
