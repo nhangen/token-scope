@@ -161,6 +161,19 @@ export interface CacheGrowthRow {
   tool: string;
 }
 
+export interface SessionBudgetRow {
+  sessionId: string;
+  cwd: string | null;
+  turnCount: number;
+  totalCostUsd: number | null;
+  costAtTurn10: number | null;
+  costAtTurn25: number | null;
+  costAtTurn50: number | null;
+  avgCostPerTurnFirst10: number | null;
+  avgCostPerTurnLast10: number | null;
+  costAccelerationRatio: number | null;
+}
+
 // ─── DB Path Resolution ───────────────────────────────────────────────────────
 
 export function resolveDbPath(flagPath?: string): DbPathResult {
@@ -639,6 +652,60 @@ export function queryCacheGrowth(db: Database, sessionId: string): CacheGrowthRo
   });
 }
 
+// ─── Session Budgets ─────────────────────────────────────────────────────────
+
+export function querySessionBudgets(db: Database, since: number, limit: number): SessionBudgetRow[] {
+  const sessions = db.query<{ sessionId: string; cwd: string | null }, [number]>(`
+    SELECT bm.session_id AS sessionId, MAX(bm.cwd) AS cwd
+    ${JOIN}
+    GROUP BY bm.session_id
+    HAVING COUNT(*) >= 10
+  `).all(since);
+
+  const results: SessionBudgetRow[] = [];
+
+  for (const sess of sessions) {
+    const turns = db.query<{ costUsd: number | null }, [string]>(`
+      SELECT am.cost_usd AS costUsd
+      FROM assistant_messages am
+      JOIN base_messages bm ON am.uuid = bm.uuid
+      WHERE bm.session_id = ? AND json_valid(am.message) = 1
+      ORDER BY bm.timestamp ASC
+    `).all(sess.sessionId);
+
+    const turnCount = turns.length;
+    const costs = turns.map(t => t.costUsd ?? 0);
+
+    const cumAt = (n: number) => n <= costs.length ? costs.slice(0, n).reduce((s, c) => s + c, 0) : null;
+    const avgRange = (start: number, end: number) => {
+      const slice = costs.slice(start, end);
+      return slice.length > 0 ? slice.reduce((s, c) => s + c, 0) / slice.length : null;
+    };
+
+    const totalCost = costs.reduce((s, c) => s + c, 0);
+    const first10Avg = avgRange(0, 10);
+    const last10Avg = avgRange(Math.max(0, turnCount - 10), turnCount);
+    const accel = first10Avg && first10Avg > 0 && last10Avg ? last10Avg / first10Avg : null;
+
+    results.push({
+      sessionId: sess.sessionId,
+      cwd: sess.cwd,
+      turnCount,
+      totalCostUsd: totalCost > 0 ? totalCost : null,
+      costAtTurn10: cumAt(10),
+      costAtTurn25: cumAt(25),
+      costAtTurn50: cumAt(50),
+      avgCostPerTurnFirst10: first10Avg,
+      avgCostPerTurnLast10: last10Avg,
+      costAccelerationRatio: accel,
+    });
+  }
+
+  return results
+    .sort((a, b) => (b.costAccelerationRatio ?? 0) - (a.costAccelerationRatio ?? 0))
+    .slice(0, limit);
+}
+
 // ─── SQLite Reader Adapter ────────────────────────────────────────────────────
 
 interface SqliteReaderInterface {
@@ -657,6 +724,7 @@ interface SqliteReaderInterface {
   queryContextContributors(since: number, limit: number): ContributorRow[];
   queryBaseLoad(since: number, limit: number): BaseLoadRow[];
   queryCacheGrowth(sessionId: string): CacheGrowthRow[];
+  querySessionBudgets(since: number, limit: number): SessionBudgetRow[];
   close(): void;
 }
 
@@ -677,6 +745,7 @@ export function createSqliteReader(db: Database): SqliteReaderInterface {
     queryContextContributors: (since, limit) => queryContextContributors(db, since, limit),
     queryBaseLoad: (since, limit) => queryBaseLoad(db, since, limit),
     queryCacheGrowth: (sessionId) => queryCacheGrowth(db, sessionId),
+    querySessionBudgets: (since, limit) => querySessionBudgets(db, since, limit),
     close: () => db.close(),
   };
 }

@@ -6,6 +6,7 @@ import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow,
   WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool,
   ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow,
+  SessionBudgetRow,
 } from "@/reader";
 import type { Reader } from "@/reader";
 
@@ -506,6 +507,54 @@ export class JsonlReader implements Reader {
         };
       })
       .sort((a, b) => b.avgBaseTokens - a.avgBaseTokens)
+      .slice(0, limit);
+  }
+
+  querySessionBudgets(since: number, limit: number): SessionBudgetRow[] {
+    const turns = this.filter(since);
+    const bySession = new Map<string, { cwdCounts: Map<string, number>; turns: JsonlTurn[] }>();
+    for (const t of turns) {
+      const e = bySession.get(t.sessionId) ?? { cwdCounts: new Map<string, number>(), turns: [] };
+      e.cwdCounts.set(t.cwd, (e.cwdCounts.get(t.cwd) ?? 0) + 1);
+      e.turns.push(t);
+      bySession.set(t.sessionId, e);
+    }
+
+    const results: SessionBudgetRow[] = [];
+    for (const [sessionId, d] of bySession.entries()) {
+      if (d.turns.length < 10) continue;
+      const sorted = d.turns.slice().sort((a, b) => a.timestampMs - b.timestampMs);
+      const turnCount = sorted.length;
+      const costs = sorted.map(t => t.costUsd ?? 0);
+
+      const cumAt = (n: number) => n <= costs.length ? costs.slice(0, n).reduce((s, c) => s + c, 0) : null;
+      const avgRange = (start: number, end: number) => {
+        const slice = costs.slice(start, end);
+        return slice.length > 0 ? slice.reduce((s, c) => s + c, 0) / slice.length : null;
+      };
+
+      const totalCost = costs.reduce((s, c) => s + c, 0);
+      const first10Avg = avgRange(0, 10);
+      const last10Avg = avgRange(Math.max(0, turnCount - 10), turnCount);
+      const accel = first10Avg && first10Avg > 0 && last10Avg ? last10Avg / first10Avg : null;
+      const cwd = [...d.cwdCounts.entries()].sort((a, b) => (b[1] as number) - (a[1] as number))[0]![0];
+
+      results.push({
+        sessionId,
+        cwd,
+        turnCount,
+        totalCostUsd: totalCost > 0 ? totalCost : null,
+        costAtTurn10: cumAt(10),
+        costAtTurn25: cumAt(25),
+        costAtTurn50: cumAt(50),
+        avgCostPerTurnFirst10: first10Avg,
+        avgCostPerTurnLast10: last10Avg,
+        costAccelerationRatio: accel,
+      });
+    }
+
+    return results
+      .sort((a, b) => (b.costAccelerationRatio ?? 0) - (a.costAccelerationRatio ?? 0))
       .slice(0, limit);
   }
 

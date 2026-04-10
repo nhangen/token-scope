@@ -25,6 +25,7 @@ REPORT MODES (mutually exclusive)
   --contributors          Context contributors: which tools add most to context window
   --base-load             Base load analysis (system prompt tax per project)
   --cache-growth <id>    Turn-by-turn cache growth waterfall for one session
+  --budget               Session budget analysis (optimal session length)
 
 SHARED FLAGS
   --source <jsonl|sqlite> Data source (default: auto-detect)
@@ -54,7 +55,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -72,7 +73,7 @@ function parseArgs(argv: string[]): CliArgs {
 
   const setMode = (mode: CliArgs["mode"]) => {
     if (modeSet) {
-      process.stderr.write("Error: --tool, --project, --session, --thinking, --sessions, --context, --cache, --efficiency, --tools, --contributors, --base-load, and --cache-growth are mutually exclusive.\n");
+      process.stderr.write("Error: --tool, --project, --session, --thinking, --sessions, --context, --cache, --efficiency, --tools, --contributors, --base-load, --cache-growth, and --budget are mutually exclusive.\n");
       process.exit(1);
     }
     args.mode = mode;
@@ -93,6 +94,7 @@ function parseArgs(argv: string[]): CliArgs {
       case "--tools": setMode("tools"); break;
       case "--contributors": setMode("contributors"); break;
       case "--base-load": setMode("base-load"); break;
+      case "--budget": setMode("budget"); break;
       case "--cache-growth":
         setMode("cache-growth");
         args.sessionId = argv[++i];
@@ -237,6 +239,10 @@ async function main() {
     case "base-load": {
       const { renderBaseLoadReport } = await import("@/reports/base-load");
       renderBaseLoadReport(reader, options); break;
+    }
+    case "budget": {
+      const { renderSessionBudgetReport } = await import("@/reports/session-budget");
+      renderSessionBudgetReport(reader, options); break;
     }
   }
 
