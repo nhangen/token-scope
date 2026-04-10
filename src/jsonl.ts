@@ -5,7 +5,7 @@ import { parseContentBlocks, resolveDominantTool } from "@/parse";
 import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow,
   WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool,
-  ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow,
+  ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow,
 } from "@/reader";
 import type { Reader } from "@/reader";
 
@@ -507,6 +507,31 @@ export class JsonlReader implements Reader {
       })
       .sort((a, b) => b.avgBaseTokens - a.avgBaseTokens)
       .slice(0, limit);
+  }
+
+  queryCacheGrowth(sessionId: string): CacheGrowthRow[] {
+    const matchFn = sessionId.length < 36
+      ? (t: JsonlTurn) => t.sessionId.startsWith(sessionId)
+      : (t: JsonlTurn) => t.sessionId === sessionId;
+    const filtered = this.turns.filter(matchFn).sort((a, b) => a.timestampMs - b.timestampMs);
+
+    let prevTotal = 0;
+    return filtered.map((t, i) => {
+      const total = t.inputTokens + t.cacheReadTokens + t.cacheWriteTokens;
+      const delta = i === 0 ? 0 : total - prevTotal;
+      const tool = resolveDominantTool(parseContentBlocks(t.messageJson));
+      prevTotal = total;
+      return {
+        turn: i + 1,
+        totalContext: total,
+        cacheRead: t.cacheReadTokens,
+        cacheWrite: t.cacheWriteTokens,
+        inputTokens: t.inputTokens,
+        delta,
+        costUsd: t.costUsd,
+        tool,
+      };
+    });
   }
 
   close(): void {}

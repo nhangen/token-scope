@@ -24,6 +24,7 @@ REPORT MODES (mutually exclusive)
   --tools                 Tooling analysis by layer (plugin, MCP, skill, meta, built-in)
   --contributors          Context contributors: which tools add most to context window
   --base-load             Base load analysis (system prompt tax per project)
+  --cache-growth <id>    Turn-by-turn cache growth waterfall for one session
 
 SHARED FLAGS
   --source <jsonl|sqlite> Data source (default: auto-detect)
@@ -53,7 +54,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -71,7 +72,7 @@ function parseArgs(argv: string[]): CliArgs {
 
   const setMode = (mode: CliArgs["mode"]) => {
     if (modeSet) {
-      process.stderr.write("Error: --tool, --project, --session, --thinking, --sessions, --context, --cache, --efficiency, --tools, --contributors, and --base-load are mutually exclusive.\n");
+      process.stderr.write("Error: --tool, --project, --session, --thinking, --sessions, --context, --cache, --efficiency, --tools, --contributors, --base-load, and --cache-growth are mutually exclusive.\n");
       process.exit(1);
     }
     args.mode = mode;
@@ -92,6 +93,12 @@ function parseArgs(argv: string[]): CliArgs {
       case "--tools": setMode("tools"); break;
       case "--contributors": setMode("contributors"); break;
       case "--base-load": setMode("base-load"); break;
+      case "--cache-growth":
+        setMode("cache-growth");
+        args.sessionId = argv[++i];
+        if (!args.sessionId) { process.stderr.write("Error: --cache-growth requires a session ID argument.\n"); process.exit(1); }
+        if (args.sessionId.length < 6) { process.stderr.write("Error: --cache-growth ID must be at least 6 characters.\n"); process.exit(1); }
+        break;
       case "--tool":
         setMode("tool");
         args.toolName = argv[++i];
@@ -173,6 +180,13 @@ async function main() {
   if (args.mode === "session") {
     const { renderSessionView } = await import("@/reports/session");
     await renderSessionView(reader, args.sessionId!, args.json, args.since);
+    reader.close();
+    return;
+  }
+
+  if (args.mode === "cache-growth") {
+    const { renderCacheGrowthReport } = await import("@/reports/cache-growth");
+    renderCacheGrowthReport(reader, args.sessionId!, args.json, args.since);
     reader.close();
     return;
   }

@@ -150,6 +150,17 @@ export interface BaseLoadRow {
   estimatedBaseCostUsd: number | null;
 }
 
+export interface CacheGrowthRow {
+  turn: number;
+  totalContext: number;
+  cacheRead: number;
+  cacheWrite: number;
+  inputTokens: number;
+  delta: number;
+  costUsd: number | null;
+  tool: string;
+}
+
 // ─── DB Path Resolution ───────────────────────────────────────────────────────
 
 export function resolveDbPath(flagPath?: string): DbPathResult {
@@ -590,6 +601,44 @@ export function queryBaseLoad(db: Database, since: number, limit: number): BaseL
   });
 }
 
+// ─── Cache Growth ────────────────────────────────────────────────────────────
+
+export function queryCacheGrowth(db: Database, sessionId: string): CacheGrowthRow[] {
+  const turns = db.query<{
+    inp: number; cr: number; cw: number; costUsd: number | null; message: string;
+  }, [string]>(`
+    SELECT
+      CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER) AS inp,
+      CAST(json_extract(am.message, '$.usage.cache_read_input_tokens') AS INTEGER) AS cr,
+      CAST(json_extract(am.message, '$.usage.cache_creation_input_tokens') AS INTEGER) AS cw,
+      am.cost_usd AS costUsd, am.message
+    FROM assistant_messages am
+    JOIN base_messages bm ON am.uuid = bm.uuid
+    WHERE bm.session_id = ? AND json_valid(am.message) = 1
+    ORDER BY bm.timestamp ASC
+  `).all(sessionId);
+
+  const { parseContentBlocks, resolveDominantTool } = require("./parse") as typeof import("./parse");
+
+  let prevTotal = 0;
+  return turns.map((t, i) => {
+    const total = t.inp + t.cr + t.cw;
+    const delta = i === 0 ? 0 : total - prevTotal;
+    const tool = resolveDominantTool(parseContentBlocks(t.message));
+    prevTotal = total;
+    return {
+      turn: i + 1,
+      totalContext: total,
+      cacheRead: t.cr,
+      cacheWrite: t.cw,
+      inputTokens: t.inp,
+      delta,
+      costUsd: t.costUsd,
+      tool,
+    };
+  });
+}
+
 // ─── SQLite Reader Adapter ────────────────────────────────────────────────────
 
 interface SqliteReaderInterface {
@@ -607,6 +656,7 @@ interface SqliteReaderInterface {
   queryCacheStats(since: number, limit: number): CacheStatRow[];
   queryContextContributors(since: number, limit: number): ContributorRow[];
   queryBaseLoad(since: number, limit: number): BaseLoadRow[];
+  queryCacheGrowth(sessionId: string): CacheGrowthRow[];
   close(): void;
 }
 
@@ -626,6 +676,7 @@ export function createSqliteReader(db: Database): SqliteReaderInterface {
     queryCacheStats: (since, limit) => queryCacheStats(db, since, limit),
     queryContextContributors: (since, limit) => queryContextContributors(db, since, limit),
     queryBaseLoad: (since, limit) => queryBaseLoad(db, since, limit),
+    queryCacheGrowth: (sessionId) => queryCacheGrowth(db, sessionId),
     close: () => db.close(),
   };
 }
