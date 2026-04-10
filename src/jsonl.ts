@@ -423,8 +423,12 @@ export class JsonlReader implements Reader {
       .slice(0, limit);
   }
 
-  queryContextContributors(since: number, limit: number): ContributorRow[] {
-    const turns = this.filter(since);
+  queryContextContributors(since: number, limit: number, projectFragment?: string): ContributorRow[] {
+    let turns = this.filter(since);
+    if (projectFragment) {
+      const frag = projectFragment.toLowerCase();
+      turns = turns.filter((t) => t.cwd.toLowerCase().includes(frag));
+    }
     const totalCW = turns.reduce((s, t) => s + t.cacheWriteTokens, 0);
 
     const byTool = new Map<string, { turns: number; totalCW: number; maxCW: number; costUsd: number }>();
@@ -499,7 +503,11 @@ export class JsonlReader implements Reader {
           : null;
         const p = topModel ? getPricing(topModel) : null;
         const estimatedBaseCostUsd = p
-          ? (avgBaseTokens * p.cacheWritePerMillion / 1_000_000) * d.sessions
+          ? (
+            (avgCacheWrite * p.cacheWritePerMillion / 1_000_000) +
+            (avgCacheRead * p.cacheReadPerMillion / 1_000_000) +
+            ((avgBaseTokens - avgCacheWrite - avgCacheRead) * p.inputPerMillion / 1_000_000)
+          ) * d.sessions
           : null;
         return {
           cwd, sessions: d.sessions,

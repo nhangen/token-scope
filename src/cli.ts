@@ -2,8 +2,7 @@
 import { parseSince } from "@/db";
 import { createReader } from "@/reader";
 import type { Reader } from "@/reader";
-
-const VERSION = "1.1.0";
+import { VERSION } from "@/version";
 
 const HELP = `
 token-scope — Claude Code output token analytics
@@ -106,11 +105,17 @@ function parseArgs(argv: string[]): CliArgs {
         args.toolName = argv[++i];
         if (!args.toolName) { process.stderr.write("Error: --tool requires a name argument.\n"); process.exit(1); }
         break;
-      case "--project":
-        setMode("project");
-        args.projectFragment = argv[++i];
-        if (!args.projectFragment) { process.stderr.write("Error: --project requires a fragment argument.\n"); process.exit(1); }
+      case "--project": {
+        const frag = argv[++i];
+        if (!frag) { process.stderr.write("Error: --project requires a fragment argument.\n"); process.exit(1); }
+        if (modeSet && args.mode === "contributors") {
+          args.projectFragment = frag;
+        } else {
+          setMode("project");
+          args.projectFragment = frag;
+        }
         break;
+      }
       case "--session":
         setMode("session");
         args.sessionId = argv[++i];
@@ -234,7 +239,7 @@ async function main() {
     }
     case "contributors": {
       const { renderContributorsReport } = await import("@/reports/context-contributors");
-      renderContributorsReport(reader, options); break;
+      renderContributorsReport(reader, options, args.projectFragment); break;
     }
     case "base-load": {
       const { renderBaseLoadReport } = await import("@/reports/base-load");

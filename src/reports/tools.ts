@@ -2,6 +2,7 @@ import type { Reader } from "@/reader";
 import { analyzeTooling } from "@/tools";
 import type { LayerKey } from "@/tools";
 import { renderHeader, renderKV, renderTable, formatUsd, formatPct, bold, dim, renderFootnote } from "@/format";
+import { VERSION } from "@/version";
 
 interface Options { since: number; sinceStr: string; limit: number; json: boolean }
 
@@ -11,7 +12,7 @@ export function renderToolingReport(reader: Reader, opts: Options): void {
 
   if (opts.json) {
     console.log(JSON.stringify({
-      meta: { generated_at: new Date().toISOString(), since: opts.since, limit: opts.limit, token_scope_version: "1.0.0" },
+      meta: { generated_at: new Date().toISOString(), since: opts.since, limit: opts.limit, token_scope_version: VERSION },
       report: "tools",
       summary: analysis.summary,
       layers: analysis.layers,

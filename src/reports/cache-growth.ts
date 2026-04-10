@@ -1,12 +1,13 @@
 import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, formatTokens, formatUsd, bold, renderFootnote } from "@/format";
+import { VERSION } from "@/version";
 
 export function renderCacheGrowthReport(reader: Reader, sessionId: string, json: boolean, sinceStr: string): void {
   const rows = reader.queryCacheGrowth(sessionId);
 
   if (json) {
     console.log(JSON.stringify({
-      meta: { generated_at: new Date().toISOString(), session_id: sessionId, token_scope_version: "1.0.0" },
+      meta: { generated_at: new Date().toISOString(), session_id: sessionId, token_scope_version: VERSION },
       report: "cache-growth", rows,
     }, null, 2));
     return;

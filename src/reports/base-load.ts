@@ -1,5 +1,6 @@
 import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, formatTokens, formatUsd, bold, renderFootnote } from "@/format";
+import { VERSION } from "@/version";
 
 interface Options { since: number; sinceStr: string; limit: number; json: boolean }
 
@@ -8,7 +9,7 @@ export function renderBaseLoadReport(reader: Reader, opts: Options): void {
 
   if (opts.json) {
     console.log(JSON.stringify({
-      meta: { generated_at: new Date().toISOString(), since: opts.since, limit: opts.limit, token_scope_version: "1.0.0" },
+      meta: { generated_at: new Date().toISOString(), since: opts.since, limit: opts.limit, token_scope_version: VERSION },
       report: "base-load", rows,
     }, null, 2));
     return;

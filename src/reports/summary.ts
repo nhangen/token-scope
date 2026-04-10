@@ -1,5 +1,6 @@
 import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, renderFootnote, formatTokens, formatUsd, formatPct, bold, dim } from "@/format";
+import { VERSION } from "@/version";
 
 interface Options { since: number; limit: number; json: boolean }
 
@@ -11,7 +12,7 @@ export function renderSummary(reader: Reader, opts: Options): void {
 
   if (opts.json) {
     console.log(JSON.stringify({
-      meta: { generated_at: new Date().toISOString(), since: opts.since, limit: opts.limit, token_scope_version: "1.0.0" },
+      meta: { generated_at: new Date().toISOString(), since: opts.since, limit: opts.limit, token_scope_version: VERSION },
       report: "summary", totals, byTool, byProject, weeklyTrend: weekly,
     }, null, 2));
     return;

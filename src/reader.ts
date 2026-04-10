@@ -22,7 +22,7 @@ export interface Reader {
   queryProjectMatches(fragment: string): ProjectMatch[];
   queryContextStats(since: number, limit: number): ContextStatRow[];
   queryCacheStats(since: number, limit: number): CacheStatRow[];
-  queryContextContributors(since: number, limit: number): ContributorRow[];
+  queryContextContributors(since: number, limit: number, projectFragment?: string): ContributorRow[];
   queryBaseLoad(since: number, limit: number): BaseLoadRow[];
   queryCacheGrowth(sessionId: string): CacheGrowthRow[];
   querySessionBudgets(since: number, limit: number): SessionBudgetRow[];

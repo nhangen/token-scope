@@ -1,5 +1,6 @@
 import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, formatUsd, bold, dim } from "@/format";
+import { VERSION } from "@/version";
 
 interface Options { since: number; sinceStr: string; limit: number; json: boolean }
 
@@ -29,7 +30,7 @@ export function renderEfficiencyReport(reader: Reader, opts: Options): void {
 
   if (opts.json) {
     console.log(JSON.stringify({
-      meta: { generated_at: new Date().toISOString(), since: opts.since, limit: opts.limit, token_scope_version: "1.0.0" },
+      meta: { generated_at: new Date().toISOString(), since: opts.since, limit: opts.limit, token_scope_version: VERSION },
       report: "efficiency", buckets,
     }, null, 2));
     return;

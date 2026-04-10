@@ -1,6 +1,7 @@
 import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, renderFootnote, formatTokens, formatUsd, formatPct, formatDuration, formatTimestamp, approx, truncate, bold, dim } from "@/format";
 import { parseContentBlocks, resolveDominantTool, estimateThinkingTokens } from "@/parse";
+import { VERSION } from "@/version";
 
 interface Options { since: number; sinceStr: string; limit: number; json: boolean }
 
@@ -31,7 +32,7 @@ export function renderSessionView(reader: Reader, sessionId: string, json: boole
 
   if (json) {
     console.log(JSON.stringify({
-      meta: { generated_at: new Date().toISOString(), token_scope_version: "1.0.0" },
+      meta: { generated_at: new Date().toISOString(), token_scope_version: VERSION },
       report: "session", session,
       turns: turns.map((t, i) => {
         const blocks = parseContentBlocks(t.message);
@@ -108,7 +109,7 @@ export function renderSessionsList(reader: Reader, opts: Options): void {
   if (opts.json) {
     const total = sessions.reduce((s, r) => s + (r.totalCostUsd ?? 0), 0);
     console.log(JSON.stringify({
-      meta: { generated_at: new Date().toISOString(), since: opts.since, limit: opts.limit, token_scope_version: "1.0.0" },
+      meta: { generated_at: new Date().toISOString(), since: opts.since, limit: opts.limit, token_scope_version: VERSION },
       report: "sessions",
       totals: { session_count: sessions.length, total_cost_usd: total, avg_session_cost_usd: sessions.length > 0 ? total / sessions.length : 0 },
       sessions: sessions.map((s) => ({

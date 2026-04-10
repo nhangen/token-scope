@@ -1,6 +1,7 @@
 import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, formatTokens, formatUsd, formatPct, truncate, bold } from "@/format";
 import { parseContentBlocks, resolveDominantTool, categorizeBashCommand } from "@/parse";
+import { VERSION } from "@/version";
 
 interface Options { since: number; sinceStr: string; limit: number; json: boolean }
 
@@ -26,7 +27,7 @@ export function renderToolDrillDown(reader: Reader, toolName: string, opts: Opti
 
   if (opts.json) {
     console.log(JSON.stringify({
-      meta: { generated_at: new Date().toISOString(), since: opts.since, limit: opts.limit, token_scope_version: "1.0.0" },
+      meta: { generated_at: new Date().toISOString(), since: opts.since, limit: opts.limit, token_scope_version: VERSION },
       report: "tool", toolName: normalizedName,
       overview: { turns: toolTurns.length, totalOutputTokens: totalOutput, totalCostUsd: totalCost, shareOutputPct: shareOutput, shareCostPct: shareCost },
     }, null, 2));

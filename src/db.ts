@@ -535,13 +535,15 @@ export function queryCacheStats(db: Database, since: number, limit: number): Cac
 
 // ─── Context Contributors ────────────────────────────────────────────────────
 
-export function queryContextContributors(db: Database, since: number, limit: number): ContributorRow[] {
-  const turns = db.query<{ uuid: string; cacheWrite: number; costUsd: number | null; message: string }, [number]>(`
+export function queryContextContributors(db: Database, since: number, limit: number, projectFragment?: string): ContributorRow[] {
+  const projectFilter = projectFragment ? ` AND bm.cwd LIKE '%' || ? || '%'` : '';
+  const params = projectFragment ? [since, projectFragment] as [number, string] : [since] as [number];
+  const turns = db.query<{ uuid: string; cacheWrite: number; costUsd: number | null; message: string }, (number | string)[]>(`
     SELECT am.uuid,
       CAST(json_extract(am.message, '$.usage.cache_creation_input_tokens') AS INTEGER) AS cacheWrite,
       am.cost_usd AS costUsd, am.message
-    ${JOIN}
-  `).all(since);
+    ${JOIN}${projectFilter}
+  `).all(...params);
 
   const { parseContentBlocks, resolveDominantTool } = require("./parse") as typeof import("./parse");
   const totalCW = turns.reduce((s, t) => s + t.cacheWrite, 0);
@@ -617,7 +619,11 @@ export function queryBaseLoad(db: Database, since: number, limit: number): BaseL
   const { getPricing } = require("./pricing") as typeof import("./pricing");
   return rows.map((r) => {
     const p = r.topModel ? getPricing(r.topModel) : null;
-    const baseCost = p ? (r.avgBaseTokens * p.cacheWritePerMillion / 1_000_000) * r.sessions : null;
+    const baseCost = p ? (
+      (r.avgCacheWrite * p.cacheWritePerMillion / 1_000_000) +
+      (r.avgCacheRead * p.cacheReadPerMillion / 1_000_000) +
+      ((r.avgBaseTokens - r.avgCacheWrite - r.avgCacheRead) * p.inputPerMillion / 1_000_000)
+    ) * r.sessions : null;
     return { ...r, estimatedBaseCostUsd: baseCost };
   });
 }
@@ -625,6 +631,12 @@ export function queryBaseLoad(db: Database, since: number, limit: number): BaseL
 // ─── Cache Growth ────────────────────────────────────────────────────────────
 
 export function queryCacheGrowth(db: Database, sessionId: string): CacheGrowthRow[] {
+  const isPartial = sessionId.length < 36;
+  const whereClause = isPartial
+    ? `WHERE bm.session_id LIKE ? AND json_valid(am.message) = 1`
+    : `WHERE bm.session_id = ? AND json_valid(am.message) = 1`;
+  const param = isPartial ? `${sessionId}%` : sessionId;
+
   const turns = db.query<{
     inp: number; cr: number; cw: number; costUsd: number | null; message: string;
   }, [string]>(`
@@ -635,9 +647,9 @@ export function queryCacheGrowth(db: Database, sessionId: string): CacheGrowthRo
       am.cost_usd AS costUsd, am.message
     FROM assistant_messages am
     JOIN base_messages bm ON am.uuid = bm.uuid
-    WHERE bm.session_id = ? AND json_valid(am.message) = 1
+    ${whereClause}
     ORDER BY bm.timestamp ASC
-  `).all(sessionId);
+  `).all(param);
 
   const { parseContentBlocks, resolveDominantTool } = require("./parse") as typeof import("./parse");
 
@@ -729,7 +741,7 @@ interface SqliteReaderInterface {
   queryProjectMatches(fragment: string): ProjectMatch[];
   queryContextStats(since: number, limit: number): ContextStatRow[];
   queryCacheStats(since: number, limit: number): CacheStatRow[];
-  queryContextContributors(since: number, limit: number): ContributorRow[];
+  queryContextContributors(since: number, limit: number, projectFragment?: string): ContributorRow[];
   queryBaseLoad(since: number, limit: number): BaseLoadRow[];
   queryCacheGrowth(sessionId: string): CacheGrowthRow[];
   querySessionBudgets(since: number, limit: number): SessionBudgetRow[];
@@ -750,7 +762,7 @@ export function createSqliteReader(db: Database): SqliteReaderInterface {
     queryProjectMatches: (fragment) => queryProjectMatches(db, fragment),
     queryContextStats: (since, limit) => queryContextStats(db, since, limit),
     queryCacheStats: (since, limit) => queryCacheStats(db, since, limit),
-    queryContextContributors: (since, limit) => queryContextContributors(db, since, limit),
+    queryContextContributors: (since, limit, projectFragment) => queryContextContributors(db, since, limit, projectFragment),
     queryBaseLoad: (since, limit) => queryBaseLoad(db, since, limit),
     queryCacheGrowth: (sessionId) => queryCacheGrowth(db, sessionId),
     querySessionBudgets: (since, limit) => querySessionBudgets(db, since, limit),
