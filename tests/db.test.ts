@@ -28,16 +28,16 @@ describe("querySummaryTotals", () => {
 
   it("excludes the malformed-JSON row from token counts", () => {
     const all = querySummaryTotals(db, 0);
-    // 9 valid rows: 210+850+1528+420+380+77+145+310+195 = 4115
-    expect(all.totalOutputTokens).toBe(4115);
+    // 19 valid rows across 5 sessions: sess-a1(2588) + sess-a2(800) + sess-b1(222) + sess-c1(505) + sess-d1(2550) = 6665
+    expect(all.totalOutputTokens).toBe(6665);
   });
 
   it("time filter excludes old sessions", () => {
     // 2026-03-01 00:00:00 UTC in seconds = 1740787200
     const result = querySummaryTotals(db, 1740787200);
     // Old session (sess-c1) had 310+195=505 tokens - excluded
-    // Recent: 210+850+1528+420+380+77+145 = 3610
-    expect(result.totalOutputTokens).toBe(3610);
+    // Recent: sess-a1(2588) + sess-a2(800) + sess-b1(222) + sess-d1(2550) = 6160
+    expect(result.totalOutputTokens).toBe(6160);
   });
 });
 
