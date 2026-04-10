@@ -11,6 +11,10 @@ import { renderContextReport } from "@/reports/context";
 import { renderCacheReport } from "@/reports/cache";
 import { renderEfficiencyReport } from "@/reports/efficiency";
 import { renderToolingReport } from "@/reports/tools";
+import { renderContributorsReport } from "@/reports/context-contributors";
+import { renderBaseLoadReport } from "@/reports/base-load";
+import { renderCacheGrowthReport } from "@/reports/cache-growth";
+import { renderSessionBudgetReport } from "@/reports/session-budget";
 
 let reader: Reader;
 const opts = { since: 0, sinceStr: "all", limit: 20, json: false };
@@ -244,5 +248,60 @@ describe("Tooling report", () => {
     const output = capture(() => renderToolingReport(jsonlReader, { ...opts, json: true }));
     const parsed = JSON.parse(output);
     expect(parsed.unclassified.length).toBe(0);
+  });
+});
+
+describe("Contributors report", () => {
+  let jsonlReader: Reader;
+  beforeAll(() => { jsonlReader = createReader({ source: "jsonl" }); });
+  afterAll(() => { jsonlReader.close(); });
+
+  it("renders without error", () => {
+    expect(() => renderContributorsReport(jsonlReader, opts)).not.toThrow();
+  });
+  it("renders JSON without error", () => {
+    expect(() => renderContributorsReport(jsonlReader, { ...opts, json: true })).not.toThrow();
+  });
+});
+
+describe("Base-load report", () => {
+  let jsonlReader: Reader;
+  beforeAll(() => { jsonlReader = createReader({ source: "jsonl" }); });
+  afterAll(() => { jsonlReader.close(); });
+
+  it("renders without error", () => {
+    expect(() => renderBaseLoadReport(jsonlReader, opts)).not.toThrow();
+  });
+  it("renders JSON without error", () => {
+    expect(() => renderBaseLoadReport(jsonlReader, { ...opts, json: true })).not.toThrow();
+  });
+});
+
+describe("Cache-growth report", () => {
+  let jsonlReader: Reader;
+  beforeAll(() => { jsonlReader = createReader({ source: "jsonl" }); });
+  afterAll(() => { jsonlReader.close(); });
+
+  it("renders without error", () => {
+    expect(() => renderCacheGrowthReport(jsonlReader, "sess-j4", false, "30d")).not.toThrow();
+  });
+  it("renders JSON without error", () => {
+    expect(() => renderCacheGrowthReport(jsonlReader, "sess-j4", true, "30d")).not.toThrow();
+  });
+  it("renders empty for unknown session", () => {
+    expect(() => renderCacheGrowthReport(jsonlReader, "unknown-session", false, "30d")).not.toThrow();
+  });
+});
+
+describe("Budget report", () => {
+  let jsonlReader: Reader;
+  beforeAll(() => { jsonlReader = createReader({ source: "jsonl" }); });
+  afterAll(() => { jsonlReader.close(); });
+
+  it("renders without error", () => {
+    expect(() => renderSessionBudgetReport(jsonlReader, opts)).not.toThrow();
+  });
+  it("renders JSON without error", () => {
+    expect(() => renderSessionBudgetReport(jsonlReader, { ...opts, json: true })).not.toThrow();
   });
 });

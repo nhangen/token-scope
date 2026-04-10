@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
-import { openDb, resolveDbPath, querySummaryTotals, queryByTool, queryByProject, querySessions, querySessionTurns, queryRawTurnsForTool, createSqliteReader } from "@/db";
+import { openDb, resolveDbPath, querySummaryTotals, queryByTool, queryByProject, querySessions, querySessionTurns, queryRawTurnsForTool, createSqliteReader, queryContextContributors, queryBaseLoad, queryCacheGrowth, querySessionBudgets } from "@/db";
 import type { Database } from "bun:sqlite";
 
 let db: Database;
@@ -154,5 +154,43 @@ describe("createSqliteReader", () => {
     expect(via.turnCount).toBe(direct.turnCount);
     expect(via.totalOutputTokens).toBe(direct.totalOutputTokens);
     reader.close();
+  });
+});
+
+describe("context contributors (SQL)", () => {
+  it("returns rows grouped by tool", () => {
+    const rows = queryContextContributors(db, 0, 20);
+    expect(rows.length).toBeGreaterThan(0);
+  });
+});
+
+describe("base load (SQL)", () => {
+  it("returns rows sorted by base tokens descending", () => {
+    const rows = queryBaseLoad(db, 0, 20);
+    expect(rows.length).toBeGreaterThan(0);
+    for (let i = 1; i < rows.length; i++) {
+      expect(rows[i]!.avgBaseTokens).toBeLessThanOrEqual(rows[i - 1]!.avgBaseTokens);
+    }
+  });
+});
+
+describe("cache growth (SQL)", () => {
+  it("returns 10 turns for sess-d1", () => {
+    const rows = queryCacheGrowth(db, "sess-d1");
+    expect(rows.length).toBe(10);
+  });
+
+  it("first turn has delta 0", () => {
+    const rows = queryCacheGrowth(db, "sess-d1");
+    expect(rows[0]!.delta).toBe(0);
+  });
+});
+
+describe("session budget (SQL)", () => {
+  it("includes sess-d1 which has 10 turns", () => {
+    const rows = querySessionBudgets(db, 0, 20);
+    const d1 = rows.find(r => r.sessionId === "sess-d1");
+    expect(d1).toBeDefined();
+    expect(d1!.turnCount).toBe(10);
   });
 });

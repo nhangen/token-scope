@@ -175,6 +175,104 @@ describe("JsonlReader — cache stats", () => {
   });
 });
 
+describe("JsonlReader — context contributors", () => {
+  it("returns rows grouped by tool", () => {
+    const rows = reader.queryContextContributors(0, 20);
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
+  it("rows sum to total cache writes", () => {
+    const rows = reader.queryContextContributors(0, 20);
+    const totalFromRows = rows.reduce((s, r) => s + r.totalCacheWrite, 0);
+    expect(totalFromRows).toBeGreaterThan(0);
+  });
+
+  it("pctOfTotal sums to ~100", () => {
+    const rows = reader.queryContextContributors(0, 20);
+    const totalPct = rows.reduce((s, r) => s + r.pctOfTotal, 0);
+    expect(totalPct).toBeCloseTo(100, 0);
+  });
+
+  it("respects since filter", () => {
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    const rows = reader.queryContextContributors(future, 20);
+    expect(rows.length).toBe(0);
+  });
+});
+
+describe("JsonlReader — base load", () => {
+  it("returns one row per project", () => {
+    const rows = reader.queryBaseLoad(0, 20);
+    expect(rows.length).toBeGreaterThan(0);
+    const cwds = rows.map(r => r.cwd);
+    expect(new Set(cwds).size).toBe(cwds.length);
+  });
+
+  it("avgBaseTokens is positive", () => {
+    const rows = reader.queryBaseLoad(0, 20);
+    for (const r of rows) {
+      expect(r.avgBaseTokens).toBeGreaterThan(0);
+    }
+  });
+
+  it("min <= avg <= max", () => {
+    const rows = reader.queryBaseLoad(0, 20);
+    for (const r of rows) {
+      expect(r.minBaseTokens).toBeLessThanOrEqual(r.avgBaseTokens);
+      expect(r.avgBaseTokens).toBeLessThanOrEqual(r.maxBaseTokens);
+    }
+  });
+
+  it("respects since filter", () => {
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    const rows = reader.queryBaseLoad(future, 20);
+    expect(rows.length).toBe(0);
+  });
+});
+
+describe("JsonlReader — cache growth", () => {
+  it("returns turns for sess-j4", () => {
+    const rows = reader.queryCacheGrowth("sess-j4");
+    expect(rows.length).toBe(7);
+  });
+
+  it("first turn has delta 0", () => {
+    const rows = reader.queryCacheGrowth("sess-j4");
+    expect(rows[0]!.delta).toBe(0);
+  });
+
+  it("totalContext grows over turns", () => {
+    const rows = reader.queryCacheGrowth("sess-j4");
+    for (let i = 1; i < rows.length; i++) {
+      expect(rows[i]!.totalContext).toBeGreaterThanOrEqual(rows[i - 1]!.totalContext);
+    }
+  });
+
+  it("returns empty for unknown session", () => {
+    const rows = reader.queryCacheGrowth("nonexistent-session-id");
+    expect(rows.length).toBe(0);
+  });
+
+  it("prefix match across multiple sessions returns all matching turns", () => {
+    const rows = reader.queryCacheGrowth("sess-j");
+    expect(rows.length).toBe(17);
+  });
+});
+
+describe("JsonlReader — session budget", () => {
+  it("excludes sessions with fewer than 10 turns", () => {
+    const rows = reader.querySessionBudgets(0, 20);
+    const j4 = rows.find(r => r.sessionId === "sess-j4");
+    expect(j4).toBeUndefined();
+  });
+
+  it("respects since filter", () => {
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    const rows = reader.querySessionBudgets(future, 20);
+    expect(rows.length).toBe(0);
+  });
+});
+
 describe("JsonlReader — context stats", () => {
   it("returns sessions with 6+ turns", () => {
     const rows = reader.queryContextStats(0, 20);
