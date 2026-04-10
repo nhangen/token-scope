@@ -479,7 +479,7 @@ export class JsonlReader implements Reader {
       const first = arr[0]!;
       const total = first.inputTokens + first.cacheReadTokens + first.cacheWriteTokens;
       const e = byProject.get(first.cwd) ?? {
-        sessions: 0, totals: [], cacheWrites: [], cacheReads: [], models: new Map(),
+        sessions: 0, totals: [] as number[], cacheWrites: [] as number[], cacheReads: [] as number[], models: new Map<string, number>(),
       };
       e.sessions++;
       e.totals.push(total);
