@@ -105,6 +105,17 @@ if (totalCost >= checkpointAt) {
   shouldCheckpoint = true;
 }
 
+// Recurring alerts: remind every 50 turns past the initial checkpoint
+if (turnCount > checkpointTurns && turnCount % 50 === 0) {
+  const multiple = Math.round(turnCount / checkpointTurns);
+  alerts.push(`${turnCount} turns (${multiple}× optimal) — consider /clear`);
+}
+
+// Escalating cost warning when well past threshold
+if (totalCost > checkpointAt * 5 && alerts.length === 0) {
+  alerts.push(`$${totalCost.toFixed(0)} spent — session is ${Math.round(totalCost / checkpointAt)}× cost threshold`);
+}
+
 const checkpointFile = join(checkpointDir, (sessionId || "unknown") + ".md");
 if (shouldCheckpoint && !existsSync(checkpointFile)) {
   try {
