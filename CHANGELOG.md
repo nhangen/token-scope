@@ -5,6 +5,13 @@ All notable changes to token-scope are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-04-21
+
+### Fixed
+- Skill execute block used `BASH_SOURCE[0]` which is empty when Claude Code runs it — skill produced no output
+- Skill and hook now resolve plugin install path dynamically via `sort -V | tail -1` so version bumps don't break them
+- Bun path resolution uses `BUN_PATH` env, `command -v`, then `~/.bun/bin/bun` fallback
+
 ## [1.1.0] — 2026-04-09
 
 ### Added

@@ -37,13 +37,20 @@ token-scope --since 7d --json      # JSON output
 ## execute
 
 ```bash
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PLUGIN_BASE="$HOME/.claude/plugins/cache/nhangen-tools/token-scope"
+REPO_DIR=$(ls -1d "$PLUGIN_BASE"/*/ 2>/dev/null | sort -V | tail -1)
 
-if ! command -v bun &> /dev/null; then
+if [ -z "$REPO_DIR" ]; then
+  echo "Error: token-scope plugin not found in $PLUGIN_BASE"
+  exit 1
+fi
+
+BUN="${BUN_PATH:-$(command -v bun 2>/dev/null || echo "$HOME/.bun/bin/bun")}"
+if [ ! -x "$BUN" ]; then
   echo "Error: bun is not installed. Install from https://bun.sh and re-run."
   exit 1
 fi
 
-bun run "$REPO_DIR/src/cli.ts" "$@"
+"$BUN" run "${REPO_DIR}src/cli.ts" "$@"
 exit $?
 ```
