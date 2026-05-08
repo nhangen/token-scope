@@ -246,9 +246,8 @@ function renderHeadline(rois: RoiRow[]): void {
   console.log(renderKV([
     ["Fires recorded", String(rois.length)],
     ["Acted on (compaction detected)", `${acted.length} (${rois.length ? formatPct(acted.length / rois.length * 100) : "—"})`],
-    ["Total realized savings", formatUsd(totalRealized, 2)],
     ["Total compaction overhead", formatUsd(totalOverhead, 2)],
-    ["Net (savings − overhead)", formatUsd(totalRealized - totalOverhead, 2)],
+    ["Net realized (after compaction overhead)", formatUsd(totalRealized, 2)],
     ["Negative-ROI fires", `${negativeRoi}${acted.length ? ` (${formatPct(negativeRoi / acted.length * 100)} of acted)` : ""}`],
   ]));
 }
@@ -543,5 +542,5 @@ export function renderContextLoopReport(opts: Options): void {
     renderSubagentCorrelation(storeDb, fires);
   }
 
-  console.log(renderFootnote("Realized savings = (pre_avg_cost − post_avg_cost) × turns_used_post − compaction_overhead. Pre/post windows = 5 turns. Overhead = first post-action turn (cache rebuild)."));
+  console.log(renderFootnote("Realized savings = (pre_avg_cost − post_avg_cost) × turns_used_post − compaction_overhead. Pre/post windows = 5 turns. Overhead = first post-action turn (cache rebuild). The 'Net realized' headline is the sum of per-fire realized; overhead is shown separately for context but is already netted."));
 }
