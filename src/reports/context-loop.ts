@@ -215,7 +215,7 @@ function computeRoi(fire: FireWithOutcome, turns: AssistantTurn[]): RoiRow {
     net = preAvg - postAvg;
     const turnsUsedPost = postSteady.length;
     realized = (net * turnsUsedPost) - (overhead ?? 0);
-    if (overhead && overhead > 0) roi = realized / overhead;
+    if (overhead != null && overhead > 0.001) roi = realized / overhead;
   }
 
   return {
