@@ -74,6 +74,26 @@ interface AssistantTurn {
 
 interface UserTurn { ts: number; text: string }
 
+interface Diag {
+  unknownModelTurns: number;
+  userParseFail: number;
+  uuidMissFallback: number;
+  reclamationParseFail: number;
+  stopReasonNonNull: number;
+  stopReasonRowsScanned: number;
+}
+
+function emptyDiag(): Diag {
+  return {
+    unknownModelTurns: 0,
+    userParseFail: 0,
+    uuidMissFallback: 0,
+    reclamationParseFail: 0,
+    stopReasonNonNull: 0,
+    stopReasonRowsScanned: 0,
+  };
+}
+
 function defaultContextLoopDbPath(): string {
   return join(process.env["HOME"] ?? "~", ".claude", "context-loop.db");
 }
@@ -93,6 +113,37 @@ function openContextLoopDb(): { db: Database; path: string } | { error: string }
     return { db, path };
   } catch (e) {
     return { error: `Failed to open context-loop database at ${path}: ${String(e)}` };
+  }
+}
+
+function openStoreDbWithSchemaCheck(path: string): { db: Database } | { error: string } {
+  let db: Database;
+  try {
+    db = new Database(path, { readonly: true });
+  } catch (e) {
+    return { error: `Failed to open token-scope database at ${path}: ${String(e)}` };
+  }
+  try {
+    const probe = db.query<{ hits: number; scanned: number }, []>(`
+      SELECT
+        SUM(CASE WHEN json_extract(message, '$.usage.input_tokens') IS NOT NULL THEN 1 ELSE 0 END) AS hits,
+        COUNT(*) AS scanned
+      FROM (
+        SELECT message FROM assistant_messages
+        WHERE json_valid(message) = 1
+        LIMIT 20
+      )
+    `).get();
+    const scanned = probe?.scanned ?? 0;
+    const hits = probe?.hits ?? 0;
+    if (scanned > 0 && hits === 0) {
+      db.close();
+      return { error: `token-scope sidecar DB at ${path} shape mismatch: ${scanned} messages have no usage.input_tokens. Likely a schema rename — update token-scope or the recording plugin.` };
+    }
+    return { db };
+  } catch (e) {
+    db.close();
+    return { error: `Failed to validate token-scope database shape at ${path}: ${String(e)}` };
   }
 }
 
@@ -132,7 +183,7 @@ function loadFiresWithOutcomes(db: Database, since: number): FireWithOutcome[] {
   }));
 }
 
-function loadSessionTurns(storeDb: Database, sessionId: string): AssistantTurn[] {
+function loadSessionTurns(storeDb: Database, sessionId: string, diag: Diag): AssistantTurn[] {
   return storeDb.query<{
     uuid: string; ts: number; model: string | null;
     out: number; inp: number; cr: number; cw: number; cost: number | null;
@@ -150,16 +201,20 @@ function loadSessionTurns(storeDb: Database, sessionId: string): AssistantTurn[]
     JOIN base_messages bm ON am.uuid = bm.uuid
     WHERE bm.session_id = ? AND json_valid(am.message) = 1
     ORDER BY bm.timestamp ASC
-  `).all(sessionId).map((r) => ({
-    uuid: r.uuid, ts: r.ts, model: r.model,
-    output: r.out ?? 0, input: r.inp ?? 0, cacheRead: r.cr ?? 0, cacheCreate: r.cw ?? 0,
-    costUsd: r.cost ?? (r.model ? computeTurnCost(r.model, r.out ?? 0, r.inp ?? 0, r.cr ?? 0, r.cw ?? 0) : null),
-    stopReason: r.stop,
-    hasSubagentDispatch: r.message.includes('"name":"Task"') || r.message.includes('"name":"Agent"'),
-  }));
+  `).all(sessionId).map((r) => {
+    const computed = r.cost ?? (r.model ? computeTurnCost(r.model, r.out ?? 0, r.inp ?? 0, r.cr ?? 0, r.cw ?? 0) : null);
+    if (computed == null) diag.unknownModelTurns++;
+    return {
+      uuid: r.uuid, ts: r.ts, model: r.model,
+      output: r.out ?? 0, input: r.inp ?? 0, cacheRead: r.cr ?? 0, cacheCreate: r.cw ?? 0,
+      costUsd: computed,
+      stopReason: r.stop,
+      hasSubagentDispatch: r.message.includes('"name":"Task"') || r.message.includes('"name":"Agent"'),
+    };
+  });
 }
 
-function loadSessionUserTurns(storeDb: Database, sessionId: string): UserTurn[] {
+function loadSessionUserTurns(storeDb: Database, sessionId: string, diag: Diag): UserTurn[] {
   return storeDb.query<{ ts: number; message: string }, [string]>(`
     SELECT bm.timestamp AS ts, um.message
     FROM user_messages um
@@ -176,13 +231,16 @@ function loadSessionUserTurns(storeDb: Database, sessionId: string): UserTurn[] 
           if (block["type"] === "text" && typeof block["text"] === "string") text += block["text"] + " ";
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      diag.userParseFail++;
+    }
     return { ts: r.ts, text };
   });
 }
 
-function computeRoi(fire: FireWithOutcome, turns: AssistantTurn[]): RoiRow {
+function computeRoi(fire: FireWithOutcome, turns: AssistantTurn[], diag: Diag): RoiRow {
   const idx = turns.findIndex((t) => t.uuid === fire.assistantUuid);
+  if (idx < 0) diag.uuidMissFallback++;
   const fireTs = fire.firedAt;
 
   // Pre window: 5 turns before the fire turn (excluding fire turn itself).
@@ -331,16 +389,23 @@ function renderPerCwdRoi(rois: RoiRow[]): void {
     e.overhead += r.overheadUsd ?? 0;
     byCwd.set(k, e);
   }
+  const sorted = Array.from(byCwd.entries())
+    .map(([cwd, e]) => ({ cwd, ...e, net: e.realized - e.overhead }))
+    .sort((a, b) => b.net - a.net);
   console.log(`\n${bold("  Per-project ROI")}`);
   console.log(renderTable(
     [{ header: "Project", align: "left" }, { header: "Fires", align: "right" }, { header: "Realized $", align: "right" }, { header: "Overhead $", align: "right" }, { header: "Net $", align: "right" }],
-    Array.from(byCwd.entries())
-      .map(([cwd, e]) => [cwd.replace(process.env["HOME"] ?? "", "~"), String(e.total), formatUsd(e.realized, 2), formatUsd(e.overhead, 2), formatUsd(e.realized - e.overhead, 2)] as [string, string, string, string, string])
-      .sort((a, b) => parseFloat(b[4].replace(/[^-0-9.]/g, "") || "0") - parseFloat(a[4].replace(/[^-0-9.]/g, "") || "0"))
+    sorted.map((e) => [
+      e.cwd.replace(process.env["HOME"] ?? "", "~"),
+      String(e.total),
+      formatUsd(e.realized, 2),
+      formatUsd(e.overhead, 2),
+      formatUsd(e.net, 2),
+    ])
   ));
 }
 
-function renderNoFireBaseline(storeDb: Database, since: number, advisoryThreshold: number): void {
+function renderNoFireBaseline(storeDb: Database, since: number, advisoryThreshold: number, fires: FireWithOutcome[]): void {
   const rows = storeDb.query<{
     sessionId: string; cwd: string | null; turnTs: number; uuid: string;
     inp: number; cr: number; cw: number; model: string | null;
@@ -355,18 +420,22 @@ function renderNoFireBaseline(storeDb: Database, since: number, advisoryThreshol
     WHERE bm.timestamp >= ? AND json_valid(am.message) = 1
   `).all(since);
 
-  // Find turns where total/window >= advisoryThreshold (best-effort: assume 200k window for this baseline)
-  const window = 200_000;
-  const candidates = rows.filter((r) => ((r.inp ?? 0) + (r.cr ?? 0) + (r.cw ?? 0)) / window >= advisoryThreshold);
+  const windowBySession = new Map<string, number>();
+  for (const f of fires) windowBySession.set(f.sessionId, f.windowSize);
+  const fallbackWindow = 200_000;
+  const candidates = rows.filter((r) => {
+    const w = windowBySession.get(r.sessionId) ?? fallbackWindow;
+    return ((r.inp ?? 0) + (r.cr ?? 0) + (r.cw ?? 0)) / w >= advisoryThreshold;
+  });
 
   console.log(`\n${bold("  No-fire baseline")} ${dim("(turns hitting advisory fill but no recorded fire — counterfactual)")}`);
   console.log(renderKV([
-    ["Candidate high-fill turns (≥" + (advisoryThreshold * 100).toFixed(0) + "% fill, 200k window)", String(candidates.length)],
-    ["Note", "Filter against fired sessions to refine; v1 reports raw count"],
+    ["Candidate high-fill turns (≥" + (advisoryThreshold * 100).toFixed(0) + "% fill)", String(candidates.length)],
+    ["Window source", "per-session from fire_events; fallback 200k for sessions without a recorded fire"],
   ]));
 }
 
-function renderReclamationAttribution(storeDb: Database, fires: FireWithOutcome[]): void {
+function renderReclamationAttribution(storeDb: Database, fires: FireWithOutcome[], diag: Diag): void {
   const acted = fires.filter((f) => f.outcome?.acted === 1);
   if (!acted.length) {
     console.log(`\n${bold("  What got reclaimed")}  ${dim("(no acted fires in window)")}`);
@@ -385,7 +454,7 @@ function renderReclamationAttribution(storeDb: Database, fires: FireWithOutcome[
 
     for (const t of turns) {
       const blocks = (() => {
-        try { return (JSON.parse(t.message) as { content?: unknown }).content; } catch { return null; }
+        try { return (JSON.parse(t.message) as { content?: unknown }).content; } catch { diag.reclamationParseFail++; return null; }
       })();
       let tool = "(text only)";
       if (Array.isArray(blocks)) {
@@ -428,11 +497,11 @@ function renderNthFire(rois: RoiRow[]): void {
   ));
 }
 
-function renderQualityProxy(storeDb: Database, fires: FireWithOutcome[]): void {
+function renderQualityProxy(storeDb: Database, fires: FireWithOutcome[], diag: Diag): void {
   const acted = fires.filter((f) => f.outcome?.acted === 1);
   let flagged = 0;
   for (const fire of acted) {
-    const us = loadSessionUserTurns(storeDb, fire.sessionId);
+    const us = loadSessionUserTurns(storeDb, fire.sessionId, diag);
     const post = us.find((u) => u.ts > fire.firedAt);
     if (post && QUALITY_RX.test(post.text)) flagged++;
   }
@@ -444,7 +513,23 @@ function renderQualityProxy(storeDb: Database, fires: FireWithOutcome[]): void {
   ]));
 }
 
-function renderTerminalState(storeDb: Database, since: number, fires: FireWithOutcome[]): void {
+function renderTerminalState(storeDb: Database, since: number, fires: FireWithOutcome[], diag: Diag): void {
+  const probe = storeDb.query<{ scanned: number; nonNull: number }, [number]>(`
+    SELECT
+      COUNT(*) AS scanned,
+      SUM(CASE WHEN json_extract(am.message, '$.stop_reason') IS NOT NULL THEN 1 ELSE 0 END) AS nonNull
+    FROM assistant_messages am JOIN base_messages bm ON am.uuid = bm.uuid
+    WHERE bm.timestamp >= ? AND json_valid(am.message) = 1
+  `).get(since);
+  diag.stopReasonRowsScanned += probe?.scanned ?? 0;
+  diag.stopReasonNonNull += probe?.nonNull ?? 0;
+
+  console.log(`\n${bold("  Session terminal-state correlation")} ${dim("(max_tokens stop_reason)")}`);
+  if ((probe?.scanned ?? 0) > 0 && (probe?.nonNull ?? 0) === 0) {
+    console.log(renderKV([["stop_reason", "unavailable in this dataset"]]));
+    return;
+  }
+
   const sessionsHitMax = storeDb.query<{ sessionId: string }, [number]>(`
     SELECT DISTINCT bm.session_id AS sessionId
     FROM assistant_messages am JOIN base_messages bm ON am.uuid = bm.uuid
@@ -454,7 +539,6 @@ function renderTerminalState(storeDb: Database, since: number, fires: FireWithOu
   const overflowAndFired = sessionsHitMax.filter((s) => firedSessions.has(s.sessionId)).length;
   const overflowAndNotFired = sessionsHitMax.length - overflowAndFired;
 
-  console.log(`\n${bold("  Session terminal-state correlation")} ${dim("(max_tokens stop_reason)")}`);
   console.log(renderKV([
     ["Sessions hitting max_tokens", String(sessionsHitMax.length)],
     ["  …with at least one fire", String(overflowAndFired)],
@@ -497,21 +581,29 @@ export function renderContextLoopReport(opts: Options): void {
     clDb.close();
     return;
   }
-  const storeDb = new Database(storeDbPath.path, { readonly: true });
+  const storeOpened = openStoreDbWithSchemaCheck(storeDbPath.path);
+  if ("error" in storeOpened) {
+    if (opts.json) console.log(JSON.stringify({ error: storeOpened.error }));
+    else console.log(storeOpened.error);
+    clDb.close();
+    return;
+  }
+  const storeDb = storeOpened.db;
+  const diag = emptyDiag();
 
   const fires = loadFiresWithOutcomes(clDb, opts.since);
   const rois: RoiRow[] = [];
   const sessionTurnsCache = new Map<string, AssistantTurn[]>();
   for (const fire of fires) {
     let turns = sessionTurnsCache.get(fire.sessionId);
-    if (!turns) { turns = loadSessionTurns(storeDb, fire.sessionId); sessionTurnsCache.set(fire.sessionId, turns); }
-    rois.push(computeRoi(fire, turns));
+    if (!turns) { turns = loadSessionTurns(storeDb, fire.sessionId, diag); sessionTurnsCache.set(fire.sessionId, turns); }
+    rois.push(computeRoi(fire, turns, diag));
   }
 
   if (opts.json) {
     console.log(JSON.stringify({
       meta: { generated_at: new Date().toISOString(), since: opts.since, token_scope_version: VERSION, context_loop_db: clPath },
-      report: "context-loop", fires, rois,
+      report: "context-loop", fires, rois, diag,
     }, null, 2));
     clDb.close(); storeDb.close(); return;
   }
@@ -532,15 +624,28 @@ export function renderContextLoopReport(opts: Options): void {
   }
   if (want("reclamation")) {
     renderPerCwdRoi(rois);
-    renderReclamationAttribution(storeDb, fires);
-    renderNoFireBaseline(storeDb, opts.since, fires[0]!.fillPct < 0.5 ? 0.35 : 0.5);
+    renderReclamationAttribution(storeDb, fires, diag);
+    renderNoFireBaseline(storeDb, opts.since, fires[0]!.fillPct < 0.5 ? 0.35 : 0.5, fires);
   }
   if (want("patterns")) {
     renderNthFire(rois);
-    renderQualityProxy(storeDb, fires);
-    renderTerminalState(storeDb, opts.since, fires);
+    renderQualityProxy(storeDb, fires, diag);
+    renderTerminalState(storeDb, opts.since, fires, diag);
     renderSubagentCorrelation(storeDb, fires);
   }
 
+  renderCaveats(diag);
+
   console.log(renderFootnote("Realized savings = (pre_avg_cost − post_avg_cost) × turns_used_post − compaction_overhead. Pre/post windows = 5 turns. Overhead = first post-action turn (cache rebuild). The 'Net realized' headline is the sum of per-fire realized; overhead is shown separately for context but is already netted."));
+}
+
+function renderCaveats(diag: Diag): void {
+  const rows: Array<[string, string]> = [];
+  if (diag.unknownModelTurns > 0) rows.push(["Turns excluded (unknown model)", String(diag.unknownModelTurns)]);
+  if (diag.userParseFail > 0) rows.push(["User-turn parse failures", String(diag.userParseFail)]);
+  if (diag.uuidMissFallback > 0) rows.push(["Fires using ts-fallback (uuid miss)", String(diag.uuidMissFallback)]);
+  if (diag.reclamationParseFail > 0) rows.push(["Reclamation parse failures", String(diag.reclamationParseFail)]);
+  if (rows.length === 0) return;
+  console.log(`\n${bold("  Caveats")} ${dim("(observability — counts of silently-skipped data points)")}`);
+  console.log(renderKV(rows));
 }
