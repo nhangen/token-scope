@@ -25,6 +25,10 @@ REPORT MODES (mutually exclusive)
   --base-load             Base load analysis (system prompt tax per project)
   --cache-growth <id>    Turn-by-turn cache growth waterfall for one session
   --budget               Session budget analysis (optimal session length)
+  --context-loop          Savings + ROI analytics for the context-loop plugin
+  --tuning                (with --context-loop) threshold curve, acted/ignored, time-to-action
+  --reclamation           (with --context-loop) per-cwd ROI, what got reclaimed, no-fire baseline
+  --patterns              (with --context-loop) n-th-fire returns, quality proxy, terminal-state, subagent
 
 SHARED FLAGS
   --source <jsonl|sqlite> Data source (default: auto-detect)
@@ -54,7 +58,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -64,10 +68,11 @@ interface CliArgs {
   dbPath?: string;
   source?: "jsonl" | "sqlite" | "auto";
   projectsDirs: string[];
+  contextLoopSections: Array<"tuning" | "reclamation" | "patterns" | "roi" | "all">;
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { mode: "summary", since: "30d", limit: 20, json: false, projectsDirs: [] };
+  const args: CliArgs = { mode: "summary", since: "30d", limit: 20, json: false, projectsDirs: [], contextLoopSections: [] };
   let modeSet = false;
 
   const setMode = (mode: CliArgs["mode"]) => {
@@ -94,6 +99,16 @@ function parseArgs(argv: string[]): CliArgs {
       case "--contributors": setMode("contributors"); break;
       case "--base-load": setMode("base-load"); break;
       case "--budget": setMode("budget"); break;
+      case "--context-loop": setMode("context-loop"); break;
+      case "--tuning":
+      case "--reclamation":
+      case "--patterns":
+      case "--roi": {
+        if (args.mode !== "context-loop") setMode("context-loop");
+        const section = arg.slice(2) as "tuning" | "reclamation" | "patterns" | "roi";
+        if (!args.contextLoopSections.includes(section)) args.contextLoopSections.push(section);
+        break;
+      }
       case "--cache-growth":
         setMode("cache-growth");
         args.sessionId = argv[++i];
@@ -248,6 +263,14 @@ async function main() {
     case "budget": {
       const { renderSessionBudgetReport } = await import("@/reports/session-budget");
       renderSessionBudgetReport(reader, options); break;
+    }
+    case "context-loop": {
+      const { renderContextLoopReport } = await import("@/reports/context-loop");
+      const sections = args.contextLoopSections.length > 0 && !args.contextLoopSections.includes("all")
+        ? args.contextLoopSections.filter((s) => s !== "roi")
+        : ["all" as const];
+      renderContextLoopReport({ ...options, sections: sections as Array<"tuning" | "reclamation" | "patterns" | "roi" | "all"> });
+      break;
     }
   }
 
