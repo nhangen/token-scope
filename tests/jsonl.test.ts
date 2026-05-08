@@ -25,7 +25,8 @@ describe("JsonlReader — summary totals", () => {
   });
 
   it("excludes old session with 30d window", () => {
-    const since = Math.floor(Date.now() / 1000) - 30 * 86400;
+    const fixtureNow = Math.floor(new Date("2026-04-15T00:00:00Z").getTime() / 1000);
+    const since = fixtureNow - 30 * 86400;
     const totals = reader.querySummaryTotals(since);
     expect(totals.turnCount).toBe(16);
     expect(totals.sessionCount).toBe(3);
