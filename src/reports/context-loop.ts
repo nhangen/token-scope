@@ -121,7 +121,7 @@ function loadFiresWithOutcomes(db: Database, since: number): FireWithOutcome[] {
     windowSize: r.window_size, model: r.model, assistantUuid: r.assistant_uuid,
     outcome: r.o_acted == null ? null : {
       fireEventId: r.id,
-      acted: r.o_acted as 0 | 1,
+      acted: r.o_acted === 1 ? 1 : 0,
       detectedAt: r.o_detected_at,
       preFillPct: r.o_pre_fill ?? 0,
       postFillPct: r.o_post_fill,
@@ -303,7 +303,6 @@ function renderActedSplit(rois: RoiRow[]): void {
 function renderTimeToAction(rois: RoiRow[]): void {
   const acted = rois.filter((r) => r.acted);
   const turns = acted.map((r) => r.turnsUsedPost);
-  // turns_until_action stored on outcome; we don't have it here directly. Use turnsUntilAction from FWO instead.
   console.log(`\n${bold("  Time-to-action (post-fire turns until next assistant message)")}  ${dim("[" + (acted.length ? `n=${acted.length}` : "no acted fires") + "]")}`);
   if (!acted.length) return;
   const buckets: Record<string, number> = { "0 (immediate)": 0, "1–2": 0, "3–5": 0, "6–10": 0, "11+": 0 };
