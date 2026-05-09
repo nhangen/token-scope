@@ -114,7 +114,7 @@ describe("analyzeArtifacts", () => {
     expect(r.byArtifact[0]!.attributedCost).toBeLessThan(0.9);
   });
 
-  it("handles null costUsd without NaN", () => {
+  it("emits null attributedCost when no contributing turn has costUsd", () => {
     const turns = [
       {
         ...baseTurn,
@@ -125,8 +125,74 @@ describe("analyzeArtifacts", () => {
       },
     ];
     const r = analyzeArtifacts(turns);
-    expect(r.byArtifact[0]!.attributedCost).toBe(0);
+    expect(r.byArtifact[0]!.attributedCost).toBeNull();
     expect(r.byArtifact[0]!.edits).toBe(1);
+    expect(r.summary.costKnown).toBe(false);
+    expect(r.summary.totalCost).toBeNull();
+  });
+
+  it("keeps cost as known when at least one contributing turn has costUsd", () => {
+    const turns = [
+      {
+        ...baseTurn,
+        uuid: "t1",
+        costUsd: 0.5,
+        message: JSON.stringify({
+          content: [{ type: "tool_use", name: "Write", input: { file_path: "/a/foo.md", content: "x".repeat(100) } }],
+        }),
+      },
+      {
+        ...baseTurn,
+        uuid: "t2",
+        costUsd: null,
+        message: JSON.stringify({
+          content: [{ type: "tool_use", name: "Write", input: { file_path: "/a/foo.md", content: "y".repeat(100) } }],
+        }),
+      },
+    ];
+    const r = analyzeArtifacts(turns);
+    expect(r.byArtifact[0]!.attributedCost).toBeCloseTo(0.5, 6);
+    expect(r.summary.costKnown).toBe(true);
+  });
+
+  it("emits null outputTokens when contributing turns lack outputTokens", () => {
+    const turns = [
+      {
+        ...baseTurn,
+        outputTokens: undefined as unknown as number,
+        message: JSON.stringify({
+          content: [{ type: "tool_use", name: "Write", input: { file_path: "/a/foo.md", content: "x" } }],
+        }),
+      },
+    ];
+    const r = analyzeArtifacts(turns);
+    expect(r.byArtifact[0]!.outputTokens).toBeNull();
+    expect(r.byArtifact[0]!.edits).toBe(1);
+  });
+
+  it("sorts null-cost rows after priced rows", () => {
+    const turns = [
+      {
+        ...baseTurn,
+        uuid: "t1",
+        costUsd: null,
+        message: JSON.stringify({
+          content: [{ type: "tool_use", name: "Write", input: { file_path: "/a/unpriced.md", content: "x" } }],
+        }),
+      },
+      {
+        ...baseTurn,
+        uuid: "t2",
+        costUsd: 0.1,
+        message: JSON.stringify({
+          content: [{ type: "tool_use", name: "Write", input: { file_path: "/a/priced.md", content: "x" } }],
+        }),
+      },
+    ];
+    const r = analyzeArtifacts(turns);
+    expect(r.byArtifact[0]!.path).toBe("/a/priced.md");
+    expect(r.byArtifact[1]!.path).toBe("/a/unpriced.md");
+    expect(r.byArtifact[1]!.attributedCost).toBeNull();
   });
 
   it("counts distinct sessions touching the same artifact", () => {

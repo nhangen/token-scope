@@ -11,6 +11,16 @@ export type ArtifactFormat =
   | "txt"
   | "other";
 
+export const KNOWN_ARTIFACT_FORMATS: readonly ArtifactFormat[] = [
+  "md", "html", "json", "yaml", "toml",
+  "ts", "tsx", "js", "jsx", "py", "rb", "php", "go", "rs", "java",
+  "sh", "bash", "zsh",
+  "css", "scss",
+  "sql",
+  "txt",
+  "other",
+];
+
 const EXTENSION_MAP: Record<string, ArtifactFormat> = {
   md: "md", markdown: "md", mdx: "md",
   html: "html", htm: "html",
@@ -42,20 +52,21 @@ export function classifyFormat(filePath: string): ArtifactFormat {
 export interface ArtifactEntry {
   path: string;
   format: ArtifactFormat;
-  edits: number;            // number of distinct turns containing a Write/Edit on this path
-  firstSeen: number;        // earliest assistant_messages.timestamp (epoch seconds)
+  edits: number;
+  firstSeen: number;
   lastSeen: number;
-  attributedCost: number;   // proportional cost USD across all writes/edits
-  outputTokens: number;     // proportional output tokens
-  sessions: number;         // number of distinct sessions touching this artifact
+  attributedCost: number | null;
+  outputTokens: number | null;
+  sessions: number;
 }
 
 export interface ArtifactAnalysis {
   summary: {
     distinctArtifacts: number;
     totalWrites: number;
-    totalCost: number;
-    formats: Array<{ format: ArtifactFormat; artifacts: number; cost: number }>;
+    totalCost: number | null;
+    costKnown: boolean;
+    formats: Array<{ format: ArtifactFormat; artifacts: number; cost: number | null }>;
   };
   byArtifact: ArtifactEntry[];
 }
@@ -71,7 +82,12 @@ interface AccumulatorEntry {
   lastSeen: number;
   attributedCost: number;
   outputTokens: number;
+  costKnown: boolean;
+  tokensKnown: boolean;
 }
+
+const nullsLast = (a: number | null, b: number | null): number =>
+  Number(a == null) - Number(b == null) || (b ?? 0) - (a ?? 0);
 
 export function analyzeArtifacts(
   turns: Array<RawTurnForTool & { timestamp?: number }>
@@ -96,6 +112,8 @@ export function analyzeArtifacts(
     const allTotalSize = allSizes.reduce((s, n) => s + n, 0);
 
     const ts = turn.timestamp ?? 0;
+    const costKnown = turn.costUsd != null;
+    const tokensKnown = typeof turn.outputTokens === "number" && Number.isFinite(turn.outputTokens);
 
     for (let i = 0; i < writeBlocks.length; i++) {
       const block = writeBlocks[i]!;
@@ -103,26 +121,32 @@ export function analyzeArtifacts(
       const format = classifyFormat(path);
 
       const blockSize = JSON.stringify(block.input ?? {}).length;
-      const proportion = allTotalSize > 0 ? blockSize / allTotalSize : 1 / allBlocks.length;
-      const cost = (turn.costUsd ?? 0) * proportion;
-      const tokens = turn.outputTokens * proportion;
+      const proportion = blockSize / allTotalSize;
 
       const entry = map.get(path) ?? {
         path,
         format,
         turns: new Set<string>(),
         sessions: new Set<string>(),
-        firstSeen: ts || Number.MAX_SAFE_INTEGER,
+        firstSeen: ts > 0 ? ts : Number.MAX_SAFE_INTEGER,
         lastSeen: ts,
         attributedCost: 0,
         outputTokens: 0,
+        costKnown: false,
+        tokensKnown: false,
       };
       entry.turns.add(turn.uuid);
       entry.sessions.add(turn.sessionId);
       if (ts > 0 && ts < entry.firstSeen) entry.firstSeen = ts;
       if (ts > entry.lastSeen) entry.lastSeen = ts;
-      entry.attributedCost += cost;
-      entry.outputTokens += tokens;
+      if (costKnown) {
+        entry.attributedCost += turn.costUsd! * proportion;
+        entry.costKnown = true;
+      }
+      if (tokensKnown) {
+        entry.outputTokens += turn.outputTokens * proportion;
+        entry.tokensKnown = true;
+      }
       map.set(path, entry);
     }
   }
@@ -134,28 +158,43 @@ export function analyzeArtifacts(
       edits: e.turns.size,
       firstSeen: e.firstSeen === Number.MAX_SAFE_INTEGER ? 0 : e.firstSeen,
       lastSeen: e.lastSeen,
-      attributedCost: e.attributedCost,
-      outputTokens: Math.round(e.outputTokens),
+      attributedCost: e.costKnown ? e.attributedCost : null,
+      outputTokens: e.tokensKnown ? Math.round(e.outputTokens) : null,
       sessions: e.sessions.size,
     }))
-    .sort((a, b) => (b.attributedCost - a.attributedCost) || (b.outputTokens - a.outputTokens));
+    .sort((a, b) =>
+      nullsLast(a.attributedCost, b.attributedCost) ||
+      nullsLast(a.outputTokens, b.outputTokens));
 
-  const formatMap = new Map<ArtifactFormat, { artifacts: number; cost: number }>();
+  const formatMap = new Map<ArtifactFormat, { artifacts: number; cost: number; costKnown: boolean }>();
   for (const a of byArtifact) {
-    const e = formatMap.get(a.format) ?? { artifacts: 0, cost: 0 };
+    const e = formatMap.get(a.format) ?? { artifacts: 0, cost: 0, costKnown: false };
     e.artifacts += 1;
-    e.cost += a.attributedCost;
+    if (a.attributedCost != null) {
+      e.cost += a.attributedCost;
+      e.costKnown = true;
+    }
     formatMap.set(a.format, e);
   }
+
+  const anyCostKnown = byArtifact.some((a) => a.attributedCost != null);
+  const totalCost = anyCostKnown
+    ? byArtifact.reduce((s, a) => s + (a.attributedCost ?? 0), 0)
+    : null;
 
   return {
     summary: {
       distinctArtifacts: byArtifact.length,
       totalWrites: byArtifact.reduce((s, a) => s + a.edits, 0),
-      totalCost: byArtifact.reduce((s, a) => s + a.attributedCost, 0),
+      totalCost,
+      costKnown: anyCostKnown,
       formats: Array.from(formatMap.entries())
-        .map(([format, d]) => ({ format, artifacts: d.artifacts, cost: d.cost }))
-        .sort((a, b) => b.cost - a.cost),
+        .map(([format, d]) => ({
+          format,
+          artifacts: d.artifacts,
+          cost: d.costKnown ? d.cost : null,
+        }))
+        .sort((a, b) => nullsLast(a.cost, b.cost)),
     },
     byArtifact,
   };

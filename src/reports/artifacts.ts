@@ -65,7 +65,7 @@ export function renderArtifactsReport(reader: Reader, opts: Options): void {
       f.format,
       String(f.artifacts),
       formatUsd(f.cost),
-      formatUsd(f.artifacts > 0 ? f.cost / f.artifacts : 0),
+      formatUsd(f.cost != null && f.artifacts > 0 ? f.cost / f.artifacts : null),
     ])
   ));
 
@@ -91,6 +91,9 @@ export function renderArtifactsReport(reader: Reader, opts: Options): void {
     ])
   ));
 
+  if (!analysis.summary.costKnown && rows.length > 0) {
+    console.log(`\n${dim("  * Costs unknown for these turns — sorted by output tokens.")}`);
+  }
   console.log(`\n${dim("  * Cost is attributed proportionally by tool-input payload size per turn.")}`);
   console.log(`${dim("  * Edits = distinct turns containing a Write/Edit on this path. Multiple writes")}`);
   console.log(`${dim("    in one turn count as one edit.")}\n`);
@@ -131,7 +134,7 @@ export function renderArtifactShowReport(
     ["Last Seen", target.lastSeen > 0 ? new Date(target.lastSeen * 1000).toISOString() : "—"],
     ["Total Cost", formatUsd(target.attributedCost)],
     ["Output Tokens", formatTokens(target.outputTokens)],
-    ["Avg Cost/Edit", formatUsd(target.edits > 0 ? target.attributedCost / target.edits : 0)],
+    ["Avg Cost/Edit", formatUsd(target.attributedCost != null && target.edits > 0 ? target.attributedCost / target.edits : null)],
   ]));
   console.log("");
 }
@@ -200,8 +203,8 @@ export function renderArtifactCompareReport(
   console.log("");
 }
 
-function ratio(num?: number, denom?: number): string {
-  if (!num || !denom || denom === 0) return "—";
+function ratio(num?: number | null, denom?: number | null): string {
+  if (num == null || denom == null || !denom) return "—";
   return `${(num / denom).toFixed(2)}×`;
 }
 
