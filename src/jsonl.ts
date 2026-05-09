@@ -4,7 +4,7 @@ import { computeTurnCost, computeCacheSavings, getPricing } from "@/pricing";
 import { parseContentBlocks, resolveDominantTool } from "@/parse";
 import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow,
-  WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool,
+  WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, RawTurnForArtifact,
   ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow,
   SessionBudgetRow,
 } from "@/reader";
@@ -135,6 +135,18 @@ export class JsonlReader implements Reader {
       outputTokens: t.outputTokens,
       costUsd: t.costUsd,
       message: t.messageJson,
+    }));
+  }
+
+  queryRawTurnsForArtifact(since: number): RawTurnForArtifact[] {
+    return this.filter(since).map((t) => ({
+      uuid: t.uuid,
+      sessionId: t.sessionId,
+      cwd: t.cwd,
+      outputTokens: t.outputTokens,
+      costUsd: t.costUsd,
+      message: t.messageJson,
+      timestamp: Math.floor(t.timestampMs / 1000),
     }));
   }
 

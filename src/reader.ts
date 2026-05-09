@@ -1,17 +1,18 @@
 import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow, WeekRow,
-  ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool,
+  ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, RawTurnForArtifact,
   ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow,
   SessionBudgetRow,
 } from "@/db";
 import { existsSync, readdirSync } from "fs";
 import { join } from "path";
 
-export type { SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow, WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow, SessionBudgetRow };
+export type { SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow, WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, RawTurnForArtifact, ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow, SessionBudgetRow };
 
 export interface Reader {
   querySummaryTotals(since: number): SummaryTotals;
   queryRawTurnsForTool(since: number): RawTurnForTool[];
+  queryRawTurnsForArtifact(since: number): RawTurnForArtifact[];
   queryByTool(since: number, limit: number): ToolRow[];
   queryByProject(since: number, limit: number): ProjectRow[];
   queryWeeklyTrend(since: number): WeekRow[];
