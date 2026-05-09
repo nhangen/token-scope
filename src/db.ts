@@ -297,6 +297,20 @@ export function queryRawTurnsForTool(db: Database, since: number): RawTurnForToo
   `).all(since);
 }
 
+export interface RawTurnForArtifact extends RawTurnForTool {
+  timestamp: number;
+}
+
+export function queryRawTurnsForArtifact(db: Database, since: number): RawTurnForArtifact[] {
+  return db.query<RawTurnForArtifact, [number]>(`
+    SELECT am.uuid, bm.session_id AS sessionId, bm.cwd,
+      CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER) AS outputTokens,
+      am.cost_usd AS costUsd, am.message,
+      am.timestamp AS timestamp
+    ${JOIN}
+  `).all(since);
+}
+
 // ─── By-Tool (dominant tool resolved via parse.ts) ────────────────────────────
 
 export function queryByTool(db: Database, since: number, limit: number): ToolRow[] {
@@ -731,6 +745,7 @@ export function querySessionBudgets(db: Database, since: number, limit: number):
 interface SqliteReaderInterface {
   querySummaryTotals(since: number): SummaryTotals;
   queryRawTurnsForTool(since: number): RawTurnForTool[];
+  queryRawTurnsForArtifact(since: number): RawTurnForArtifact[];
   queryByTool(since: number, limit: number): ToolRow[];
   queryByProject(since: number, limit: number): ProjectRow[];
   queryWeeklyTrend(since: number): WeekRow[];
@@ -752,6 +767,7 @@ export function createSqliteReader(db: Database): SqliteReaderInterface {
   return {
     querySummaryTotals: (since) => querySummaryTotals(db, since),
     queryRawTurnsForTool: (since) => queryRawTurnsForTool(db, since),
+    queryRawTurnsForArtifact: (since) => queryRawTurnsForArtifact(db, since),
     queryByTool: (since, limit) => queryByTool(db, since, limit),
     queryByProject: (since, limit) => queryByProject(db, since, limit),
     queryWeeklyTrend: (since) => queryWeeklyTrend(db, since),

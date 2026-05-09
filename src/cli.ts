@@ -2,7 +2,12 @@
 import { parseSince } from "@/db";
 import { createReader } from "@/reader";
 import type { Reader } from "@/reader";
+import type { ArtifactFormat } from "@/artifacts";
+import { KNOWN_ARTIFACT_FORMATS } from "@/artifacts";
 import { VERSION } from "@/version";
+
+const ARTIFACT_FORMAT_SET = new Set<string>(KNOWN_ARTIFACT_FORMATS);
+const ARTIFACT_MODES = new Set(["artifacts", "artifact-show", "artifact-compare"]);
 
 const HELP = `
 token-scope — Claude Code output token analytics
@@ -29,6 +34,11 @@ REPORT MODES (mutually exclusive)
   --tuning                (with --context-loop) threshold curve, acted/ignored, time-to-action
   --reclamation           (with --context-loop) per-cwd ROI, what got reclaimed, no-fire baseline
   --patterns              (with --context-loop) n-th-fire returns, quality proxy, terminal-state, subagent
+  --artifacts             Per-file Write/Edit cost: which artifacts cost the most to produce
+  --artifact-format <ext> (with --artifacts) filter to one format: md, html, ts, py, ...
+  --artifact-path <frag>  (with --artifacts) filter paths containing fragment
+  --artifact-show <path>  Per-edit lifecycle for one artifact (full path, not fragment)
+  --artifact-compare <md> MD vs sibling HTML cost (looks for &lt;dir&gt;/artifacts/&lt;slug&gt;.html)
 
 SHARED FLAGS
   --source <jsonl|sqlite> Data source (default: auto-detect)
@@ -58,7 +68,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop" | "artifacts" | "artifact-show" | "artifact-compare";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -69,9 +79,12 @@ interface CliArgs {
   source?: "jsonl" | "sqlite" | "auto";
   projectsDirs: string[];
   contextLoopSections: Array<"tuning" | "reclamation" | "patterns" | "roi" | "all">;
+  artifactFormat?: ArtifactFormat;
+  artifactPathFragment?: string;
+  artifactPath?: string;
 }
 
-function parseArgs(argv: string[]): CliArgs {
+export function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = { mode: "summary", since: "30d", limit: 20, json: false, projectsDirs: [], contextLoopSections: [] };
   let modeSet = false;
 
@@ -100,6 +113,37 @@ function parseArgs(argv: string[]): CliArgs {
       case "--base-load": setMode("base-load"); break;
       case "--budget": setMode("budget"); break;
       case "--context-loop": setMode("context-loop"); break;
+      case "--artifacts": setMode("artifacts"); break;
+      case "--artifact-format": {
+        const v = argv[++i];
+        if (!v) { process.stderr.write("Error: --artifact-format requires a value (e.g. md, html, ts).\n"); process.exit(1); }
+        if (!ARTIFACT_FORMAT_SET.has(v)) {
+          process.stderr.write(`Error: --artifact-format must be one of: ${KNOWN_ARTIFACT_FORMATS.join(", ")}.\n`);
+          process.exit(1);
+        }
+        args.artifactFormat = v as ArtifactFormat;
+        if (!modeSet) setMode("artifacts");
+        break;
+      }
+      case "--artifact-path": {
+        const v = argv[++i];
+        if (!v) { process.stderr.write("Error: --artifact-path requires a fragment.\n"); process.exit(1); }
+        args.artifactPathFragment = v;
+        if (!modeSet) setMode("artifacts");
+        break;
+      }
+      case "--artifact-show": {
+        setMode("artifact-show");
+        args.artifactPath = argv[++i];
+        if (!args.artifactPath) { process.stderr.write("Error: --artifact-show requires a file path.\n"); process.exit(1); }
+        break;
+      }
+      case "--artifact-compare": {
+        setMode("artifact-compare");
+        args.artifactPath = argv[++i];
+        if (!args.artifactPath) { process.stderr.write("Error: --artifact-compare requires an .md file path.\n"); process.exit(1); }
+        break;
+      }
       case "--tuning":
       case "--reclamation":
       case "--patterns":
@@ -176,6 +220,11 @@ function parseArgs(argv: string[]): CliArgs {
           process.exit(1);
         }
     }
+  }
+
+  if ((args.artifactFormat || args.artifactPathFragment) && !ARTIFACT_MODES.has(args.mode)) {
+    process.stderr.write("Error: --artifact-format/--artifact-path are only valid with --artifacts, --artifact-show, or --artifact-compare.\n");
+    process.exit(1);
   }
 
   return args;
@@ -272,12 +321,33 @@ async function main() {
       renderContextLoopReport({ ...options, sections: sections as Array<"tuning" | "reclamation" | "patterns" | "roi" | "all"> });
       break;
     }
+    case "artifacts": {
+      const { renderArtifactsReport } = await import("@/reports/artifacts");
+      renderArtifactsReport(reader, {
+        ...options,
+        format: args.artifactFormat,
+        pathFragment: args.artifactPathFragment,
+      });
+      break;
+    }
+    case "artifact-show": {
+      const { renderArtifactShowReport } = await import("@/reports/artifacts");
+      renderArtifactShowReport(reader, args.artifactPath!, options);
+      break;
+    }
+    case "artifact-compare": {
+      const { renderArtifactCompareReport } = await import("@/reports/artifacts");
+      renderArtifactCompareReport(reader, args.artifactPath!, options);
+      break;
+    }
   }
 
   reader.close();
 }
 
-main().catch((e) => {
-  process.stderr.write(`Unexpected error: ${String(e)}\n`);
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((e) => {
+    process.stderr.write(`Unexpected error: ${String(e)}\n`);
+    process.exit(1);
+  });
+}
