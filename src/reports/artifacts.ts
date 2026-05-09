@@ -1,5 +1,5 @@
 import type { Reader } from "@/reader";
-import { analyzeArtifacts, classifyFormat } from "@/artifacts";
+import { analyzeArtifacts } from "@/artifacts";
 import type { ArtifactFormat } from "@/artifacts";
 import { renderHeader, renderKV, renderTable, formatUsd, bold, dim, truncate, formatTokens } from "@/format";
 import { VERSION } from "@/version";
@@ -207,6 +207,3 @@ function ratio(num?: number | null, denom?: number | null): string {
   if (num == null || denom == null || !denom) return "—";
   return `${(num / denom).toFixed(2)}×`;
 }
-
-// Re-export for CLI parsing
-export { classifyFormat };
