@@ -2,7 +2,12 @@
 import { parseSince } from "@/db";
 import { createReader } from "@/reader";
 import type { Reader } from "@/reader";
+import type { ArtifactFormat } from "@/artifacts";
+import { KNOWN_ARTIFACT_FORMATS } from "@/artifacts";
 import { VERSION } from "@/version";
+
+const ARTIFACT_FORMAT_SET = new Set<string>(KNOWN_ARTIFACT_FORMATS);
+const ARTIFACT_MODES = new Set(["artifacts", "artifact-show", "artifact-compare"]);
 
 const HELP = `
 token-scope — Claude Code output token analytics
@@ -74,12 +79,12 @@ interface CliArgs {
   source?: "jsonl" | "sqlite" | "auto";
   projectsDirs: string[];
   contextLoopSections: Array<"tuning" | "reclamation" | "patterns" | "roi" | "all">;
-  artifactFormat?: string;
+  artifactFormat?: ArtifactFormat;
   artifactPathFragment?: string;
   artifactPath?: string;
 }
 
-function parseArgs(argv: string[]): CliArgs {
+export function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = { mode: "summary", since: "30d", limit: 20, json: false, projectsDirs: [], contextLoopSections: [] };
   let modeSet = false;
 
@@ -112,7 +117,11 @@ function parseArgs(argv: string[]): CliArgs {
       case "--artifact-format": {
         const v = argv[++i];
         if (!v) { process.stderr.write("Error: --artifact-format requires a value (e.g. md, html, ts).\n"); process.exit(1); }
-        args.artifactFormat = v;
+        if (!ARTIFACT_FORMAT_SET.has(v)) {
+          process.stderr.write(`Error: --artifact-format must be one of: ${KNOWN_ARTIFACT_FORMATS.join(", ")}.\n`);
+          process.exit(1);
+        }
+        args.artifactFormat = v as ArtifactFormat;
         if (!modeSet) setMode("artifacts");
         break;
       }
@@ -213,6 +222,11 @@ function parseArgs(argv: string[]): CliArgs {
     }
   }
 
+  if ((args.artifactFormat || args.artifactPathFragment) && !ARTIFACT_MODES.has(args.mode)) {
+    process.stderr.write("Error: --artifact-format/--artifact-path are only valid with --artifacts, --artifact-show, or --artifact-compare.\n");
+    process.exit(1);
+  }
+
   return args;
 }
 
@@ -311,7 +325,7 @@ async function main() {
       const { renderArtifactsReport } = await import("@/reports/artifacts");
       renderArtifactsReport(reader, {
         ...options,
-        format: args.artifactFormat as never,
+        format: args.artifactFormat,
         pathFragment: args.artifactPathFragment,
       });
       break;
@@ -331,7 +345,9 @@ async function main() {
   reader.close();
 }
 
-main().catch((e) => {
-  process.stderr.write(`Unexpected error: ${String(e)}\n`);
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((e) => {
+    process.stderr.write(`Unexpected error: ${String(e)}\n`);
+    process.exit(1);
+  });
+}
