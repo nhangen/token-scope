@@ -19,8 +19,8 @@ curl -fsSL https://bun.sh/install | bash
 ## Install
 
 ```bash
-git clone https://github.com/nhangen/token-scope ~/ML-AI/token-scope
-cd ~/ML-AI/token-scope
+git clone https://github.com/nhangen/token-scope ~/ML-AI/claude/token-scope
+cd ~/ML-AI/claude/token-scope
 bun install
 bun link          # makes `token-scope` available from any directory
 ```
@@ -266,6 +266,73 @@ Classifies every tool call into five layers and attributes cost proportionally b
 
 ---
 
+### Context contributors
+
+```bash
+token-scope --contributors --since 30d
+```
+
+Ranks which tools add the most to the context window. Pair with `--project <fragment>` to scope to a single project.
+
+---
+
+### Base load
+
+```bash
+token-scope --base-load --since 30d
+```
+
+System-prompt tax per project: the per-session input cost before any work happens.
+
+---
+
+### Cache growth waterfall
+
+```bash
+token-scope --cache-growth <session-id>
+```
+
+Turn-by-turn cache growth waterfall for one session. Useful for diagnosing where context accumulates.
+
+---
+
+### Session budget
+
+```bash
+token-scope --budget --since 30d
+```
+
+Optimal session length analysis — where the per-turn cost curve breaks.
+
+---
+
+### Context-loop ROI
+
+```bash
+token-scope --context-loop --since 30d
+token-scope --context-loop --tuning
+token-scope --context-loop --reclamation
+token-scope --context-loop --patterns
+```
+
+Savings and ROI analytics for the `context-loop` plugin. Subsections: threshold curve / acted vs ignored (`--tuning`), per-cwd reclamation and no-fire baseline (`--reclamation`), n-th-fire returns and quality proxy (`--patterns`).
+
+---
+
+### Artifacts (per-file Write/Edit cost)
+
+```bash
+token-scope --artifacts --since 30d
+token-scope --artifacts --artifact-format md
+token-scope --artifacts --artifact-path docs/
+token-scope --artifact-show <full-path>
+token-scope --artifact-compare <file.md>
+```
+
+Per-file production cost: which artifacts (files written or edited) cost the most to produce. Filter by extension (`--artifact-format`) or path fragment (`--artifact-path`). `--artifact-show` gives per-edit lifecycle for one file; `--artifact-compare` compares an `.md` to a sibling rendered HTML (`<dir>/artifacts/<slug>.html`).
+
+---
+
 ## Cost Alert Hook
 
 Real-time in-session cost alerts for Claude Code. Fires after each response and warns when:
@@ -324,11 +391,13 @@ Replace the path with wherever you cloned token-scope. Requires `bun` in PATH (o
 
 ## Roadmap
 
-- **Phase 1:** Core terminal reports (summary, tool, project, session, thinking)
-- **Phase 2:** Cost efficiency analytics (cache, efficiency, context bloat, per-project thinking)
-- **Phase 3 (current):** Tooling analysis by layer with proportional cost attribution
-- **Phase 4:** Full MCP tool drill-down, per-project tool usage breakdown
-- **Phase 5:** Export any report to Markdown / Obsidian
+- **Phase 1:** Core terminal reports (summary, tool, project, session, thinking) — shipped
+- **Phase 2:** Cost efficiency analytics (cache, efficiency, context bloat, per-project thinking) — shipped
+- **Phase 3:** Tooling analysis by layer with proportional cost attribution — shipped
+- **Phase 4:** Context contributors, base load, cache-growth waterfall, session budget — shipped
+- **Phase 5:** Artifact lifecycle analytics (per-file Write/Edit cost, MD/HTML compare) — shipped
+- **Phase 6 (current):** context-loop plugin ROI analytics
+- **Next:** Export any report to Markdown / Obsidian
 
 ## License
 
