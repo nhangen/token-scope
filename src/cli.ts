@@ -234,12 +234,6 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv);
 
-  const reader = createReader({
-    source: args.source ?? "auto",
-    dbPath: args.dbPath,
-    projectsDirs: args.projectsDirs.length > 0 ? args.projectsDirs : undefined,
-  });
-
   let since: number;
   try {
     since = parseSince(args.since);
@@ -247,6 +241,19 @@ async function main() {
     process.stderr.write(`${String(e)}\n`);
     process.exit(1);
   }
+
+  // Session-scoped modes pick a specific session_id; the mtime prefilter
+  // would drop the target file if its mtime predates --since, silently
+  // returning empty. Skip the prefilter for those modes.
+  const sessionScopedModes = new Set(["session", "cache-growth"]);
+  const prefilterSince = sessionScopedModes.has(args.mode) ? undefined : since;
+
+  const reader = createReader({
+    source: args.source ?? "auto",
+    dbPath: args.dbPath,
+    projectsDirs: args.projectsDirs.length > 0 ? args.projectsDirs : undefined,
+    since: prefilterSince,
+  });
 
   if (args.mode === "session") {
     const { renderSessionView } = await import("@/reports/session");
