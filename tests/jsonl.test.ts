@@ -333,3 +333,71 @@ describe("JsonlReader — context stats", () => {
     expect(sess4!.cwd).toBe("/Users/alice/projects/beacon");
   });
 });
+
+describe("JsonlReader — mtime prefilter", () => {
+  it("skips files whose mtime predates since at load time", () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync } = require("fs");
+    const { join, sep } = require("path");
+    const { tmpdir } = require("os");
+
+    const root = mkdtempSync(join(tmpdir(), "ts-mtime-"));
+    const proj = join(root, "-Users-alice-fresh");
+    mkdirSync(proj, { recursive: true });
+
+    const turn = (uuid: string, sid: string, iso: string) => JSON.stringify({
+      uuid, sessionId: sid, cwd: "/x", type: "assistant",
+      timestamp: iso, message: { model: "claude-sonnet-4-5", usage: { output_tokens: 100, input_tokens: 50 } },
+    });
+
+    const oldFile = join(proj, "old.jsonl");
+    const newFile = join(proj, "new.jsonl");
+    writeFileSync(oldFile, turn("u-old", "sess-old", "2024-01-01T00:00:00.000Z") + "\n");
+    writeFileSync(newFile, turn("u-new", "sess-new", "2026-06-01T00:00:00.000Z") + "\n");
+
+    const oldMtime = new Date("2024-01-02T00:00:00.000Z").getTime() / 1000;
+    const newMtime = new Date("2026-06-01T00:00:00.000Z").getTime() / 1000;
+    utimesSync(oldFile, oldMtime, oldMtime);
+    utimesSync(newFile, newMtime, newMtime);
+
+    // 30d window anchored at 2026-06-01 — old file's mtime is 2+ years prior → skipped.
+    const anchor = Math.floor(new Date("2026-06-01T00:00:00Z").getTime() / 1000);
+    const since = anchor - 30 * 86400;
+
+    const filtered = new JsonlReader(root, since);
+    const allFiltered = filtered.querySummaryTotals(0);
+    expect(allFiltered.sessionCount).toBe(1);
+    expect(allFiltered.turnCount).toBe(1);
+
+    const unfiltered = new JsonlReader(root);
+    const allUnfiltered = unfiltered.querySummaryTotals(0);
+    expect(allUnfiltered.sessionCount).toBe(2);
+    expect(allUnfiltered.turnCount).toBe(2);
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("loads files whose mtime is exactly equal to since (boundary)", () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync } = require("fs");
+    const { join } = require("path");
+    const { tmpdir } = require("os");
+
+    const root = mkdtempSync(join(tmpdir(), "ts-mtime-bound-"));
+    const proj = join(root, "-Users-alice-boundary");
+    mkdirSync(proj, { recursive: true });
+
+    const file = join(proj, "boundary.jsonl");
+    writeFileSync(file, JSON.stringify({
+      uuid: "u-b", sessionId: "sess-b", cwd: "/x", type: "assistant",
+      timestamp: "2026-06-01T00:00:00.000Z",
+      message: { model: "claude-sonnet-4-5", usage: { output_tokens: 100, input_tokens: 50 } },
+    }) + "\n");
+
+    const since = Math.floor(new Date("2026-06-01T00:00:00Z").getTime() / 1000);
+    utimesSync(file, since, since);
+
+    const r = new JsonlReader(root, since);
+    expect(r.querySummaryTotals(0).turnCount).toBe(1);
+
+    rmSync(root, { recursive: true, force: true });
+  });
+});

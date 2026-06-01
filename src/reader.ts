@@ -34,6 +34,8 @@ export interface ReaderOptions {
   source?: "jsonl" | "sqlite" | "auto";
   dbPath?: string;
   projectsDirs?: string[];
+  /** Unix epoch seconds. JSONL files with mtime older than this are skipped at load time. */
+  since?: number;
 }
 
 function resolveProjectsDirs(override?: string[]): string[] {
@@ -66,7 +68,7 @@ export function createReader(opts: ReaderOptions = {}): Reader {
 
   if (useJsonl) {
     const { JsonlReader } = require("./jsonl") as typeof import("./jsonl");
-    return new JsonlReader(projectsDirs);
+    return new JsonlReader(projectsDirs, opts.since);
   }
 
   // @ts-ignore - createSqliteReader will be added in a subsequent task

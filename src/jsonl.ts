@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, existsSync } from "fs";
+import { readdirSync, readFileSync, statSync, existsSync } from "fs";
 import { join } from "path";
 import { computeTurnCost, computeCacheSavings, getPricing } from "@/pricing";
 import { parseContentBlocks, resolveDominantTool } from "@/parse";
@@ -42,9 +42,17 @@ function scanJsonlFiles(dir: string): string[] {
   return files;
 }
 
-function loadTurns(dirs: string[]): JsonlTurn[] {
+function loadTurns(dirs: string[], sinceMs?: number): JsonlTurn[] {
   const turns: JsonlTurn[] = [];
   for (const file of dirs.flatMap(scanJsonlFiles)) {
+    if (sinceMs !== undefined) {
+      // Assumes mtime is local-clock; vaults synced across hosts (iCloud,
+      // Syncthing, rsync -a) preserve source mtime, so cross-host clock
+      // skew up to a few seconds may exclude a boundary file.
+      try {
+        if (statSync(file).mtimeMs < sinceMs) continue;
+      } catch { continue; }
+    }
     let raw: string;
     try { raw = readFileSync(file, "utf8"); } catch { continue; }
     for (const line of raw.split("\n")) {
@@ -84,8 +92,10 @@ function loadTurns(dirs: string[]): JsonlTurn[] {
 export class JsonlReader implements Reader {
   private readonly turns: JsonlTurn[];
 
-  constructor(projectsDirs: string | string[]) {
-    this.turns = loadTurns(Array.isArray(projectsDirs) ? projectsDirs : [projectsDirs]);
+  constructor(projectsDirs: string | string[], sinceSec?: number) {
+    const dirs = Array.isArray(projectsDirs) ? projectsDirs : [projectsDirs];
+    const sinceMs = sinceSec !== undefined ? sinceSec * 1000 : undefined;
+    this.turns = loadTurns(dirs, sinceMs);
   }
 
   private filter(since: number): JsonlTurn[] {
