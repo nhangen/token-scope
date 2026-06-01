@@ -121,6 +121,14 @@ describe("querySessionTurns", () => {
       expect(turn).toHaveProperty("costUsd");
     }
   });
+
+  it("each turn carries sessionId for downstream joins", () => {
+    const turns = querySessionTurns(db, "sess-a1");
+    expect(turns.length).toBeGreaterThan(0);
+    for (const turn of turns) {
+      expect(turn.sessionId).toBe("sess-a1");
+    }
+  });
 });
 
 describe("queryRawTurnsForTool", () => {

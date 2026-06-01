@@ -57,6 +57,7 @@ export interface SessionRow {
 
 export interface TurnRow {
   uuid: string;
+  sessionId: string;
   timestamp: number;
   outputTokens: number;
   inputTokens: number;
@@ -378,7 +379,7 @@ export function querySessions(db: Database, since: number, limit: number): Sessi
 
 export function querySessionTurns(db: Database, sessionId: string): TurnRow[] {
   return db.query<TurnRow, [string]>(`
-    SELECT am.uuid, bm.timestamp * 1000 AS timestamp,
+    SELECT am.uuid, bm.session_id AS sessionId, bm.timestamp * 1000 AS timestamp,
       CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER) AS outputTokens,
       CAST(json_extract(am.message, '$.usage.input_tokens') AS INTEGER) AS inputTokens,
       CAST(json_extract(am.message, '$.usage.cache_read_input_tokens') AS INTEGER) AS cacheReadTokens,

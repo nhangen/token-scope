@@ -83,6 +83,14 @@ describe("JsonlReader — session turns", () => {
     const turns = reader.querySessionTurns("sess-j1");
     expect(turns[0]!.timestamp).toBeLessThan(turns[1]!.timestamp);
   });
+
+  it("each turn carries sessionId for downstream joins", () => {
+    const turns = reader.querySessionTurns("sess-j1");
+    expect(turns.length).toBeGreaterThan(0);
+    for (const turn of turns) {
+      expect(turn.sessionId).toBe("sess-j1");
+    }
+  });
 });
 
 describe("JsonlReader — project matches", () => {
