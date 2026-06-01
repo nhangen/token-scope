@@ -282,6 +282,7 @@ export class JsonlReader implements Reader {
       .sort((a, b) => a.timestampMs - b.timestampMs)
       .map((t) => ({
         uuid: t.uuid,
+        sessionId: t.sessionId,
         timestamp: t.timestampMs,
         outputTokens: t.outputTokens,
         inputTokens: t.inputTokens,
