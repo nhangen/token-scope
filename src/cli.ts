@@ -56,6 +56,10 @@ SAVINGS FLAGS (with --savings)
   --counterfactual-model <id>  Claude model to price the counterfactual against
                           (default: claude-opus-4-8). --session scopes to one
                           delegation session; --since floors by ledger timestamp.
+  --pm-turns <N..M>       Scope PM overhead to the delegation's orchestration
+                          turns (1-indexed inclusive) instead of the whole
+                          session — the only way to get a per-task net. Requires
+                          --session. Excludes session-wide subagent cost.
 
 SHARED FLAGS
   --source <jsonl|sqlite> Data source (default: auto-detect)
@@ -102,6 +106,7 @@ interface CliArgs {
   turnRange?: { from?: number; to?: number };
   ledgerPath?: string;
   counterfactualModel?: string;
+  pmTurnRange?: { from?: number; to?: number };
 }
 
 /** Parses a --turns value: "N", "N..M", "N..", "..M" (1-indexed, inclusive). */
@@ -166,6 +171,13 @@ export function parseArgs(argv: string[]): CliArgs {
         const v = argv[++i];
         if (!v) { process.stderr.write("Error: --counterfactual-model requires a model id.\n"); process.exit(1); }
         args.counterfactualModel = v;
+        break;
+      }
+      case "--pm-turns": {
+        const v = argv[++i];
+        if (!v) { process.stderr.write("Error: --pm-turns requires a value (N, N.., ..M, or N..M).\n"); process.exit(1); }
+        try { args.pmTurnRange = parseTurnRange(v); }
+        catch (e) { process.stderr.write(`Error: ${e instanceof Error ? e.message : String(e)}\n`); process.exit(1); }
         break;
       }
       case "--turns": {
@@ -312,6 +324,17 @@ export function parseArgs(argv: string[]): CliArgs {
     process.exit(1);
   }
 
+  if (args.pmTurnRange) {
+    if (args.mode !== "savings") {
+      process.stderr.write("Error: --pm-turns is only valid with --savings.\n");
+      process.exit(1);
+    }
+    if (!args.sessionId) {
+      process.stderr.write("Error: --pm-turns requires --session (turn numbers are per-session).\n");
+      process.exit(1);
+    }
+  }
+
   return args;
 }
 
@@ -375,6 +398,7 @@ async function main() {
       sessionId: args.sessionId, since, sinceStr: args.since, json: args.json,
       ledgerPath: args.ledgerPath,
       counterfactualModel: args.counterfactualModel ?? DEFAULT_COUNTERFACTUAL_MODEL,
+      pmTurnRange: args.pmTurnRange,
     });
     reader.close();
     return;

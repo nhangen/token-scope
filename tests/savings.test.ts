@@ -102,6 +102,32 @@ describe("renderSavingsReport — multiple attributed sessions", () => {
   });
 });
 
+describe("renderSavingsReport — turn-scoped PM overhead (--pm-turns)", () => {
+  it("scopes PM overhead to the delegation turns, excluding session-wide subagents", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, sessionId: "sess-spend", pmTurnRange: { from: 1, to: 3 } })));
+    expect(p.pm_scope.mode).toBe("turns");
+    expect(p.pm_scope.from).toBe(1);
+    expect(p.pm_scope.to).toBe(3);
+    const s = p.sessions[0];
+    // direct turns 1..3 = 0.01278; whole-session (0.02304) would add the 0.01026 subagent
+    expect(s.pm_overhead_usd).toBeCloseTo(0.01278, 5);
+    // counterfactual (120k/45k @ opus-4-8 = 1.725) − scoped PM
+    expect(s.net_savings_usd).toBeCloseTo(1.71222, 5);
+  });
+
+  it("a single-turn slice yields smaller PM overhead → larger net than whole-session", () => {
+    const scoped = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, sessionId: "sess-spend", pmTurnRange: { from: 2, to: 2 } })));
+    const whole = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, sessionId: "sess-spend" })));
+    expect(scoped.sessions[0].pm_overhead_usd).toBeCloseTo(0.004935, 6); // turn 2 direct cost only
+    expect(scoped.sessions[0].net_savings_usd).toBeGreaterThan(whole.sessions[0].net_savings_usd);
+  });
+
+  it("defaults to whole-session PM scope when --pm-turns is absent", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, sessionId: "sess-spend" })));
+    expect(p.pm_scope.mode).toBe("whole-session");
+  });
+});
+
 describe("renderSavingsReport — session scope", () => {
   it("filters the ledger to one session by prefix", () => {
     const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, sessionId: "sess-spend" })));

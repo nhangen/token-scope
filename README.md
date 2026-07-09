@@ -154,6 +154,7 @@ the thin Claude PM overhead.
 token-scope --savings                                  # all delegation runs
 token-scope --savings --session be299042               # one delegation session
 token-scope --savings --counterfactual-model claude-sonnet-5   # value against a cheaper tier
+token-scope --savings --session be299042 --pm-turns 4..9   # net vs. just the delegation's PM turns
 token-scope --savings --ledger /path/to/runs.jsonl     # explicit ledger location
 ```
 
@@ -173,12 +174,21 @@ Net = Counterfactual − PM overhead
   `claude-opus-4-8`): an estimate of what Claude authoring the same work would have cost.
   ollama and Claude tokenize differently, so this is a proxy, not a measured figure.
 - **PM overhead** — the *actual* Claude billed spend of the session that ran the
-  delegation (the same direct + subagent rollup `--spend` computes): the real cost of
-  Claude playing project-manager (writing tests, auditing, steering).
+  delegation: the real cost of Claude playing project-manager (writing tests, auditing,
+  steering). By default this is the **whole session** (direct + subagent rollup). That only
+  makes sense for a *dedicated* delegation session — in a long mixed session, unrelated work
+  swamps the delegation and net reads hugely negative. Use **`--pm-turns N..M`** (requires
+  `--session`) to scope PM overhead to just the delegation's orchestration turns — the only
+  way to get a meaningful **per-task** net. The ledger has no delegation-start marker, so the
+  turn window can't be auto-derived; you isolate it, exactly as with `--spend --turns`.
+  (Turn-scoped PM excludes session-wide subagent cost, so it's a floor.)
 
-A **positive net means delegation saved money.** Runs with no attributable Claude session
-(null `session_id`, or a session not in the local transcripts) are counted for token volume
-but excluded from the net headline. `--since` floors by ledger timestamp when set.
+A **positive net means delegation saved money.** Note the economics: for a *small* task the
+counterfactual is tiny, so a single expensive PM turn can exceed it (net negative) — delegation
+pays off as the authored task grows large relative to the fixed PM overhead. Runs with no
+attributable Claude session (null `session_id`, or a session not in the local transcripts) are
+counted for token volume but excluded from the net headline. `--since` floors by ledger timestamp
+when set.
 
 ---
 
