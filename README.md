@@ -125,6 +125,29 @@ Turn-by-turn breakdown with output tokens, cost, tool used, and thinking indicat
 
 ---
 
+### Spend (per-task token accounting)
+
+```bash
+token-scope --spend --session be299042            # whole session
+token-scope --spend --session be299042 --turns 5..12   # isolate one task
+token-scope --spend --turns 5..12                 # most-recent session
+```
+
+Isolates the **Claude (billed) token spend** — output, input, cache-read, cache-write,
+and a derived cost — for one session, sliced to a turn range so a single task can be
+measured. Rolls up subagent (Task/Agent) overhead so PM-loop cost (auditors, explorers)
+is visible rather than hidden. `--session` picks the session (defaults to the most recent);
+`--turns N..M` (also `N..`, `..M`, `N`) is a 1-indexed inclusive slice; `--since` acts as a
+within-session timestamp floor when set.
+
+Notes: subagent totals are session-wide in v1 (not scoped to the turn range), and require
+the JSONL source (subagent transcripts aren't in the SQLite store). Turns on a model with
+no known pricing still count their tokens; only their cost is excluded. Local (ollama)
+authoring runs off-transcript and is not counted — so a delegated task's spend shows just
+the thin Claude PM overhead.
+
+---
+
 ### Project filter
 
 ```bash

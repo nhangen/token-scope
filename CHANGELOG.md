@@ -28,6 +28,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `--spend` report: per-turn + per-range Claude (billed) token accounting for one session (output/input/cache-read/cache-write + derived cost), with `--turns N..M` task-slice and `--since` timestamp floor. Rolls up subagent (Task/Agent) overhead so PM-loop cost is visible. Subagent attribution is JSONL-only and session-wide in v1. (#10)
 - Phase 1: terminal reports (summary, tool, project, session, thinking, sessions list)
 - Read-only access to `~/.claude/__store.db` via `bun:sqlite`
 - `--since`, `--limit`, `--json`, `--db`, `--version`, `--help` flags

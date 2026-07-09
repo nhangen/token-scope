@@ -20,6 +20,8 @@ REPORT MODES (mutually exclusive)
   --tool <name>           Drill into a specific tool (bash, read, edit, agent, ...)
   --project <fragment>    Filter to sessions whose cwd contains <fragment>
   --session <id>          Turn-by-turn breakdown of one session (min 6-char prefix)
+  --spend                 Per-turn + per-range Claude (billed) token spend for one
+                          session; rolls up subagent (Task/Agent) overhead
   --thinking              Thinking token analysis
   --sessions              List recent sessions with stats
   --context               Context bloat analysis (sessions with 6+ turns)
@@ -39,6 +41,11 @@ REPORT MODES (mutually exclusive)
   --artifact-path <frag>  (with --artifacts) filter paths containing fragment
   --artifact-show <path>  Per-edit lifecycle for one artifact (full path, not fragment)
   --artifact-compare <md> MD vs sibling HTML cost (looks for &lt;dir&gt;/artifacts/&lt;slug&gt;.html)
+
+SPEND FLAGS (with --spend)
+  --turns <N..M>          Isolate a task: 1-indexed inclusive turn slice within the
+                          session (N, N.., ..M, or N..M). --session picks the session
+                          (default: most recent); --since acts as a turn timestamp floor.
 
 SHARED FLAGS
   --source <jsonl|sqlite> Data source (default: auto-detect)
@@ -68,7 +75,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop" | "artifacts" | "artifact-show" | "artifact-compare";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop" | "artifacts" | "artifact-show" | "artifact-compare" | "spend";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -82,6 +89,27 @@ interface CliArgs {
   artifactFormat?: ArtifactFormat;
   artifactPathFragment?: string;
   artifactPath?: string;
+  turnRange?: { from?: number; to?: number };
+}
+
+/** Parses a --turns value: "N", "N..M", "N..", "..M" (1-indexed, inclusive). */
+export function parseTurnRange(raw: string): { from?: number; to?: number } {
+  const single = /^(\d+)$/.exec(raw);
+  if (single) {
+    const n = parseInt(single[1]!, 10);
+    if (n < 1) throw new Error(`--turns value must be >= 1 (got "${raw}").`);
+    return { from: n, to: n };
+  }
+  const range = /^(\d*)\.\.(\d*)$/.exec(raw);
+  if (!range) throw new Error(`Invalid --turns "${raw}". Use N, N.., ..M, or N..M.`);
+  const [, g1, g2] = range;
+  if (g1 === "" && g2 === "") throw new Error(`--turns needs at least one bound (got "${raw}").`);
+  const from = g1 === "" ? undefined : parseInt(g1!, 10);
+  const to = g2 === "" ? undefined : parseInt(g2!, 10);
+  if (from !== undefined && from < 1) throw new Error(`--turns start must be >= 1 (got "${raw}").`);
+  if (to !== undefined && to < 1) throw new Error(`--turns end must be >= 1 (got "${raw}").`);
+  if (from !== undefined && to !== undefined && from > to) throw new Error(`--turns start must be <= end (got "${raw}").`);
+  return { from, to };
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -104,6 +132,19 @@ export function parseArgs(argv: string[]): CliArgs {
       case "--version": case "-v": console.log(`token-scope ${VERSION}`); process.exit(0); break;
       case "--json": args.json = true; break;
       case "--thinking": setMode("thinking"); break;
+      case "--spend":
+        // --session is normally its own mode; --spend consumes it as a scoping
+        // arg instead, so allow the combo regardless of flag order.
+        if (modeSet && args.mode === "session") args.mode = "spend";
+        else setMode("spend");
+        break;
+      case "--turns": {
+        const v = argv[++i];
+        if (!v) { process.stderr.write("Error: --turns requires a value (N, N.., ..M, or N..M).\n"); process.exit(1); }
+        try { args.turnRange = parseTurnRange(v); }
+        catch (e) { process.stderr.write(`Error: ${e instanceof Error ? e.message : String(e)}\n`); process.exit(1); }
+        break;
+      }
       case "--sessions": setMode("sessions"); break;
       case "--context": setMode("context"); break;
       case "--cache": setMode("cache"); break;
@@ -175,12 +216,16 @@ export function parseArgs(argv: string[]): CliArgs {
         }
         break;
       }
-      case "--session":
-        setMode("session");
-        args.sessionId = argv[++i];
-        if (!args.sessionId) { process.stderr.write("Error: --session requires a session ID argument.\n"); process.exit(1); }
-        if (args.sessionId.length < 6) { process.stderr.write("Error: --session ID must be at least 6 characters.\n"); process.exit(1); }
+      case "--session": {
+        const id = argv[++i];
+        if (!id) { process.stderr.write("Error: --session requires a session ID argument.\n"); process.exit(1); }
+        if (id!.length < 6) { process.stderr.write("Error: --session ID must be at least 6 characters.\n"); process.exit(1); }
+        // When --spend is the active mode, --session scopes it rather than
+        // claiming its own (mutually-exclusive) mode.
+        if (modeSet && args.mode === "spend") args.sessionId = id;
+        else { setMode("session"); args.sessionId = id; }
         break;
+      }
       case "--since":
         args.since = argv[++i] ?? "30d";
         if (!/^\d+(h|d|w)$/.test(args.since)) {
@@ -227,6 +272,11 @@ export function parseArgs(argv: string[]): CliArgs {
     process.exit(1);
   }
 
+  if (args.turnRange && args.mode !== "spend") {
+    process.stderr.write("Error: --turns is only valid with --spend.\n");
+    process.exit(1);
+  }
+
   return args;
 }
 
@@ -246,7 +296,10 @@ async function main() {
   // would drop the target file if its mtime predates --since, silently
   // returning empty. Skip the prefilter for those modes.
   const sessionScopedModes = new Set(["session", "cache-growth"]);
-  const prefilterSince = sessionScopedModes.has(args.mode) ? undefined : since;
+  // --spend with an explicit --session targets one file whose mtime may predate
+  // --since; skip the prefilter so it isn't silently dropped (as for --session).
+  const prefilterSince = (sessionScopedModes.has(args.mode) || (args.mode === "spend" && args.sessionId))
+    ? undefined : since;
 
   const reader = createReader({
     source: args.source ?? "auto",
@@ -265,6 +318,16 @@ async function main() {
   if (args.mode === "cache-growth") {
     const { renderCacheGrowthReport } = await import("@/reports/cache-growth");
     renderCacheGrowthReport(reader, args.sessionId!, args.json, args.since);
+    reader.close();
+    return;
+  }
+
+  if (args.mode === "spend") {
+    const { renderSpendReport } = await import("@/reports/spend");
+    renderSpendReport(reader, {
+      sessionId: args.sessionId, turnRange: args.turnRange,
+      since, sinceStr: args.since, json: args.json,
+    });
     reader.close();
     return;
   }

@@ -178,6 +178,24 @@ export interface SessionBudgetRow {
   costAccelerationRatio: number | null;
 }
 
+/**
+ * Session-level rollup of subagent (Task/Agent) token spend. All fields are
+ * Claude billed usage — subagents run as sidechains under the same sessionId.
+ * `supported:false` means the active data source can't attribute subagents
+ * (v1: SQLite). `costPartial:true` means some agent turns had unknown-model
+ * pricing so their cost was skipped (tokens are still counted).
+ */
+export interface SubagentSpend {
+  agentCount: number;
+  outputTokens: number;
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number | null;
+  costPartial: boolean;
+  supported: boolean;
+}
+
 // ─── DB Path Resolution ───────────────────────────────────────────────────────
 
 export function resolveDbPath(flagPath?: string): DbPathResult {
@@ -761,7 +779,20 @@ interface SqliteReaderInterface {
   queryBaseLoad(since: number, limit: number): BaseLoadRow[];
   queryCacheGrowth(sessionId: string): CacheGrowthRow[];
   querySessionBudgets(since: number, limit: number): SessionBudgetRow[];
+  querySubagentSpend(sessionId: string): SubagentSpend;
   close(): void;
+}
+
+// Subagent transcripts live only in the JSONL projects tree
+// (`<session>/subagents/*.jsonl`), not in __store.db. v1 attributes them from
+// the JSONL reader; the SQLite reader reports "unsupported" so the spend report
+// can print a one-line note rather than silently claiming zero overhead.
+export function querySubagentSpendSqlite(): SubagentSpend {
+  return {
+    agentCount: 0, outputTokens: 0, inputTokens: 0,
+    cacheReadTokens: 0, cacheWriteTokens: 0,
+    costUsd: null, costPartial: false, supported: false,
+  };
 }
 
 export function createSqliteReader(db: Database): SqliteReaderInterface {
@@ -783,6 +814,7 @@ export function createSqliteReader(db: Database): SqliteReaderInterface {
     queryBaseLoad: (since, limit) => queryBaseLoad(db, since, limit),
     queryCacheGrowth: (sessionId) => queryCacheGrowth(db, sessionId),
     querySessionBudgets: (since, limit) => querySessionBudgets(db, since, limit),
+    querySubagentSpend: () => querySubagentSpendSqlite(),
     close: () => db.close(),
   };
 }
