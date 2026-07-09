@@ -1,0 +1,5 @@
+{"ts":"2026-07-05T10:00:00Z","run_id":"r1","session_id":"sess-spend","model":"qwen2.5-coder:32b","task_name":"impl-foo","cwd":"/x","ollama_input_tokens":100000,"ollama_output_tokens":40000,"turns":3,"completed":true,"verified":true}
+{"ts":"2026-07-05T11:00:00Z","run_id":"r2","session_id":"sess-spend","model":"qwen2.5-coder:32b","task_name":"impl-bar","cwd":"/x","ollama_input_tokens":20000,"ollama_output_tokens":5000,"turns":2,"completed":true,"verified":false}
+{"ts":"2026-07-05T12:00:00Z","run_id":"r3","session_id":null,"model":"llama3.1:8b","task_name":"orphan","cwd":"/y","ollama_input_tokens":1000,"ollama_output_tokens":500,"turns":1,"completed":true,"verified":true}
+{ this line is deliberately malformed json, must be skipped
+{"ts":"2026-07-06T09:00:00Z","run_id":"r4","session_id":"sess-unknown","model":"qwen2.5-coder:32b","task_name":"nope","cwd":"/z","ollama_input_tokens":8000,"ollama_output_tokens":2000,"turns":1,"completed":false,"verified":false}

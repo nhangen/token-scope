@@ -28,6 +28,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `--savings` report: estimated ollama delegation ROI. Reads the ollama-agent run ledger (`$XDG_STATE_HOME/ollama-agent/runs.jsonl`, or `$OLLAMA_AGENT_LEDGER`; `--ledger` override), values its local token volume at Claude prices (`--counterfactual-model`, default `claude-opus-4-8`), subtracts the session's actual billed Claude spend as PM overhead, and headlines the **net savings** (Counterfactual − PM overhead). Runs with no attributable Claude session are excluded from the net. `--session` scopes to one delegation session; `--since` floors by ledger timestamp.
 - `--spend` report: per-turn + per-range Claude (billed) token accounting for one session (output/input/cache-read/cache-write + derived cost), with `--turns N..M` task-slice and `--since` timestamp floor. Rolls up subagent (Task/Agent) overhead so PM-loop cost is visible. Subagent attribution is JSONL-only and session-wide in v1. (#10)
 - Phase 1: terminal reports (summary, tool, project, session, thinking, sessions list)
 - Read-only access to `~/.claude/__store.db` via `bun:sqlite`

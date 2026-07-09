@@ -1,0 +1,110 @@
+import { describe, expect, it, beforeAll, afterAll } from "bun:test";
+import { createReader } from "@/reader";
+import type { Reader } from "@/reader";
+import { renderSavingsReport, valueAtClaudePrices, DEFAULT_COUNTERFACTUAL_MODEL } from "@/reports/savings";
+
+const SPEND_DIR = new URL("./fixtures/spend-projects", import.meta.url).pathname;
+const LEDGER = new URL("./fixtures/ledger/runs.jsonl", import.meta.url).pathname;
+
+let reader: Reader;
+beforeAll(() => { reader = createReader({ source: "jsonl", projectsDirs: [SPEND_DIR] }); });
+afterAll(() => { reader.close(); });
+
+function capture(fn: () => void): string {
+  const lines: string[] = [];
+  const orig = console.log;
+  console.log = (...args: unknown[]) => { lines.push(args.map(String).join(" ")); };
+  try { fn(); } finally { console.log = orig; }
+  return lines.join("\n") + (lines.length > 0 ? "\n" : "");
+}
+
+const base = {
+  since: 0, sinceStr: "all", json: true,
+  ledgerPath: LEDGER, counterfactualModel: DEFAULT_COUNTERFACTUAL_MODEL,
+};
+
+describe("valueAtClaudePrices", () => {
+  it("values input+output token volume at the model's Claude prices", () => {
+    // opus-4-8: $5/MTok in, $25/MTok out
+    expect(valueAtClaudePrices(100000, 40000, "claude-opus-4-8")).toBeCloseTo(1.5, 6); // 0.5 + 1.0
+  });
+  it("returns null for a model with no known pricing", () => {
+    expect(valueAtClaudePrices(1000, 1000, "qwen2.5-coder:32b")).toBeNull();
+  });
+});
+
+describe("renderSavingsReport — aggregate", () => {
+  it("groups runs by session and sums ollama token volume", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
+    expect(p.report).toBe("savings");
+    expect(p.counterfactual_model).toBe("claude-opus-4-8");
+    expect(p.totals.run_count).toBe(4);
+    expect(p.totals.ollama_input).toBe(129000);  // 100k+20k+1k+8k
+    expect(p.totals.ollama_output).toBe(47500);   // 40k+5k+0.5k+2k
+    // three groups: sess-spend, (unattributed null), sess-unknown
+    expect(p.sessions.length).toBe(3);
+  });
+
+  it("computes counterfactual = ollama volume valued at Claude prices", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
+    const s = p.sessions.find((x: { session_id: string | null }) => x.session_id === "sess-spend");
+    // in=120000 out=45000 @ opus-4-8 => (120000*5 + 45000*25)/1e6 = 1.725
+    expect(s.counterfactual_usd).toBeCloseTo(1.725, 6);
+  });
+
+  it("subtracts the session's billed Claude spend as PM overhead", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
+    const s = p.sessions.find((x: { session_id: string | null }) => x.session_id === "sess-spend");
+    // sess-spend billed spend = direct 0.01278 + subagent 0.01026 = 0.02304
+    expect(s.pm_overhead_usd).toBeCloseTo(0.02304, 5);
+    expect(s.net_savings_usd).toBeCloseTo(1.70196, 5); // 1.725 - 0.02304
+    expect(s.attributed).toBe(true);
+  });
+
+  it("marks runs with no resolvable session spend as unattributed (net excluded)", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
+    const nullGroup = p.sessions.find((x: { session_id: string | null }) => x.session_id === null);
+    const unknown = p.sessions.find((x: { session_id: string | null }) => x.session_id === "sess-unknown");
+    expect(nullGroup.attributed).toBe(false);
+    expect(nullGroup.pm_overhead_usd).toBeNull();
+    expect(nullGroup.net_savings_usd).toBeNull();
+    expect(unknown.attributed).toBe(false);      // session not in transcripts
+    expect(unknown.net_savings_usd).toBeNull();
+  });
+
+  it("headline net sums ONLY attributed sessions", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
+    // only sess-spend is attributed => net headline = its net
+    expect(p.totals.net_savings_usd).toBeCloseTo(1.70196, 5);
+    expect(p.totals.attributed_session_count).toBe(1);
+    expect(p.totals.unattributed_run_count).toBe(2); // r3 (null) + r4 (unknown)
+  });
+});
+
+describe("renderSavingsReport — session scope", () => {
+  it("filters the ledger to one session by prefix", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, sessionId: "sess-spend" })));
+    expect(p.sessions.length).toBe(1);
+    expect(p.sessions[0].session_id).toBe("sess-spend");
+    expect(p.totals.run_count).toBe(2);
+  });
+});
+
+describe("renderSavingsReport — unknown counterfactual model", () => {
+  it("leaves counterfactual + net null and flags it", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, counterfactualModel: "not-a-model" })));
+    expect(p.counterfactual_priced).toBe(false);
+    expect(p.totals.net_savings_usd).toBeNull();
+    const s = p.sessions.find((x: { session_id: string | null }) => x.session_id === "sess-spend");
+    expect(s.counterfactual_usd).toBeNull();
+  });
+});
+
+describe("renderSavingsReport — empty ledger", () => {
+  it("reports no runs without crashing", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, ledgerPath: "/no/such/runs.jsonl" })));
+    expect(p.totals.run_count).toBe(0);
+    expect(p.sessions).toEqual([]);
+    expect(p.totals.net_savings_usd).toBeNull();
+  });
+});
