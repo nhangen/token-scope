@@ -18,6 +18,11 @@ interface SavingsOptions {
   json: boolean;
   ledgerPath?: string;
   counterfactualModel: string;
+  /** When set (requires --session), PM overhead is scoped to this 1-indexed
+   *  inclusive turn slice — the delegation's orchestration turns — instead of
+   *  the whole session. The ledger has no delegation-start marker, so the PM
+   *  window can't be auto-derived; the caller isolates it, as with --spend. */
+  pmTurnRange?: { from?: number; to?: number };
 }
 
 /**
@@ -31,24 +36,47 @@ export function valueAtClaudePrices(inputTokens: number, outputTokens: number, m
   return (inputTokens * p.inputPerMillion + outputTokens * p.outputPerMillion) / 1_000_000;
 }
 
-/** Actual Claude billed spend for a session: direct turns + subagent rollup.
- *  `found` is false when the session isn't present in the transcripts. */
-function sessionBilledSpend(reader: Reader, sessionId: string): { cost: number | null; partial: boolean; found: boolean } {
+/**
+ * Actual Claude billed spend attributed as PM overhead for a session.
+ * Whole-session (default): direct turns + session-wide subagent rollup.
+ * Turn-scoped (`pmTurnRange` set): only the direct turns in the 1-indexed
+ * inclusive slice — the delegation's orchestration turns. Subagent cost is
+ * session-wide (not turn-scoped in v1), so it's EXCLUDED when scoping; callers
+ * surface `scoped` so the report can footnote that.
+ * `found` is false when the session isn't present in the transcripts.
+ */
+function sessionBilledSpend(
+  reader: Reader, sessionId: string, pmTurnRange?: { from?: number; to?: number },
+): { cost: number | null; partial: boolean; found: boolean; scoped: boolean } {
   const turns = reader.querySessionTurns(sessionId);
-  if (turns.length === 0) return { cost: null, partial: false, found: false };
+  if (turns.length === 0) return { cost: null, partial: false, found: false, scoped: !!pmTurnRange };
+
+  let selected = turns;
+  const scoped = !!pmTurnRange;
+  if (pmTurnRange) {
+    const from = pmTurnRange.from ?? 1;
+    const to = Math.min(pmTurnRange.to ?? turns.length, turns.length);
+    selected = turns.filter((_, i) => i + 1 >= from && i + 1 <= to);
+  }
+
   let cost = 0, anyKnown = false, anyNull = false;
-  for (const t of turns) {
+  for (const t of selected) {
     if (t.costUsd === null) anyNull = true;
     else { cost += t.costUsd; anyKnown = true; }
   }
   let total: number | null = anyKnown ? cost : null;
   let partial = anyNull;
-  const sub = reader.querySubagentSpend(sessionId);
-  if (sub.supported) {
-    if (sub.costUsd !== null) total = (total ?? 0) + sub.costUsd;
-    partial = partial || sub.costPartial;
+
+  // Subagent (auditor/explorer) cost is only available session-wide, so it can
+  // only be folded in for the whole-session view — never a turn slice.
+  if (!scoped) {
+    const sub = reader.querySubagentSpend(sessionId);
+    if (sub.supported) {
+      if (sub.costUsd !== null) total = (total ?? 0) + sub.costUsd;
+      partial = partial || sub.costPartial;
+    }
   }
-  return { cost: total, partial, found: true };
+  return { cost: total, partial, found: true, scoped };
 }
 
 interface SessionGroup {
@@ -63,6 +91,7 @@ interface SessionGroup {
   pmPartial: boolean;
   net: number | null;
   attributed: boolean;
+  found: boolean;
 }
 
 const UNATTRIBUTED = "(unattributed)";
@@ -101,7 +130,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
 
     let pmOverhead: number | null = null, pmPartial = false, found = false;
     if (sessionId !== null) {
-      const billed = sessionBilledSpend(reader, sessionId);
+      const billed = sessionBilledSpend(reader, sessionId, opts.pmTurnRange);
       pmOverhead = billed.cost; pmPartial = billed.partial; found = billed.found;
     }
     // A group is attributed only when we have BOTH sides of the subtraction.
@@ -111,8 +140,20 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     groups.push({
       sessionId, cwd: groupRuns.find((r) => r.cwd !== null)?.cwd ?? null,
       runCount: groupRuns.length, ollamaInput, ollamaOutput, models,
-      counterfactual, pmOverhead, pmPartial, net, attributed,
+      counterfactual, pmOverhead, pmPartial, net, attributed, found,
     });
+  }
+
+  // --pm-turns scopes to one session's turn numbering, so it's only meaningful
+  // against a single session. If the --session prefix matched more than one
+  // ledger session, applying the same range to each would silently mis-scope
+  // PM overhead — refuse, mirroring --spend's multi-match guard.
+  if (opts.pmTurnRange) {
+    const named = groups.filter((g) => g.sessionId !== null).map((g) => g.sessionId!);
+    if (named.length > 1) {
+      console.log(`--pm-turns needs a unique session (turn numbers are per-session), but the ledger has ${named.length} sessions here: ${named.map((s) => s.slice(0, 16)).join(", ")}. Narrow --session to one.`);
+      return;
+    }
   }
   // Stable order: attributed sessions first (by net desc), then the rest.
   groups.sort((a, b) => {
@@ -138,6 +179,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       counterfactual_model: opts.counterfactualModel,
       counterfactual_priced: counterfactualPriced,
       since_floor_applied: sinceFloorApplied,
+      pm_scope: opts.pmTurnRange
+        ? { mode: "turns", from: opts.pmTurnRange.from ?? null, to: opts.pmTurnRange.to ?? null }
+        : { mode: "whole-session" },
       sessions: groups.map((g) => ({
         session_id: g.sessionId, cwd: g.cwd, run_count: g.runCount,
         ollama_input: g.ollamaInput, ollama_output: g.ollamaOutput, models: g.models,
@@ -161,6 +205,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     ["Ledger", ledgerPath],
     ["Runs", `${totalRuns} across ${groups.length} session${groups.length === 1 ? "" : "s"}`],
     ["Counterfactual model", counterfactualPriced ? `${opts.counterfactualModel} (est.)` : `${opts.counterfactualModel} — no known pricing`],
+    ["PM overhead scope", opts.pmTurnRange
+      ? `turns ${opts.pmTurnRange.from ?? 1}..${opts.pmTurnRange.to ?? "end"} (delegation only)`
+      : "whole session"],
     ["Since floor", sinceFloorApplied ? `> ${opts.sinceStr}` : "none (all runs)"],
   ]));
 
@@ -199,9 +246,22 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   ]));
 
   console.log(renderFootnote(`Counterfactual (*) = ollama token volume valued at ${opts.counterfactualModel} prices. ollama and Claude tokenize differently, so this is a proxy for "what Claude authoring would have cost," not a measured figure.`));
-  console.log(renderFootnote(`PM overhead (†) = actual Claude billed spend of the session(s) that ran the delegations. Net = Counterfactual − PM overhead; positive means delegation saved money.`));
-  if (unattributedRuns > 0) {
-    console.log(renderFootnote(`${unattributedRuns} run(s) excluded from the net headline: no Claude session could be attributed (null session_id, or the session isn't in the local transcripts).`));
+  if (opts.pmTurnRange) {
+    console.log(renderFootnote(`PM overhead (†) = Claude billed spend of turns ${opts.pmTurnRange.from ?? 1}..${opts.pmTurnRange.to ?? "end"} only — the delegation's orchestration turns. Net = Counterfactual − PM overhead; positive means delegation saved money. Subagent (auditor/explorer) cost is session-wide in v1 and is NOT included in a turn slice, so PM overhead here is a floor — and the net a best case.`));
+  } else {
+    console.log(renderFootnote(`PM overhead (†) = actual Claude billed spend of the WHOLE session(s) that ran the delegations (direct + subagents). Net = Counterfactual − PM overhead. For a per-task net, scope it to the delegation's turns with --pm-turns; otherwise unrelated session work inflates PM overhead and net reads negative.`));
+  }
+  // An in-transcript session whose turn slice selected no turns is a distinct
+  // case from "no session" — don't let it hide behind the generic diagnostic.
+  const emptySlice = opts.pmTurnRange
+    ? groups.filter((g) => g.sessionId !== null && g.found && g.pmOverhead === null)
+    : [];
+  if (emptySlice.length > 0) {
+    console.log(renderFootnote(`--pm-turns ${opts.pmTurnRange!.from ?? 1}..${opts.pmTurnRange!.to ?? "end"} selected no turns in ${emptySlice.map((g) => g.sessionId!.slice(0, 16)).join(", ")} (out of range for the session), so PM overhead is unknown and it's excluded from the net. Widen the range.`));
+  }
+  const genuinelyUnattributed = unattributedRuns - emptySlice.reduce((s, g) => s + g.runCount, 0);
+  if (genuinelyUnattributed > 0) {
+    console.log(renderFootnote(`${genuinelyUnattributed} run(s) excluded from the net headline: no Claude session could be attributed (null session_id, or the session isn't in the local transcripts).`));
   }
   if (!counterfactualPriced) {
     console.log(renderFootnote(`Counterfactual model "${opts.counterfactualModel}" has no entry in the price table, so counterfactual + net are unavailable. Pass --counterfactual-model with a known Claude model.`));

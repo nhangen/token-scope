@@ -106,6 +106,21 @@ describe("parseArgs --savings", () => {
     expect(() => parseArgs(["--savings", "--turns", "1..3"])).toThrow("__exit_1");
     expect(stderrBuf).toContain("only valid with --spend");
   });
+
+  it("accepts --pm-turns with --savings + --session", () => {
+    const a = parseArgs(["--savings", "--session", "abc123", "--pm-turns", "3..7"]);
+    expect(a.pmTurnRange).toEqual({ from: 3, to: 7 });
+  });
+
+  it("rejects --pm-turns without --savings", () => {
+    expect(() => parseArgs(["--pm-turns", "1..3"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("only valid with --savings");
+  });
+
+  it("rejects --pm-turns without --session", () => {
+    expect(() => parseArgs(["--savings", "--pm-turns", "1..3"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("requires --session");
+  });
 });
 
 describe("parseTurnRange", () => {
