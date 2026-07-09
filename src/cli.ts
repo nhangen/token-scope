@@ -22,6 +22,9 @@ REPORT MODES (mutually exclusive)
   --session <id>          Turn-by-turn breakdown of one session (min 6-char prefix)
   --spend                 Per-turn + per-range Claude (billed) token spend for one
                           session; rolls up subagent (Task/Agent) overhead
+  --savings               Estimated ollama delegation savings: reads the
+                          ollama-agent ledger, values its token volume at Claude
+                          prices, subtracts actual PM overhead, headlines the net
   --thinking              Thinking token analysis
   --sessions              List recent sessions with stats
   --context               Context bloat analysis (sessions with 6+ turns)
@@ -46,6 +49,13 @@ SPEND FLAGS (with --spend)
   --turns <N..M>          Isolate a task: 1-indexed inclusive turn slice within the
                           session (N, N.., ..M, or N..M). --session picks the session
                           (default: most recent); --since acts as a turn timestamp floor.
+
+SAVINGS FLAGS (with --savings)
+  --ledger <path>         Ledger file to read (default: OLLAMA_AGENT_LEDGER env, else
+                          $XDG_STATE_HOME/ollama-agent/runs.jsonl).
+  --counterfactual-model <id>  Claude model to price the counterfactual against
+                          (default: claude-opus-4-8). --session scopes to one
+                          delegation session; --since floors by ledger timestamp.
 
 SHARED FLAGS
   --source <jsonl|sqlite> Data source (default: auto-detect)
@@ -75,7 +85,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop" | "artifacts" | "artifact-show" | "artifact-compare" | "spend";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop" | "artifacts" | "artifact-show" | "artifact-compare" | "spend" | "savings";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -90,6 +100,8 @@ interface CliArgs {
   artifactPathFragment?: string;
   artifactPath?: string;
   turnRange?: { from?: number; to?: number };
+  ledgerPath?: string;
+  counterfactualModel?: string;
 }
 
 /** Parses a --turns value: "N", "N..M", "N..", "..M" (1-indexed, inclusive). */
@@ -138,6 +150,24 @@ export function parseArgs(argv: string[]): CliArgs {
         if (modeSet && args.mode === "session") args.mode = "spend";
         else setMode("spend");
         break;
+      case "--savings":
+        // Like --spend, --savings consumes --session as a scoping arg rather
+        // than letting it claim its own mode, regardless of flag order.
+        if (modeSet && args.mode === "session") args.mode = "savings";
+        else setMode("savings");
+        break;
+      case "--ledger": {
+        const v = argv[++i];
+        if (!v) { process.stderr.write("Error: --ledger requires a path argument.\n"); process.exit(1); }
+        args.ledgerPath = v;
+        break;
+      }
+      case "--counterfactual-model": {
+        const v = argv[++i];
+        if (!v) { process.stderr.write("Error: --counterfactual-model requires a model id.\n"); process.exit(1); }
+        args.counterfactualModel = v;
+        break;
+      }
       case "--turns": {
         const v = argv[++i];
         if (!v) { process.stderr.write("Error: --turns requires a value (N, N.., ..M, or N..M).\n"); process.exit(1); }
@@ -220,9 +250,9 @@ export function parseArgs(argv: string[]): CliArgs {
         const id = argv[++i];
         if (!id) { process.stderr.write("Error: --session requires a session ID argument.\n"); process.exit(1); }
         if (id!.length < 6) { process.stderr.write("Error: --session ID must be at least 6 characters.\n"); process.exit(1); }
-        // When --spend is the active mode, --session scopes it rather than
-        // claiming its own (mutually-exclusive) mode.
-        if (modeSet && args.mode === "spend") args.sessionId = id;
+        // When --spend/--savings is the active mode, --session scopes it rather
+        // than claiming its own (mutually-exclusive) mode.
+        if (modeSet && (args.mode === "spend" || args.mode === "savings")) args.sessionId = id;
         else { setMode("session"); args.sessionId = id; }
         break;
       }
@@ -277,6 +307,11 @@ export function parseArgs(argv: string[]): CliArgs {
     process.exit(1);
   }
 
+  if ((args.ledgerPath || args.counterfactualModel) && args.mode !== "savings") {
+    process.stderr.write("Error: --ledger/--counterfactual-model are only valid with --savings.\n");
+    process.exit(1);
+  }
+
   return args;
 }
 
@@ -298,7 +333,9 @@ async function main() {
   const sessionScopedModes = new Set(["session", "cache-growth"]);
   // --spend with an explicit --session targets one file whose mtime may predate
   // --since; skip the prefilter so it isn't silently dropped (as for --session).
-  const prefilterSince = (sessionScopedModes.has(args.mode) || (args.mode === "spend" && args.sessionId))
+  // --savings resolves sessions from the ledger (any age), so it also skips the
+  // prefilter to keep PM-overhead attribution working for older sessions.
+  const prefilterSince = (sessionScopedModes.has(args.mode) || (args.mode === "spend" && args.sessionId) || args.mode === "savings")
     ? undefined : since;
 
   const reader = createReader({
@@ -327,6 +364,17 @@ async function main() {
     renderSpendReport(reader, {
       sessionId: args.sessionId, turnRange: args.turnRange,
       since, sinceStr: args.since, json: args.json,
+    });
+    reader.close();
+    return;
+  }
+
+  if (args.mode === "savings") {
+    const { renderSavingsReport, DEFAULT_COUNTERFACTUAL_MODEL } = await import("@/reports/savings");
+    renderSavingsReport(reader, {
+      sessionId: args.sessionId, since, sinceStr: args.since, json: args.json,
+      ledgerPath: args.ledgerPath,
+      counterfactualModel: args.counterfactualModel ?? DEFAULT_COUNTERFACTUAL_MODEL,
     });
     reader.close();
     return;

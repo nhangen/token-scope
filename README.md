@@ -148,6 +148,40 @@ the thin Claude PM overhead.
 
 ---
 
+### Savings (ollama delegation ROI)
+
+```bash
+token-scope --savings                                  # all delegation runs
+token-scope --savings --session be299042               # one delegation session
+token-scope --savings --counterfactual-model claude-sonnet-5   # value against a cheaper tier
+token-scope --savings --ledger /path/to/runs.jsonl     # explicit ledger location
+```
+
+Answers the "did delegating authorship to a local ollama model actually save money?"
+question. Reads the **ollama-agent run ledger** (`$XDG_STATE_HOME/ollama-agent/runs.jsonl`,
+or `$OLLAMA_AGENT_LEDGER`) — the bridge records each run's local token counts (ground truth
+from ollama's `eval_count`/`prompt_eval_count`) plus the Claude session that spawned it.
+token-scope prices them; the bridge never guesses cost.
+
+For each delegation session it reports the **net savings**:
+
+```
+Net = Counterfactual − PM overhead
+```
+
+- **Counterfactual** — the ollama token volume valued at Claude prices (default
+  `claude-opus-4-8`): an estimate of what Claude authoring the same work would have cost.
+  ollama and Claude tokenize differently, so this is a proxy, not a measured figure.
+- **PM overhead** — the *actual* Claude billed spend of the session that ran the
+  delegation (the same direct + subagent rollup `--spend` computes): the real cost of
+  Claude playing project-manager (writing tests, auditing, steering).
+
+A **positive net means delegation saved money.** Runs with no attributable Claude session
+(null `session_id`, or a session not in the local transcripts) are counted for token volume
+but excluded from the net headline. `--since` floors by ledger timestamp when set.
+
+---
+
 ### Project filter
 
 ```bash

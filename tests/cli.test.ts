@@ -69,6 +69,45 @@ describe("parseArgs mode-conflict guard", () => {
   });
 });
 
+describe("parseArgs --savings", () => {
+  beforeEach(installFakes);
+  afterEach(restoreFakes);
+
+  it("sets savings mode", () => {
+    expect(parseArgs(["--savings"]).mode).toBe("savings");
+  });
+
+  it("consumes --session as a scoping arg (both flag orders)", () => {
+    const a = parseArgs(["--savings", "--session", "abc123"]);
+    expect(a.mode).toBe("savings");
+    expect(a.sessionId).toBe("abc123");
+    const b = parseArgs(["--session", "abc123", "--savings"]);
+    expect(b.mode).toBe("savings");
+    expect(b.sessionId).toBe("abc123");
+  });
+
+  it("accepts --ledger and --counterfactual-model with --savings", () => {
+    const a = parseArgs(["--savings", "--ledger", "/l.jsonl", "--counterfactual-model", "claude-sonnet-5"]);
+    expect(a.ledgerPath).toBe("/l.jsonl");
+    expect(a.counterfactualModel).toBe("claude-sonnet-5");
+  });
+
+  it("rejects --ledger without --savings", () => {
+    expect(() => parseArgs(["--ledger", "/l.jsonl"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("only valid with --savings");
+  });
+
+  it("rejects --counterfactual-model without --savings", () => {
+    expect(() => parseArgs(["--counterfactual-model", "claude-opus-4-8"])).toThrow("__exit_1");
+    expect(lastExitCode).toBe(1);
+  });
+
+  it("rejects --turns with --savings (spend-only)", () => {
+    expect(() => parseArgs(["--savings", "--turns", "1..3"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("only valid with --spend");
+  });
+});
+
 describe("parseTurnRange", () => {
   it("parses a single turn N as N..N", () => {
     expect(parseTurnRange("5")).toEqual({ from: 5, to: 5 });

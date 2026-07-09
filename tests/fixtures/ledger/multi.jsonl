@@ -1,0 +1,2 @@
+{"ts":"2026-07-05T10:00:00Z","run_id":"m1","session_id":"sess-spend","model":"qwen2.5-coder:32b","task_name":"a","cwd":"/x","ollama_input_tokens":100000,"ollama_output_tokens":40000,"turns":3,"completed":true,"verified":true}
+{"ts":"2026-07-05T11:00:00Z","run_id":"m2","session_id":"sess-partial","model":"qwen2.5-coder:32b","task_name":"b","cwd":"/x","ollama_input_tokens":50000,"ollama_output_tokens":10000,"turns":2,"completed":true,"verified":true}
