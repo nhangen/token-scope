@@ -136,8 +136,30 @@ describe("getPricing", () => {
     expect(getPricing("claude-unknown-99")).toBeNull();
   });
 
-  it("returns pricing for haiku", () => {
-    expect(getPricing("claude-haiku-4-5-20251001")!.outputPerMillion).toBe(4.00);
+  it("returns pricing for haiku 4.5 (current: $1/$5)", () => {
+    const p = getPricing("claude-haiku-4-5-20251001")!;
+    expect(p.inputPerMillion).toBe(1.00);
+    expect(p.outputPerMillion).toBe(5.00);
+  });
+
+  it("prices current Opus 4.8 at $5/$25", () => {
+    const p = getPricing("claude-opus-4-8")!;
+    expect(p).not.toBeNull();
+    expect(p.inputPerMillion).toBe(5.00);
+    expect(p.cacheReadPerMillion).toBe(0.50);
+    expect(p.outputPerMillion).toBe(25.00);
+  });
+
+  it("prices Sonnet 5 at introductory $2/$10", () => {
+    const p = getPricing("claude-sonnet-5")!;
+    expect(p.inputPerMillion).toBe(2.00);
+    expect(p.outputPerMillion).toBe(10.00);
+  });
+
+  it("prices Fable 5 at $10/$50", () => {
+    const p = getPricing("claude-fable-5")!;
+    expect(p.inputPerMillion).toBe(10.00);
+    expect(p.outputPerMillion).toBe(50.00);
   });
 });
 

@@ -5,11 +5,25 @@ export interface ModelPricing {
   outputPerMillion: number;
 }
 
-// Prices are per million tokens (USD). Source: Anthropic pricing as of 2026-04-07.
+// Prices are per million tokens (USD), standard first-party global rates.
+// Source: https://platform.claude.com/docs/en/docs/about-claude/pricing (as of 2026-07-08).
+// Cache-write = 5-minute write (1.25x input); cache-read = 0.1x input.
+// Caveats: Sonnet 5 is at introductory pricing through 2026-08-31 (2/10), rising
+// to 3/15 on 2026-09-01. Fast-mode and data-residency (1.1x) premiums are NOT
+// modeled — usage alone can't distinguish them, so standard rates are assumed.
 const PRICING: Record<string, ModelPricing> = {
-  "claude-opus-4-6":            { inputPerMillion: 15.00, cacheWritePerMillion: 18.75, cacheReadPerMillion: 1.50,  outputPerMillion: 75.00 },
+  // Current generation (Opus 4.5–4.8 all share one price tier).
+  "claude-opus-4-8":            { inputPerMillion:  5.00, cacheWritePerMillion:  6.25, cacheReadPerMillion: 0.50,  outputPerMillion: 25.00 },
+  "claude-opus-4-7":            { inputPerMillion:  5.00, cacheWritePerMillion:  6.25, cacheReadPerMillion: 0.50,  outputPerMillion: 25.00 },
+  "claude-opus-4-6":            { inputPerMillion:  5.00, cacheWritePerMillion:  6.25, cacheReadPerMillion: 0.50,  outputPerMillion: 25.00 },
+  "claude-opus-4-5":            { inputPerMillion:  5.00, cacheWritePerMillion:  6.25, cacheReadPerMillion: 0.50,  outputPerMillion: 25.00 },
+  "claude-sonnet-5":            { inputPerMillion:  2.00, cacheWritePerMillion:  2.50, cacheReadPerMillion: 0.20,  outputPerMillion: 10.00 },
   "claude-sonnet-4-6":          { inputPerMillion:  3.00, cacheWritePerMillion:  3.75, cacheReadPerMillion: 0.30,  outputPerMillion: 15.00 },
-  "claude-haiku-4-5-20251001":  { inputPerMillion:  0.80, cacheWritePerMillion:  1.00, cacheReadPerMillion: 0.08,  outputPerMillion:  4.00 },
+  "claude-fable-5":             { inputPerMillion: 10.00, cacheWritePerMillion: 12.50, cacheReadPerMillion: 1.00,  outputPerMillion: 50.00 },
+  "claude-mythos-5":            { inputPerMillion: 10.00, cacheWritePerMillion: 12.50, cacheReadPerMillion: 1.00,  outputPerMillion: 50.00 },
+  "claude-haiku-4-5-20251001":  { inputPerMillion:  1.00, cacheWritePerMillion:  1.25, cacheReadPerMillion: 0.10,  outputPerMillion:  5.00 },
+  "claude-haiku-4-5":           { inputPerMillion:  1.00, cacheWritePerMillion:  1.25, cacheReadPerMillion: 0.10,  outputPerMillion:  5.00 },
+  // Older / deprecated (retain their original pricing).
   "claude-3-7-sonnet-20250219": { inputPerMillion:  3.00, cacheWritePerMillion:  3.75, cacheReadPerMillion: 0.30,  outputPerMillion: 15.00 },
   "claude-3-5-haiku-20241022":  { inputPerMillion:  0.80, cacheWritePerMillion:  1.00, cacheReadPerMillion: 0.08,  outputPerMillion:  4.00 },
   "claude-3-5-sonnet-20241022": { inputPerMillion:  3.00, cacheWritePerMillion:  3.75, cacheReadPerMillion: 0.30,  outputPerMillion: 15.00 },
