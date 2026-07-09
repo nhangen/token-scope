@@ -81,6 +81,27 @@ describe("renderSavingsReport — aggregate", () => {
   });
 });
 
+describe("renderSavingsReport — multiple attributed sessions", () => {
+  const MULTI = new URL("./fixtures/ledger/multi.jsonl", import.meta.url).pathname;
+
+  it("sums the net headline across ALL attributed sessions (reducer coverage)", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, ledgerPath: MULTI })));
+    expect(p.totals.attributed_session_count).toBe(2);
+    // Relational: totals must equal the sum of per-session values, not any one
+    // of them (guards against a last-wins / overwrite reducer bug).
+    const attributed = p.sessions.filter((s: { attributed: boolean }) => s.attributed);
+    expect(attributed.length).toBe(2);
+    const sumNet = attributed.reduce((a: number, s: { net_savings_usd: number }) => a + s.net_savings_usd, 0);
+    const sumCf = attributed.reduce((a: number, s: { counterfactual_usd: number }) => a + s.counterfactual_usd, 0);
+    const sumPm = attributed.reduce((a: number, s: { pm_overhead_usd: number }) => a + s.pm_overhead_usd, 0);
+    expect(p.totals.net_savings_usd).toBeCloseTo(sumNet, 6);
+    expect(p.totals.counterfactual_usd).toBeCloseTo(sumCf, 6);
+    expect(p.totals.pm_overhead_usd).toBeCloseTo(sumPm, 6);
+    // And the net headline is genuinely larger than either single session's net.
+    expect(p.totals.net_savings_usd).toBeGreaterThan(Math.max(...attributed.map((s: { net_savings_usd: number }) => s.net_savings_usd)));
+  });
+});
+
 describe("renderSavingsReport — session scope", () => {
   it("filters the ledger to one session by prefix", () => {
     const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, sessionId: "sess-spend" })));
