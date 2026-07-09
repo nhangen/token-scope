@@ -6,7 +6,7 @@ import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow,
   WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, RawTurnForArtifact,
   ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow,
-  SessionBudgetRow,
+  SessionBudgetRow, SubagentSpend,
 } from "@/reader";
 import type { Reader } from "@/reader";
 
@@ -89,13 +89,77 @@ function loadTurns(dirs: string[], sinceMs?: number): JsonlTurn[] {
   return turns;
 }
 
+/**
+ * Locates subagent transcript files for one session. Subagents live at
+ * `<projectsDir>/<slug>/<sessionId>/subagents/*.jsonl`. The slug can differ
+ * from the main transcript's slug (a worktree session splits them), so every
+ * slug under every projects dir is checked for a matching `<sessionId>/subagents`.
+ */
+function findSubagentFiles(dirs: string[], sessionId: string): string[] {
+  const files: string[] = [];
+  for (const dir of dirs) {
+    let slugs: string[];
+    try {
+      slugs = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+    } catch { continue; }
+    for (const slug of slugs) {
+      const subDir = join(dir, slug, sessionId, "subagents");
+      if (!existsSync(subDir)) continue;
+      try {
+        for (const e of readdirSync(subDir, { withFileTypes: true })) {
+          if (e.isFile() && e.name.endsWith(".jsonl")) files.push(join(subDir, e.name));
+        }
+      } catch { continue; }
+    }
+  }
+  return files;
+}
+
 export class JsonlReader implements Reader {
   private readonly turns: JsonlTurn[];
+  private readonly projectsDirs: string[];
 
   constructor(projectsDirs: string | string[], sinceSec?: number) {
     const dirs = Array.isArray(projectsDirs) ? projectsDirs : [projectsDirs];
+    this.projectsDirs = dirs;
     const sinceMs = sinceSec !== undefined ? sinceSec * 1000 : undefined;
     this.turns = loadTurns(dirs, sinceMs);
+  }
+
+  querySubagentSpend(sessionId: string): SubagentSpend {
+    const files = findSubagentFiles(this.projectsDirs, sessionId);
+    let outputTokens = 0, inputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0;
+    let knownCost = 0, anyKnownCost = false, anyUnknownModel = false;
+    for (const file of files) {
+      let raw: string;
+      try { raw = readFileSync(file, "utf8"); } catch { continue; }
+      for (const line of raw.split("\n")) {
+        if (!line.trim()) continue;
+        let obj: Record<string, unknown>;
+        try { obj = JSON.parse(line); } catch { continue; }
+        if (obj["type"] !== "assistant") continue;
+        const msg = obj["message"] as Record<string, unknown> | undefined;
+        const usage = msg?.["usage"] as Record<string, unknown> | undefined;
+        if (!msg || !usage) continue;
+        const out = Number(usage["output_tokens"] ?? 0);
+        if (out <= 0) continue;
+        const inp = Number(usage["input_tokens"] ?? 0);
+        const cr = Number(usage["cache_read_input_tokens"] ?? 0);
+        const cw = Number(usage["cache_creation_input_tokens"] ?? 0);
+        const model = String(msg["model"] ?? "");
+        outputTokens += out; inputTokens += inp; cacheReadTokens += cr; cacheWriteTokens += cw;
+        const c = computeTurnCost(model, out, inp, cr, cw);
+        if (c === null) anyUnknownModel = true;
+        else { knownCost += c; anyKnownCost = true; }
+      }
+    }
+    return {
+      agentCount: files.length,
+      outputTokens, inputTokens, cacheReadTokens, cacheWriteTokens,
+      costUsd: anyKnownCost ? knownCost : null,
+      costPartial: anyUnknownModel,
+      supported: true,
+    };
   }
 
   private filter(since: number): JsonlTurn[] {

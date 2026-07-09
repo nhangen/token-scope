@@ -2,12 +2,12 @@ import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow, WeekRow,
   ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, RawTurnForArtifact,
   ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow,
-  SessionBudgetRow,
+  SessionBudgetRow, SubagentSpend,
 } from "@/db";
 import { existsSync, readdirSync } from "fs";
 import { join } from "path";
 
-export type { SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow, WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, RawTurnForArtifact, ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow, SessionBudgetRow };
+export type { SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow, WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, RawTurnForArtifact, ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow, SessionBudgetRow, SubagentSpend };
 
 export interface Reader {
   querySummaryTotals(since: number): SummaryTotals;
@@ -27,6 +27,7 @@ export interface Reader {
   queryBaseLoad(since: number, limit: number): BaseLoadRow[];
   queryCacheGrowth(sessionId: string): CacheGrowthRow[];
   querySessionBudgets(since: number, limit: number): SessionBudgetRow[];
+  querySubagentSpend(sessionId: string): SubagentSpend;
   close(): void;
 }
 

@@ -30,6 +30,7 @@ token-scope --tool bash            # Bash command breakdown
 token-scope --project wp-content   # Filter to one project
 token-scope --sessions             # List recent sessions
 token-scope --session <id>         # Turn-by-turn breakdown
+token-scope --spend --session <id> --turns 5..12  # Claude spend for one task (+ subagent rollup)
 token-scope --thinking             # Thinking token analysis
 token-scope --since 7d --json      # JSON output
 ```

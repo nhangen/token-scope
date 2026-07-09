@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import { parseArgs } from "@/cli";
+import { parseArgs, parseTurnRange } from "@/cli";
 
 const origExit = process.exit;
 const origWrite = process.stderr.write.bind(process.stderr);
@@ -66,5 +66,64 @@ describe("parseArgs mode-conflict guard", () => {
     const args = parseArgs(["--artifact-show", "/x/y.md", "--artifact-format", "md"]);
     expect(args.mode).toBe("artifact-show");
     expect(args.artifactFormat).toBe("md");
+  });
+});
+
+describe("parseTurnRange", () => {
+  it("parses a single turn N as N..N", () => {
+    expect(parseTurnRange("5")).toEqual({ from: 5, to: 5 });
+  });
+  it("parses a bounded range N..M", () => {
+    expect(parseTurnRange("3..8")).toEqual({ from: 3, to: 8 });
+  });
+  it("parses an open-ended range N..", () => {
+    expect(parseTurnRange("4..")).toEqual({ from: 4, to: undefined });
+  });
+  it("parses a leading-open range ..M", () => {
+    expect(parseTurnRange("..6")).toEqual({ from: undefined, to: 6 });
+  });
+  it("rejects a reversed range", () => {
+    expect(() => parseTurnRange("8..3")).toThrow();
+  });
+  it("rejects zero", () => {
+    expect(() => parseTurnRange("0")).toThrow();
+  });
+  it("rejects non-numeric", () => {
+    expect(() => parseTurnRange("x..y")).toThrow();
+  });
+  it("rejects an empty range", () => {
+    expect(() => parseTurnRange("..")).toThrow();
+  });
+});
+
+describe("parseArgs --spend / --turns", () => {
+  beforeEach(installFakes);
+  afterEach(restoreFakes);
+
+  it("--spend sets spend mode", () => {
+    expect(parseArgs(["--spend"]).mode).toBe("spend");
+  });
+
+  it("--turns with --spend captures the range", () => {
+    const args = parseArgs(["--spend", "--turns", "2..4"]);
+    expect(args.mode).toBe("spend");
+    expect(args.turnRange).toEqual({ from: 2, to: 4 });
+  });
+
+  it("--turns without --spend errors", () => {
+    expect(() => parseArgs(["--turns", "2..4"])).toThrow("__exit_1");
+    expect(lastExitCode).toBe(1);
+    expect(stderrBuf).toContain("only valid with --spend");
+  });
+
+  it("--turns with a bad value errors", () => {
+    expect(() => parseArgs(["--spend", "--turns", "9..1"])).toThrow("__exit_1");
+    expect(lastExitCode).toBe(1);
+  });
+
+  it("--spend accepts --session", () => {
+    const args = parseArgs(["--spend", "--session", "abc123"]);
+    expect(args.mode).toBe("spend");
+    expect(args.sessionId).toBe("abc123");
   });
 });
