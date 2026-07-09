@@ -346,7 +346,7 @@ Add to `~/.claude/settings.json` under `hooks.Stop`:
 ```json
 {
   "type": "command",
-  "command": "bash \"~/ML-AI/token-scope/hooks/cost-alert.sh\"",
+  "command": "bash \"~/ML-AI/claude/token-scope/hooks/cost-alert.sh\"",
   "timeout": 5000
 }
 ```
@@ -396,7 +396,7 @@ Replace the path with wherever you cloned token-scope. Requires `bun` in PATH (o
 - **Phase 3:** Tooling analysis by layer with proportional cost attribution — shipped
 - **Phase 4:** Context contributors, base load, cache-growth waterfall, session budget — shipped
 - **Phase 5:** Artifact lifecycle analytics (per-file Write/Edit cost, MD/HTML compare) — shipped
-- **Phase 6 (current):** context-loop plugin ROI analytics
+- **Phase 6:** context-loop plugin ROI analytics — shipped
 - **Next:** Export any report to Markdown / Obsidian
 
 ## License
