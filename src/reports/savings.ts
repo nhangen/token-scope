@@ -91,6 +91,7 @@ interface SessionGroup {
   pmPartial: boolean;
   net: number | null;
   attributed: boolean;
+  found: boolean;
 }
 
 const UNATTRIBUTED = "(unattributed)";
@@ -139,8 +140,20 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     groups.push({
       sessionId, cwd: groupRuns.find((r) => r.cwd !== null)?.cwd ?? null,
       runCount: groupRuns.length, ollamaInput, ollamaOutput, models,
-      counterfactual, pmOverhead, pmPartial, net, attributed,
+      counterfactual, pmOverhead, pmPartial, net, attributed, found,
     });
+  }
+
+  // --pm-turns scopes to one session's turn numbering, so it's only meaningful
+  // against a single session. If the --session prefix matched more than one
+  // ledger session, applying the same range to each would silently mis-scope
+  // PM overhead — refuse, mirroring --spend's multi-match guard.
+  if (opts.pmTurnRange) {
+    const named = groups.filter((g) => g.sessionId !== null).map((g) => g.sessionId!);
+    if (named.length > 1) {
+      console.log(`--pm-turns needs a unique session (turn numbers are per-session), but the ledger has ${named.length} sessions here: ${named.map((s) => s.slice(0, 16)).join(", ")}. Narrow --session to one.`);
+      return;
+    }
   }
   // Stable order: attributed sessions first (by net desc), then the rest.
   groups.sort((a, b) => {
@@ -234,12 +247,21 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
 
   console.log(renderFootnote(`Counterfactual (*) = ollama token volume valued at ${opts.counterfactualModel} prices. ollama and Claude tokenize differently, so this is a proxy for "what Claude authoring would have cost," not a measured figure.`));
   if (opts.pmTurnRange) {
-    console.log(renderFootnote(`PM overhead (†) = Claude billed spend of turns ${opts.pmTurnRange.from ?? 1}..${opts.pmTurnRange.to ?? "end"} only — the delegation's orchestration turns. Net = Counterfactual − PM overhead; positive means delegation saved money. Subagent (auditor/explorer) cost is session-wide in v1 and is NOT included in a turn slice, so PM overhead here is a floor.`));
+    console.log(renderFootnote(`PM overhead (†) = Claude billed spend of turns ${opts.pmTurnRange.from ?? 1}..${opts.pmTurnRange.to ?? "end"} only — the delegation's orchestration turns. Net = Counterfactual − PM overhead; positive means delegation saved money. Subagent (auditor/explorer) cost is session-wide in v1 and is NOT included in a turn slice, so PM overhead here is a floor — and the net a best case.`));
   } else {
     console.log(renderFootnote(`PM overhead (†) = actual Claude billed spend of the WHOLE session(s) that ran the delegations (direct + subagents). Net = Counterfactual − PM overhead. For a per-task net, scope it to the delegation's turns with --pm-turns; otherwise unrelated session work inflates PM overhead and net reads negative.`));
   }
-  if (unattributedRuns > 0) {
-    console.log(renderFootnote(`${unattributedRuns} run(s) excluded from the net headline: no Claude session could be attributed (null session_id, or the session isn't in the local transcripts).`));
+  // An in-transcript session whose turn slice selected no turns is a distinct
+  // case from "no session" — don't let it hide behind the generic diagnostic.
+  const emptySlice = opts.pmTurnRange
+    ? groups.filter((g) => g.sessionId !== null && g.found && g.pmOverhead === null)
+    : [];
+  if (emptySlice.length > 0) {
+    console.log(renderFootnote(`--pm-turns ${opts.pmTurnRange!.from ?? 1}..${opts.pmTurnRange!.to ?? "end"} selected no turns in ${emptySlice.map((g) => g.sessionId!.slice(0, 16)).join(", ")} (out of range for the session), so PM overhead is unknown and it's excluded from the net. Widen the range.`));
+  }
+  const genuinelyUnattributed = unattributedRuns - emptySlice.reduce((s, g) => s + g.runCount, 0);
+  if (genuinelyUnattributed > 0) {
+    console.log(renderFootnote(`${genuinelyUnattributed} run(s) excluded from the net headline: no Claude session could be attributed (null session_id, or the session isn't in the local transcripts).`));
   }
   if (!counterfactualPriced) {
     console.log(renderFootnote(`Counterfactual model "${opts.counterfactualModel}" has no entry in the price table, so counterfactual + net are unavailable. Pass --counterfactual-model with a known Claude model.`));

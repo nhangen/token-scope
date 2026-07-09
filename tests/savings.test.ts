@@ -126,6 +126,24 @@ describe("renderSavingsReport — turn-scoped PM overhead (--pm-turns)", () => {
     const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, sessionId: "sess-spend" })));
     expect(p.pm_scope.mode).toBe("whole-session");
   });
+
+  it("an out-of-range slice leaves the session unattributed (not a wrong net)", () => {
+    // sess-spend has 3 turns; 50..60 selects none → pmOverhead null → excluded
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, sessionId: "sess-spend", pmTurnRange: { from: 50, to: 60 } })));
+    const s = p.sessions[0];
+    expect(s.pm_overhead_usd).toBeNull();
+    expect(s.net_savings_usd).toBeNull();
+    expect(s.attributed).toBe(false);
+    expect(p.totals.net_savings_usd).toBeNull();
+  });
+
+  it("refuses --pm-turns when the --session prefix matches multiple sessions", () => {
+    // prefix "sess" matches sess-spend AND sess-unknown → can't scope turns
+    const out = capture(() => renderSavingsReport(reader, { ...base, sessionId: "sess", pmTurnRange: { from: 1, to: 3 } }));
+    expect(out).toContain("needs a unique session");
+    // no report body emitted (refused before render/JSON)
+    expect(out).not.toContain('"report"');
+  });
 });
 
 describe("renderSavingsReport — session scope", () => {
