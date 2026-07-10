@@ -175,6 +175,16 @@ describe("renderSavingsReport — measured PM cost (--pm-cost)", () => {
     expect(out).toContain("needs a unique session");
     expect(out).not.toContain('"report"');
   });
+
+  it("human-readable output labels the scope and footnotes the trust boundary", () => {
+    const out = capture(() => renderSavingsReport(reader, { ...base, json: false, sessionId: "sess-spend", pmCost: 0.5 }));
+    expect(out).toContain("measured (caller): $0.5000");
+    expect(out).toContain("supplied by the caller as a measured figure");
+    expect(out).toContain("does not verify it against transcripts");
+    // and the measured figure — not billed spend — is the PM column value
+    expect(out).toContain("$0.5000");
+    expect(out).not.toContain("0.02304");
+  });
 });
 
 describe("renderSavingsReport — session scope", () => {
