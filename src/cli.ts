@@ -58,8 +58,12 @@ SAVINGS FLAGS (with --savings)
                           delegation session; --since floors by ledger timestamp.
   --pm-turns <N..M>       Scope PM overhead to the delegation's orchestration
                           turns (1-indexed inclusive) instead of the whole
-                          session — the only way to get a per-task net. Requires
-                          --session. Excludes session-wide subagent cost.
+                          session. Requires --session. Excludes session-wide
+                          subagent cost.
+  --pm-cost <usd>         Use a caller-measured dollar figure as PM overhead —
+                          the honest denominator when the PM was a subagent
+                          (whose cost neither whole-session nor --pm-turns can
+                          isolate). Requires --session; excludes --pm-turns.
 
 SHARED FLAGS
   --source <jsonl|sqlite> Data source (default: auto-detect)
@@ -107,6 +111,7 @@ interface CliArgs {
   ledgerPath?: string;
   counterfactualModel?: string;
   pmTurnRange?: { from?: number; to?: number };
+  pmCost?: number;
 }
 
 /** Parses a --turns value: "N", "N..M", "N..", "..M" (1-indexed, inclusive). */
@@ -178,6 +183,14 @@ export function parseArgs(argv: string[]): CliArgs {
         if (!v) { process.stderr.write("Error: --pm-turns requires a value (N, N.., ..M, or N..M).\n"); process.exit(1); }
         try { args.pmTurnRange = parseTurnRange(v); }
         catch (e) { process.stderr.write(`Error: ${e instanceof Error ? e.message : String(e)}\n`); process.exit(1); }
+        break;
+      }
+      case "--pm-cost": {
+        const v = argv[++i];
+        if (!v) { process.stderr.write("Error: --pm-cost requires a dollar amount (e.g. 0.87).\n"); process.exit(1); }
+        const n = Number(v);
+        if (!Number.isFinite(n) || n < 0) { process.stderr.write(`Error: --pm-cost must be a non-negative dollar amount (got "${v}").\n`); process.exit(1); }
+        args.pmCost = n;
         break;
       }
       case "--turns": {
@@ -335,6 +348,21 @@ export function parseArgs(argv: string[]): CliArgs {
     }
   }
 
+  if (args.pmCost !== undefined) {
+    if (args.mode !== "savings") {
+      process.stderr.write("Error: --pm-cost is only valid with --savings.\n");
+      process.exit(1);
+    }
+    if (!args.sessionId) {
+      process.stderr.write("Error: --pm-cost requires --session (the measured figure applies to one session's delegations).\n");
+      process.exit(1);
+    }
+    if (args.pmTurnRange) {
+      process.stderr.write("Error: --pm-cost and --pm-turns are mutually exclusive (both set the PM denominator).\n");
+      process.exit(1);
+    }
+  }
+
   return args;
 }
 
@@ -399,6 +427,7 @@ async function main() {
       ledgerPath: args.ledgerPath,
       counterfactualModel: args.counterfactualModel ?? DEFAULT_COUNTERFACTUAL_MODEL,
       pmTurnRange: args.pmTurnRange,
+      pmCost: args.pmCost,
     });
     reader.close();
     return;

@@ -155,6 +155,7 @@ token-scope --savings                                  # all delegation runs
 token-scope --savings --session be299042               # one delegation session
 token-scope --savings --counterfactual-model claude-sonnet-5   # value against a cheaper tier
 token-scope --savings --session be299042 --pm-turns 4..9   # net vs. just the delegation's PM turns
+token-scope --savings --session be299042 --pm-cost 0.87    # net vs. a measured PM figure (subagent PM)
 token-scope --savings --ledger /path/to/runs.jsonl     # explicit ledger location
 ```
 
@@ -179,9 +180,16 @@ Net = Counterfactual − PM overhead
   makes sense for a *dedicated* delegation session — in a long mixed session, unrelated work
   swamps the delegation and net reads hugely negative. Use **`--pm-turns N..M`** (requires
   `--session`) to scope PM overhead to just the delegation's orchestration turns — the only
-  way to get a meaningful **per-task** net. The ledger has no delegation-start marker, so the
-  turn window can't be auto-derived; you isolate it, exactly as with `--spend --turns`.
-  (Turn-scoped PM excludes session-wide subagent cost, so it's a floor.)
+  way to get a meaningful **per-task** net from transcripts. The ledger has no delegation-start
+  marker, so the turn window can't be auto-derived; you isolate it, exactly as with
+  `--spend --turns`. (Turn-scoped PM excludes session-wide subagent cost, so it's a floor.)
+- **Measured PM** — when the PM was a **subagent** (the recommended pattern: a lean Haiku
+  agent writes the oracles and fires the bridge), *neither* scope can isolate its cost —
+  subagent spend is session-wide in v1, and turn slices cover direct turns only. Measure it
+  out-of-band (e.g. the subagent-bucket delta between two `--spend` runs) and pass it as
+  **`--pm-cost <usd>`** (requires `--session`, mutually exclusive with `--pm-turns`). The
+  report takes the figure on trust and labels the scope `measured (caller)`. Because no
+  transcript lookup happens, this also attributes sessions that ran on another machine.
 
 A **positive net means delegation saved money.** Note the economics: for a *small* task the
 counterfactual is tiny, so a single expensive PM turn can exceed it (net negative) — delegation
