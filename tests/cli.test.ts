@@ -121,6 +121,36 @@ describe("parseArgs --savings", () => {
     expect(() => parseArgs(["--savings", "--pm-turns", "1..3"])).toThrow("__exit_1");
     expect(stderrBuf).toContain("requires --session");
   });
+
+  it("accepts --pm-cost with --savings + --session and parses the dollar figure", () => {
+    const a = parseArgs(["--savings", "--session", "abc123", "--pm-cost", "0.87"]);
+    expect(a.pmCost).toBe(0.87);
+  });
+
+  it("rejects --pm-cost without --savings", () => {
+    expect(() => parseArgs(["--pm-cost", "0.5"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("only valid with --savings");
+  });
+
+  it("rejects --pm-cost without --session", () => {
+    expect(() => parseArgs(["--savings", "--pm-cost", "0.5"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("requires --session");
+  });
+
+  it("rejects --pm-cost combined with --pm-turns (two PM denominators)", () => {
+    expect(() => parseArgs(["--savings", "--session", "abc123", "--pm-cost", "0.5", "--pm-turns", "1..3"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("mutually exclusive");
+  });
+
+  it("rejects a non-numeric --pm-cost", () => {
+    expect(() => parseArgs(["--savings", "--session", "abc123", "--pm-cost", "cheap"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("non-negative dollar amount");
+  });
+
+  it("rejects a negative --pm-cost", () => {
+    expect(() => parseArgs(["--savings", "--session", "abc123", "--pm-cost", "-1"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("non-negative dollar amount");
+  });
 });
 
 describe("parseTurnRange", () => {

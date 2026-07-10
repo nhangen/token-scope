@@ -23,6 +23,14 @@ interface SavingsOptions {
    *  the whole session. The ledger has no delegation-start marker, so the PM
    *  window can't be auto-derived; the caller isolates it, as with --spend. */
   pmTurnRange?: { from?: number; to?: number };
+  /** When set (requires --session, excludes pmTurnRange), PM overhead is this
+   *  caller-measured dollar figure instead of anything derived from transcripts.
+   *  This is the honest denominator for a subagent PM (a lean Haiku agent's cost
+   *  is session-wide in v1, so neither whole-session nor --pm-turns can isolate
+   *  it) — measured out-of-band, e.g. via the subagent-bucket delta between two
+   *  --spend runs. Needs no local transcript, so it also attributes sessions
+   *  that ran elsewhere. */
+  pmCost?: number;
 }
 
 /**
@@ -129,7 +137,11 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     const counterfactual = valueAtClaudePrices(ollamaInput, ollamaOutput, opts.counterfactualModel);
 
     let pmOverhead: number | null = null, pmPartial = false, found = false;
-    if (sessionId !== null) {
+    if (sessionId !== null && opts.pmCost !== undefined) {
+      // Caller-measured PM figure: no transcript lookup at all — the caller
+      // measured it out-of-band, so absence from local transcripts is fine.
+      pmOverhead = opts.pmCost; found = true;
+    } else if (sessionId !== null) {
       const billed = sessionBilledSpend(reader, sessionId, opts.pmTurnRange);
       pmOverhead = billed.cost; pmPartial = billed.partial; found = billed.found;
     }
@@ -144,14 +156,16 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     });
   }
 
-  // --pm-turns scopes to one session's turn numbering, so it's only meaningful
+  // --pm-turns scopes to one session's turn numbering, and --pm-cost is one
+  // measured figure for one session's delegations — both are only meaningful
   // against a single session. If the --session prefix matched more than one
-  // ledger session, applying the same range to each would silently mis-scope
-  // PM overhead — refuse, mirroring --spend's multi-match guard.
-  if (opts.pmTurnRange) {
+  // ledger session, applying the same range/figure to each would silently
+  // mis-scope PM overhead — refuse, mirroring --spend's multi-match guard.
+  if (opts.pmTurnRange || opts.pmCost !== undefined) {
+    const flag = opts.pmTurnRange ? "--pm-turns" : "--pm-cost";
     const named = groups.filter((g) => g.sessionId !== null).map((g) => g.sessionId!);
     if (named.length > 1) {
-      console.log(`--pm-turns needs a unique session (turn numbers are per-session), but the ledger has ${named.length} sessions here: ${named.map((s) => s.slice(0, 16)).join(", ")}. Narrow --session to one.`);
+      console.log(`${flag} needs a unique session (it applies to one session's delegations), but the ledger has ${named.length} sessions here: ${named.map((s) => s.slice(0, 16)).join(", ")}. Narrow --session to one.`);
       return;
     }
   }
@@ -179,9 +193,11 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       counterfactual_model: opts.counterfactualModel,
       counterfactual_priced: counterfactualPriced,
       since_floor_applied: sinceFloorApplied,
-      pm_scope: opts.pmTurnRange
-        ? { mode: "turns", from: opts.pmTurnRange.from ?? null, to: opts.pmTurnRange.to ?? null }
-        : { mode: "whole-session" },
+      pm_scope: opts.pmCost !== undefined
+        ? { mode: "measured", cost_usd: opts.pmCost }
+        : opts.pmTurnRange
+          ? { mode: "turns", from: opts.pmTurnRange.from ?? null, to: opts.pmTurnRange.to ?? null }
+          : { mode: "whole-session" },
       sessions: groups.map((g) => ({
         session_id: g.sessionId, cwd: g.cwd, run_count: g.runCount,
         ollama_input: g.ollamaInput, ollama_output: g.ollamaOutput, models: g.models,
@@ -205,9 +221,11 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     ["Ledger", ledgerPath],
     ["Runs", `${totalRuns} across ${groups.length} session${groups.length === 1 ? "" : "s"}`],
     ["Counterfactual model", counterfactualPriced ? `${opts.counterfactualModel} (est.)` : `${opts.counterfactualModel} — no known pricing`],
-    ["PM overhead scope", opts.pmTurnRange
-      ? `turns ${opts.pmTurnRange.from ?? 1}..${opts.pmTurnRange.to ?? "end"} (delegation only)`
-      : "whole session"],
+    ["PM overhead scope", opts.pmCost !== undefined
+      ? `measured (caller): ${formatUsd(opts.pmCost)}`
+      : opts.pmTurnRange
+        ? `turns ${opts.pmTurnRange.from ?? 1}..${opts.pmTurnRange.to ?? "end"} (delegation only)`
+        : "whole session"],
     ["Since floor", sinceFloorApplied ? `> ${opts.sinceStr}` : "none (all runs)"],
   ]));
 
@@ -246,7 +264,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   ]));
 
   console.log(renderFootnote(`Counterfactual (*) = ollama token volume valued at ${opts.counterfactualModel} prices. ollama and Claude tokenize differently, so this is a proxy for "what Claude authoring would have cost," not a measured figure.`));
-  if (opts.pmTurnRange) {
+  if (opts.pmCost !== undefined) {
+    console.log(renderFootnote(`PM overhead (†) = ${formatUsd(opts.pmCost)}, supplied by the caller as a measured figure (e.g. a subagent PM's cost from the subagent-bucket delta between two --spend runs). Net = Counterfactual − measured PM. The figure's accuracy is the caller's — the report does not verify it against transcripts.`));
+  } else if (opts.pmTurnRange) {
     console.log(renderFootnote(`PM overhead (†) = Claude billed spend of turns ${opts.pmTurnRange.from ?? 1}..${opts.pmTurnRange.to ?? "end"} only — the delegation's orchestration turns. Net = Counterfactual − PM overhead; positive means delegation saved money. Subagent (auditor/explorer) cost is session-wide in v1 and is NOT included in a turn slice, so PM overhead here is a floor — and the net a best case.`));
   } else {
     console.log(renderFootnote(`PM overhead (†) = actual Claude billed spend of the WHOLE session(s) that ran the delegations (direct + subagents). Net = Counterfactual − PM overhead. For a per-task net, scope it to the delegation's turns with --pm-turns; otherwise unrelated session work inflates PM overhead and net reads negative.`));

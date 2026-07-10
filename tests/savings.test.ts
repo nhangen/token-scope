@@ -146,6 +146,37 @@ describe("renderSavingsReport — turn-scoped PM overhead (--pm-turns)", () => {
   });
 });
 
+describe("renderSavingsReport — measured PM cost (--pm-cost)", () => {
+  it("uses the caller-measured figure as PM overhead instead of billed spend", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, sessionId: "sess-spend", pmCost: 0.5 })));
+    expect(p.pm_scope.mode).toBe("measured");
+    expect(p.pm_scope.cost_usd).toBe(0.5);
+    const s = p.sessions[0];
+    expect(s.pm_overhead_usd).toBe(0.5);          // NOT the billed 0.02304
+    expect(s.net_savings_usd).toBeCloseTo(1.225, 6); // 1.725 − 0.5
+    expect(s.attributed).toBe(true);
+  });
+
+  it("attributes a session whose transcript is NOT local (caller measured out-of-band)", () => {
+    // sess-unknown is absent from transcripts → normally unattributed; a
+    // measured figure needs no transcript, so it must attribute.
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, sessionId: "sess-unknown", pmCost: 0.1 })));
+    const s = p.sessions[0];
+    // sess-unknown: 8k in / 2k out @ opus-4-8 = 0.04 + 0.05 = 0.09
+    expect(s.counterfactual_usd).toBeCloseTo(0.09, 6);
+    expect(s.pm_overhead_usd).toBe(0.1);
+    expect(s.net_savings_usd).toBeCloseTo(-0.01, 6);
+    expect(s.attributed).toBe(true);
+    expect(p.totals.net_savings_usd).toBeCloseTo(-0.01, 6);
+  });
+
+  it("refuses --pm-cost when the --session prefix matches multiple sessions", () => {
+    const out = capture(() => renderSavingsReport(reader, { ...base, sessionId: "sess", pmCost: 0.5 }));
+    expect(out).toContain("needs a unique session");
+    expect(out).not.toContain('"report"');
+  });
+});
+
 describe("renderSavingsReport — session scope", () => {
   it("filters the ledger to one session by prefix", () => {
     const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, sessionId: "sess-spend" })));
