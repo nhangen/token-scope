@@ -5,7 +5,7 @@ All notable changes to token-scope are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0] — 2026-08-12
 
 ### Added
 - `--credits` — weekly consumption in credits (weighted tokens) against the plan cap, with an end-of-week projection for the week in progress (suppressed below 20% elapsed, where extrapolation is noise). `--cap` / `TOKEN_SCOPE_CREDIT_CAP` set the allowance. Alone among the reports it includes subagent turns, which spend the same allowance, and prices their share rather than only counting them. Weeks whose start falls outside `--since` are marked `partial (window)` and excluded from the average, so a half-observed week can't be read as a whole one.
