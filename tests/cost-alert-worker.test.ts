@@ -211,3 +211,80 @@ describe("plugin packaging", () => {
     expect(declared).toBe(pkg.version);
   });
 });
+
+describe("cost-alert.sh — the wrapper's own config handling", () => {
+  // This logic lives in bash, and the worker's stderr is discarded by the
+  // wrapper, so nothing else would notice it rejecting a legal value.
+  const wrapper = new URL("../hooks/cost-alert.sh", import.meta.url).pathname;
+  const transcript = new URL("./fixtures/hook/sess-bigcontext.jsonl", import.meta.url).pathname;
+
+  function runWrapper(cap: string): { out: string; err: string } {
+    const dir = mkdtempSync(join(tmpdir(), "ts-wrap-"));
+    const p = Bun.spawnSync(["bash", wrapper], {
+      stdin: new TextEncoder().encode(JSON.stringify({ transcript_path: transcript })),
+      env: { ...process.env, TOKEN_SCOPE_CREDIT_CAP: cap, TOKEN_SCOPE_CHECKPOINT_DIR: dir },
+    });
+    return { out: p.stdout.toString().trim(), err: p.stderr.toString() };
+  }
+
+  function capPct(cap: string): number {
+    const { out } = runWrapper(cap);
+    const m = /([\d.]+)% of cap/.exec((JSON.parse(out) as { statusMessage?: string }).statusMessage ?? "");
+    return m ? Number(m[1]) : NaN;
+  }
+
+  it("accepts a K/M/B suffix, because --credits does through the same variable", () => {
+    // TOKEN_SCOPE_CREDIT_CAP is read by the report via parseCap, which takes
+    // "166.7M". The wrapper used to reject it and silently disable all alerting,
+    // so one variable meant two different things to two consumers.
+    expect(capPct("166.7M")).toBeCloseTo(capPct("166700000"), 1);
+    expect(capPct("1M")).toBeCloseTo(capPct("1000k"), 1);
+  });
+
+  it("scales the cap rather than ignoring the suffix", () => {
+    // A dropped suffix would read "166.7M" as 166.7 credits. Compare two caps
+    // that both produce a message: the smaller cap must yield the larger share.
+    // (1B is too large for this fixture to trip anything, hence 1M.)
+    expect(capPct("1M")).toBeGreaterThan(capPct("166.7M"));
+  });
+
+  it("refuses a zero cap in any spelling, and says so where the message survives", () => {
+    for (const bad of ["0", "0.0", ".0", "00"]) {
+      const { out, err } = runWrapper(bad);
+      expect(out).toBe("{}");
+      expect(err).toContain("greater than zero");
+    }
+  });
+
+  it("refuses an unparseable cap with a diagnostic, not silence", () => {
+    for (const bad of ["abc", "1e6", "5MB", "1,000", "."]) {
+      const { out, err } = runWrapper(bad);
+      expect(out).toBe("{}");
+      expect(err).toContain("must be a positive number");
+    }
+  });
+
+  it("falls back to the default when the variable is unset or empty", () => {
+    expect(capPct("")).toBeCloseTo(capPct("166700000"), 1);
+  });
+
+  it("warns about a big context THROUGH THE WRAPPER at shipped defaults", () => {
+    // The regression this exists to catch: the worker's context threshold moved to
+    // 0.04% but cost-alert.sh kept passing the old 0.5%, so every worker-level
+    // test passed while production could never warn. Only an end-to-end run
+    // through the wrapper sees it.
+    const { out } = runWrapper("");
+    const msg = (JSON.parse(out) as { statusMessage?: string }).statusMessage ?? "";
+    expect(msg).toContain("Context is");
+  });
+
+  it("hard-codes no threshold defaults of its own", () => {
+    // Defaults belong to the worker alone. A number written in both files is the
+    // drift above waiting to happen again, and nothing else would notice.
+    const src = readFileSync(wrapper, "utf8");
+    for (const line of src.split("\n")) {
+      if (!/^(CREDIT_CAP|CHECKPOINT_TURNS|CHECKPOINT_PCT|TURN_WARN_PCT)=/.test(line)) continue;
+      expect(line).toMatch(/:-\}"$/);   // "${VAR:-}" — empty, never a literal
+    }
+  });
+});

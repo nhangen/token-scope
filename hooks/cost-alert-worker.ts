@@ -3,6 +3,12 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { creditsOf, fmtCredits, CREDIT_WEIGHTS } from "../src/credits";
 
+// Defaults live HERE and only here. cost-alert.sh passes an empty argument when
+// the corresponding env var is unset, so a default written in both files cannot
+// silently disagree — which it did: the wrapper kept passing the old 0.5% context
+// threshold after this file moved to 0.04%, so the warning still could not fire
+// in production while every worker-level test said it could.
+//
 // Thresholds are a share of the WEEKLY CREDIT CAP, not dollars. The plan is
 // metered in credits, so dollars can't say whether a session is a rounding error
 // or a fifth of the week's allowance. The old $10 default was the concrete
@@ -11,10 +17,10 @@ import { creditsOf, fmtCredits, CREDIT_WEIGHTS } from "../src/credits";
 const file = process.argv[2]!;
 const checkpointDir = process.argv[3]!;
 /** Weekly credit allowance this session's share is measured against. */
-const weeklyCap = parseFloat(process.argv[4] ?? "166700000");
-const checkpointTurns = parseInt(process.argv[5] ?? "50");
+const weeklyCap = parseFloat(process.argv[4] || "166700000");
+const checkpointTurns = parseInt(process.argv[5] || "50");
 /** Checkpoint once a session has consumed this share of the weekly cap. */
-const checkpointPct = parseFloat(process.argv[6] ?? "25");
+const checkpointPct = parseFloat(process.argv[6] || "25");
 /**
  * Warn when a single turn's CONTEXT costs this share of the weekly cap. The
  * default is calibrated against a real turn rather than picked round: a ~1.1M
@@ -23,7 +29,7 @@ const checkpointPct = parseFloat(process.argv[6] ?? "25");
  * never fire, and the README example it shipped with was 7x below its own
  * threshold, which is how the mistake was caught.
  */
-const turnWarnPct = parseFloat(process.argv[7] ?? "0.04");
+const turnWarnPct = parseFloat(process.argv[7] || "0.04");
 
 // A malformed value must not silently become 0 and fire every rung at once.
 for (const [name, v] of [["cap", weeklyCap], ["checkpoint-pct", checkpointPct], ["turn-warn-pct", turnWarnPct], ["turns", checkpointTurns]] as const) {

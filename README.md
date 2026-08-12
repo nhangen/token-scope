@@ -535,7 +535,7 @@ the cap is denominated in.
 | `TOKEN_SCOPE_DB` | Override SQLite database path |
 | `TOKEN_SCOPE_PROJECTS_DIR` | Colon-separated JSONL project dirs |
 | `TOKEN_SCOPE_PRICING_FILE` | Custom pricing JSON |
-| `TOKEN_SCOPE_CREDIT_CAP` | Weekly credit cap, for `--credits` and the cost-alert hook (`--cap` wins) |
+| `TOKEN_SCOPE_CREDIT_CAP` | Weekly credit cap, for `--credits` and the cost-alert hook; accepts `166700000` or `166.7M` (`--cap` wins) |
 | `TOKEN_SCOPE_CHECKPOINT_PCT` | Checkpoint at this % of the weekly cap (default `25`) |
 | `TOKEN_SCOPE_CHECKPOINT_TURNS` | Checkpoint at this turn count (default `50`) |
 | `TOKEN_SCOPE_TURN_WARN_PCT` | Warn when one turn's CONTEXT costs this % of the cap (default `0.04`) |
