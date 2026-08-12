@@ -6,8 +6,18 @@
 #
 # Config (env vars):
 #   TOKEN_SCOPE_CHECKPOINT_DIR   — default: ~/.claude/checkpoints
-#   TOKEN_SCOPE_CHECKPOINT_AT    — dollar threshold, default: 10
+#   TOKEN_SCOPE_CREDIT_CAP       — weekly credit allowance, default: 166.7M
+#                                  (same variable --credits reads)
+#   TOKEN_SCOPE_CHECKPOINT_PCT   — checkpoint at this % of the weekly cap, default: 25
 #   TOKEN_SCOPE_CHECKPOINT_TURNS — turn threshold, default: 50
+#   TOKEN_SCOPE_TURN_WARN_PCT    — warn when ONE turn costs this % of the cap, default: 0.5
+#
+# Thresholds are credits, not dollars. TOKEN_SCOPE_CHECKPOINT_AT (a dollar
+# threshold, default $10) is gone: real sessions run into the hundreds of
+# dollars, so it tripped on nearly every session and the alert stopped carrying
+# information. If it is still set in your environment this hook ignores it and
+# says so on stderr rather than silently reinterpreting a dollar figure as a
+# percentage.
 #
 # Install: add to ~/.claude/settings.json under hooks.Stop:
 #   { "type": "command", "command": "bash \"<path>/hooks/cost-alert.sh\"", "timeout": 5000 }
@@ -46,7 +56,14 @@ fi
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 CHECKPOINT_DIR="${TOKEN_SCOPE_CHECKPOINT_DIR:-$HOME/.claude/checkpoints}"
-CHECKPOINT_AT="${TOKEN_SCOPE_CHECKPOINT_AT:-10}"
+CREDIT_CAP="${TOKEN_SCOPE_CREDIT_CAP:-166700000}"
 CHECKPOINT_TURNS="${TOKEN_SCOPE_CHECKPOINT_TURNS:-50}"
+CHECKPOINT_PCT="${TOKEN_SCOPE_CHECKPOINT_PCT:-25}"
+TURN_WARN_PCT="${TOKEN_SCOPE_TURN_WARN_PCT:-0.5}"
 
-"$BUN" "$HOOK_DIR/cost-alert-worker.ts" "$JSONL_FILE" "$CHECKPOINT_DIR" "$CHECKPOINT_AT" "$CHECKPOINT_TURNS" 2>/dev/null || echo '{}'
+if [ -n "${TOKEN_SCOPE_CHECKPOINT_AT:-}" ]; then
+  echo "[cost-alert] TOKEN_SCOPE_CHECKPOINT_AT is retired (it was a dollar threshold); use TOKEN_SCOPE_CHECKPOINT_PCT — a percentage of TOKEN_SCOPE_CREDIT_CAP. Ignoring it." >&2
+fi
+
+"$BUN" "$HOOK_DIR/cost-alert-worker.ts" "$JSONL_FILE" "$CHECKPOINT_DIR" \
+  "$CREDIT_CAP" "$CHECKPOINT_TURNS" "$CHECKPOINT_PCT" "$TURN_WARN_PCT" 2>/dev/null || echo '{}'
