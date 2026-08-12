@@ -110,7 +110,11 @@ export function computeWeeks(rows: CreditWeekRow[], nowMs: number, sinceMs = 0):
       partial,
       truncated,
       elapsed,
-      projected: partial && elapsed >= MIN_ELAPSED_TO_PROJECT ? credits / elapsed : null,
+      // A truncated week's credits cover only part of the week, so dividing them
+      // by the *week's* elapsed fraction understates the projection by exactly
+      // the unobserved slice — the same bug as averaging a truncated week, moved
+      // into the forecast. Don't project one at all.
+      projected: partial && !truncated && elapsed >= MIN_ELAPSED_TO_PROJECT ? credits / elapsed : null,
     };
   });
 }
@@ -162,7 +166,9 @@ export function renderCreditsReport(reader: Reader, opts: Options): void {
     ["Week in progress", current === undefined
       ? "n/a"
       : current.projected === null
-        ? `${(current.credits / 1e6).toFixed(1)}M so far  (${(current.elapsed * 100).toFixed(0)}% elapsed — too early to project)`
+        ? `${(current.credits / 1e6).toFixed(1)}M so far  (${current.truncated
+            ? `only the part inside --since ${opts.sinceStr} — no projection`
+            : `${(current.elapsed * 100).toFixed(0)}% elapsed — too early to project`})`
         : `${(current.credits / 1e6).toFixed(1)}M so far → ${(current.projected / 1e6).toFixed(1)}M projected  (${(current.projected / opts.cap).toFixed(2)}x cap)`],
   ]));
 
@@ -188,11 +194,13 @@ export function renderCreditsReport(reader: Reader, opts: Options): void {
       formatPct(share(w.components.cacheWrite, w.credits)),
       formatPct(share(w.components.output, w.credits)),
       subagentsIncluded ? formatPct(share(w.subagentCredits, w.credits)) : "n/a",
-      w.truncated
-        ? "partial (window)"
-        : w.partial
-          ? (w.projected === null ? "in progress" : `→ ${(w.projected / 1e6).toFixed(0)}M`)
-          : "",
+      w.truncated && w.partial
+        ? "in progress, partial"
+        : w.truncated
+          ? "partial (window)"
+          : w.partial
+            ? (w.projected === null ? "in progress" : `→ ${(w.projected / 1e6).toFixed(0)}M`)
+            : "",
     ])
   ));
 

@@ -127,8 +127,33 @@ describe("credits — reader", () => {
   it("declares subagents unavailable on the sqlite source rather than implying zero", () => {
     const db = openDb(resolveDbPath().path);
     try {
-      const { subagentsIncluded } = createSqliteReader(db).queryCreditWeeks(0);
+      const { weeks, subagentsIncluded } = createSqliteReader(db).queryCreditWeeks(0);
       expect(subagentsIncluded).toBe(false);
+      // Structurally zero, but still SELECTed: an omitted column comes back
+      // undefined and every derived figure downstream is NaN, which the table's
+      // "n/a" for this source would have hidden.
+      expect(weeks.length).toBeGreaterThan(0);
+      for (const w of weeks) {
+        for (const v of [w.subagentTurns, w.subagentInputTokens, w.subagentCacheReadTokens, w.subagentCacheWriteTokens, w.subagentOutputTokens]) {
+          expect(typeof v).toBe("number");
+        }
+      }
+      const computed = computeWeeks(weeks, Date.parse("2030-01-01T00:00:00.000Z"));
+      for (const c of computed) expect(Number.isFinite(c.subagentCredits)).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("keeps queryByProject free of the credit report's subagent columns", () => {
+    // They were added to this query by mistake — a stray SELECT alias that
+    // ProjectRow ignores, so nothing failed and the credits query went without.
+    const db = openDb(resolveDbPath().path);
+    try {
+      const rows = createSqliteReader(db).queryByProject(0, 5);
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows[0]).not.toHaveProperty("subagentTurns");
+      expect(rows[0]).not.toHaveProperty("subagentCacheReadTokens");
     } finally {
       db.close();
     }
@@ -155,8 +180,27 @@ describe("credits — window truncation", () => {
   });
 
   it("treats sinceMs exactly at the week start as complete coverage", () => {
-    const [w] = computeWeeks([row({ outputTokens: 100 })], afterWeek, MON_MS);
+    // Boundary: `>` not `>=`. A window opening precisely on Monday 00:00 UTC sees
+    // the whole week, so flagging it would exclude a week that is in fact whole.
+    const [w] = computeWeeks([row({ outputTokens: 100 })], afterWeek, MON_MS - 1);
     expect(w!.truncated).toBe(false);
+    const [exact] = computeWeeks([row({ outputTokens: 100 })], afterWeek, MON_MS);
+    expect(exact!.truncated).toBe(false);
+    const [after] = computeWeeks([row({ outputTokens: 100 })], afterWeek, MON_MS + 1);
+    expect(after!.truncated).toBe(true);
+  });
+
+  it("never projects a truncated week", () => {
+    // The first fix's own regression: a truncated week holds part of a week's
+    // spend, so dividing it by the WEEK's elapsed fraction understates the
+    // forecast by exactly the unobserved slice — and prints it as fact.
+    const midWeek = MON_MS + 3 * 86_400_000;
+    const now = MON_MS + 5 * 86_400_000;   // in-progress AND truncated
+    const [w] = computeWeeks([row({ outputTokens: 100 })], now, midWeek);
+    expect(w!.partial).toBe(true);
+    expect(w!.truncated).toBe(true);
+    expect(w!.elapsed).toBeGreaterThan(MIN_ELAPSED_TO_PROJECT);  // would have projected
+    expect(w!.projected).toBeNull();
   });
 });
 

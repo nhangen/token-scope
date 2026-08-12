@@ -405,9 +405,6 @@ export function queryByProject(db: Database, since: number, limit: number): Proj
     SELECT bm.cwd,
       COUNT(DISTINCT bm.session_id) AS sessions,
       COUNT(*) AS turns,
-      0 AS subagentTurns,
-      0 AS subagentInputTokens, 0 AS subagentCacheReadTokens,
-      0 AS subagentCacheWriteTokens, 0 AS subagentOutputTokens,
       SUM(CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER)) AS outputTokens,
       SUM(am.cost_usd) AS totalCostUsd,
       CASE WHEN COUNT(DISTINCT bm.session_id) > 0 THEN SUM(am.cost_usd) / COUNT(DISTINCT bm.session_id) ELSE NULL END AS avgSessionCost
@@ -474,6 +471,12 @@ export function queryCreditWeeks(db: Database, since: number): CreditWeeks {
     SELECT
       date(bm.timestamp, 'unixepoch', '-' || ((strftime('%w', bm.timestamp, 'unixepoch') + 6) % 7) || ' days') AS weekStart,
       COUNT(*) AS turns,
+      ${""/* This source holds main-session rows only, so the subagent breakout is
+            structurally zero rather than unknown — but it must still be SELECTed,
+            or the fields come back undefined and every derived figure is NaN. */}
+      0 AS subagentTurns,
+      0 AS subagentInputTokens, 0 AS subagentCacheReadTokens,
+      0 AS subagentCacheWriteTokens, 0 AS subagentOutputTokens,
       SUM(CAST(COALESCE(json_extract(am.message, '$.usage.input_tokens'), 0) AS INTEGER)) AS inputTokens,
       SUM(CAST(COALESCE(json_extract(am.message, '$.usage.cache_read_input_tokens'), 0) AS INTEGER)) AS cacheReadTokens,
       SUM(CAST(COALESCE(json_extract(am.message, '$.usage.cache_creation_input_tokens'), 0) AS INTEGER)) AS cacheWriteTokens,
