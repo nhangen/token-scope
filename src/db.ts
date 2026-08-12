@@ -70,6 +70,47 @@ export interface TurnRow {
   message: string;
 }
 
+/**
+ * One ISO week of raw token components, Monday-start, UTC. Credit weighting is
+ * deliberately NOT applied here — the query reports what was consumed, the
+ * report decides what it costs. See CREDIT_WEIGHTS in reports/credits.ts.
+ *
+ * Unlike every other report's queries, these totals INCLUDE subagent turns.
+ * Subagents are separate transcripts under `<session>/subagents/`, excluded
+ * everywhere else so per-session numbers describe the session you were in — but
+ * they consume the same plan allowance, so a credit total that omitted them
+ * would be ~30% low on a subagent-heavy week and useless for its one purpose.
+ */
+export interface CreditWeekRow {
+  /** Monday of the week, YYYY-MM-DD (UTC). */
+  weekStart: string;
+  turns: number;
+  /** Of `turns`, how many came from subagent transcripts. */
+  subagentTurns: number;
+  /**
+   * The subagent share of each component, already included in the totals below.
+   * Broken out because "move work off subagents" is only an actionable lever if
+   * the report can say what that work costs — a turn count cannot.
+   */
+  subagentInputTokens: number;
+  subagentCacheReadTokens: number;
+  subagentCacheWriteTokens: number;
+  subagentOutputTokens: number;
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+}
+
+export interface CreditWeeks {
+  weeks: CreditWeekRow[];
+  /**
+   * False when the source cannot see subagent transcripts at all — `__store.db`
+   * holds only main-session rows, so the sqlite totals are a floor, not a total.
+   */
+  subagentsIncluded: boolean;
+}
+
 export interface WeekRow {
   weekLabel: string;
   sessions: number;
@@ -425,6 +466,29 @@ export function queryWeeklyTrend(db: Database, since: number): WeekRow[] {
   `).all(since);
 }
 
+export function queryCreditWeeks(db: Database, since: number): CreditWeeks {
+  const weeks = db.query<CreditWeekRow, [number]>(`
+    SELECT
+      date(bm.timestamp, 'unixepoch', '-' || ((strftime('%w', bm.timestamp, 'unixepoch') + 6) % 7) || ' days') AS weekStart,
+      COUNT(*) AS turns,
+      ${""/* This source holds main-session rows only, so the subagent breakout is
+            structurally zero rather than unknown — but it must still be SELECTed,
+            or the fields come back undefined and every derived figure is NaN. */}
+      0 AS subagentTurns,
+      0 AS subagentInputTokens, 0 AS subagentCacheReadTokens,
+      0 AS subagentCacheWriteTokens, 0 AS subagentOutputTokens,
+      SUM(CAST(COALESCE(json_extract(am.message, '$.usage.input_tokens'), 0) AS INTEGER)) AS inputTokens,
+      SUM(CAST(COALESCE(json_extract(am.message, '$.usage.cache_read_input_tokens'), 0) AS INTEGER)) AS cacheReadTokens,
+      SUM(CAST(COALESCE(json_extract(am.message, '$.usage.cache_creation_input_tokens'), 0) AS INTEGER)) AS cacheWriteTokens,
+      SUM(CAST(COALESCE(json_extract(am.message, '$.usage.output_tokens'), 0) AS INTEGER)) AS outputTokens
+    ${JOIN}
+    ${""/* mirrors the JSONL reader's guard so `turns` means the same thing on both sources */}
+    AND CAST(COALESCE(json_extract(am.message, '$.usage.output_tokens'), 0) AS INTEGER) > 0
+    GROUP BY weekStart ORDER BY weekStart ASC
+  `).all(since);
+  return { weeks, subagentsIncluded: false };
+}
+
 // ─── Thinking Turns ───────────────────────────────────────────────────────────
 
 export function queryThinkingTurns(db: Database, since: number): ThinkingTurnRow[] {
@@ -768,6 +832,7 @@ interface SqliteReaderInterface {
   queryByTool(since: number, limit: number): ToolRow[];
   queryByProject(since: number, limit: number): ProjectRow[];
   queryWeeklyTrend(since: number): WeekRow[];
+  queryCreditWeeks(since: number): CreditWeeks;
   querySessions(since: number, limit: number): SessionRow[];
   querySessionTurns(sessionId: string): TurnRow[];
   queryThinkingTurns(since: number): ThinkingTurnRow[];
@@ -803,6 +868,7 @@ export function createSqliteReader(db: Database): SqliteReaderInterface {
     queryByTool: (since, limit) => queryByTool(db, since, limit),
     queryByProject: (since, limit) => queryByProject(db, since, limit),
     queryWeeklyTrend: (since) => queryWeeklyTrend(db, since),
+    queryCreditWeeks: (since) => queryCreditWeeks(db, since),
     querySessions: (since, limit) => querySessions(db, since, limit),
     querySessionTurns: (sessionId) => querySessionTurns(db, sessionId),
     queryThinkingTurns: (since) => queryThinkingTurns(db, since),

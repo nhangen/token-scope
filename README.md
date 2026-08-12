@@ -381,6 +381,54 @@ Optimal session length analysis — where the per-turn cost curve breaks.
 
 ---
 
+### Credits (weekly burn vs plan cap)
+
+```bash
+token-scope --credits --since 60d
+token-scope --credits --cap 41.7M          # Max 5x instead of Max 20x
+```
+
+Weekly consumption in **credits**, not dollars. A subscription's cap is denominated
+in credits, so a dollar total — however accurate — cannot answer "am I over?".
+
+```
+  Weekly cap                   166.7M credits
+  Avg full week                558.6M  (3.35x cap)   over 3 week(s)
+  Week in progress             252.6M so far → 623.2M projected  (3.74x cap)
+
+Week (Mon)   │ Turns   │ Credits    │ vs Cap   │ Cache Rd  │ Cache Wr  │ Output   │ Subagent  │
+2026-07-13   │   11552 │     453.7M │    2.72x │     53.9% │     35.2% │    10.0% │     26.0% │ partial (window)
+2026-07-27   │   21790 │     789.5M │    4.74x │     64.9% │     26.3% │     8.8% │     17.7% │
+2026-08-03   │    8201 │     294.3M │    1.77x │     60.6% │     31.2% │     8.2% │     30.3% │
+2026-08-10   │    7308 │     252.6M │    1.52x │     63.1% │     28.5% │     8.4% │     23.3% │ → 623M
+```
+
+Four things worth knowing:
+
+- **Credits are weighted tokens**, at 1 input : 1.25 cache-write : 0.1 cache-read :
+  5 output. Fitted against one metered week — 294.3M computed vs ~296M metered, 0.6%
+  — with no scaling constant. It tracks the meter; it is not the meter. See the
+  caveat in `src/reports/credits.ts`, which is blunt about why a single observation
+  cannot fully confirm the weighting.
+- **Cache read + write is ~90% of the bill.** Output is ~8%. Shorter responses
+  barely move the number; smaller contexts do. What costs money is how much context
+  is re-sent each turn, not how much is said.
+- **Subagent turns are counted here and nowhere else,** and priced, not just tallied.
+  Every other report prunes `subagents/` so per-session numbers describe the session
+  you were in. Subagents draw the same allowance — 17–30% of credits on real weeks —
+  so omitting them read ~30% cheap. A turn count wouldn't answer "what would I save
+  by dispatching fewer?", because subagent turns carry different context sizes; the
+  `Subagent` column is their share of the week's *credits*. The sqlite source cannot
+  see them at all and says so in a footnote instead of implying zero.
+- **Two ways a row can be incomplete, and they're marked differently.** A week still
+  running shows `→ Nm` projected at its observed rate — suppressed as "in progress"
+  until a fifth of the week has elapsed, because extrapolating from Monday morning
+  multiplies whatever happened to land there by 20x. A week whose start falls outside
+  `--since` shows `partial (window)`: calendar-complete but data-incomplete, so it is
+  excluded from the average. Widen `--since` to see it whole.
+
+---
+
 ### Context-loop ROI
 
 ```bash
@@ -447,6 +495,7 @@ Replace the path with wherever you cloned token-scope. Requires `bun` in PATH (o
 | `--source <jsonl\|sqlite>` | auto | Force data source |
 | `--db <path>` | auto | Override SQLite database path |
 | `--projects-dir <path>` | auto | Override JSONL projects directory |
+| `--cap <n>` | `166.7M` | (with `--credits`) weekly credit allowance; accepts `166700000` or `166.7M` |
 
 ## Environment Variables
 
@@ -455,10 +504,13 @@ Replace the path with wherever you cloned token-scope. Requires `bun` in PATH (o
 | `TOKEN_SCOPE_DB` | Override SQLite database path |
 | `TOKEN_SCOPE_PROJECTS_DIR` | Colon-separated JSONL project dirs |
 | `TOKEN_SCOPE_PRICING_FILE` | Custom pricing JSON |
+| `TOKEN_SCOPE_CREDIT_CAP` | Default weekly credit cap for `--credits` (`--cap` wins) |
 | `NO_COLOR` | Disable ANSI color |
 
 ## Accuracy Notes
 
+- **One row per API response** — Claude Code writes one JSONL entry per content block and repeats the whole `usage` object on each, so a naive line-sum over-reports by ~2.1x. Every total collapses on `message.id` (#19); the sqlite store already stores one row per response.
+- **Credits** — weighted-token estimate, calibrated to one metered week (0.6%). Alone among the reports, `--credits` includes subagent turns.
 - **Costs** — computed from Anthropic pricing constants in `src/pricing.ts`
 - **Thinking tokens** — character-ratio estimates (±15–30% error), prefixed with `~`
 - **Cache savings** — estimated from cache read vs full input pricing differential

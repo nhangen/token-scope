@@ -2,12 +2,12 @@ import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow, WeekRow,
   ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, RawTurnForArtifact,
   ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow,
-  SessionBudgetRow, SubagentSpend,
+  SessionBudgetRow, SubagentSpend, CreditWeekRow, CreditWeeks,
 } from "@/db";
 import { existsSync, readdirSync } from "fs";
 import { join } from "path";
 
-export type { SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow, WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, RawTurnForArtifact, ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow, SessionBudgetRow, SubagentSpend };
+export type { SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow, WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, RawTurnForArtifact, ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow, SessionBudgetRow, SubagentSpend, CreditWeekRow, CreditWeeks };
 
 export interface Reader {
   querySummaryTotals(since: number): SummaryTotals;
@@ -16,6 +16,7 @@ export interface Reader {
   queryByTool(since: number, limit: number): ToolRow[];
   queryByProject(since: number, limit: number): ProjectRow[];
   queryWeeklyTrend(since: number): WeekRow[];
+  queryCreditWeeks(since: number): CreditWeeks;
   querySessions(since: number, limit: number): SessionRow[];
   querySessionTurns(sessionId: string): TurnRow[];
   queryThinkingTurns(since: number): ThinkingTurnRow[];
