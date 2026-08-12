@@ -465,13 +465,17 @@ they mean the same thing as `--credits` and as your plan.
 It warns when:
 - The session crosses **5%, 10%, 25%, 50%, or 100% of the weekly credit cap** —
   each rung once, on the turn that crosses it
-- **One turn's context** alone costs more than 0.5% of the cap, with the current
-  context size and what a further turn costs just to re-send it
+- **One turn's context** alone costs more than 0.04% of the cap (~800k tokens of
+  context), reporting the context size and what each further turn costs just to
+  re-send it. Calibrated against a real turn, not a round number: a 1.1M-token
+  context is ~110k credits, 0.066% of a 166.7M cap
 - The last 3 turns average **>3x the session's own average** (a bloat spike)
 - 50 turns is reached, then every 50 after
 
-It checkpoints (writes a resumable session summary) at **25% of the weekly cap** or
-50 turns, whichever comes first.
+It checkpoints (writes a resumable session summary) at **25% of the weekly cap** —
+and on credits alone. A long-but-cheap session gets no file: turn count was the
+other half of why 634 of them accumulated. A checkpoint always announces itself,
+because a file nobody is told about is a file nobody reads.
 
 **Thresholds used to be dollars, and that was the bug.** The default was $10, while
 real sessions run into the hundreds — so it tripped on essentially every session
@@ -498,10 +502,14 @@ Replace the path with wherever you cloned token-scope. Requires `bun` in PATH (o
 ### Example output
 
 ```
-⚠ Session is 10% of the weekly cap (16.7M credits) [16.7M credits, 10.0% of cap / 412 turns / $251.03]
-⚠ Context is 1.1M tokens — each turn now costs ~114k credits (0.07% of the week). /clear or a fresh session resets it [24.8M credits, 14.9% of cap / 623 turns / $372.44]
+⚠ Crossed 10% of the weekly cap (16.7M credits) [16.7M credits, 10.0% of cap / 412 turns / $251.03]
+⚠ Context is 1.1M tokens — re-sending it costs ~110k credits per turn (0.07% of the week, every turn). /clear or a fresh session resets it [144k credits, 0.1% of cap / 6 turns / $2.16]
 ⚠ Spending is spiking: 121k credits/turn vs 34k avg [30.6M credits, 18.4% of cap / 885 turns / $459.75]
 ```
+
+The context line is real output from the shipped defaults, not an illustration.
+The first version of this section quoted a number 7x below the threshold it
+documented, which is how a warning that could never fire got caught.
 
 Dollars stay in the trailer because they're still useful — they're just not what
 the cap is denominated in.
@@ -530,7 +538,7 @@ the cap is denominated in.
 | `TOKEN_SCOPE_CREDIT_CAP` | Weekly credit cap, for `--credits` and the cost-alert hook (`--cap` wins) |
 | `TOKEN_SCOPE_CHECKPOINT_PCT` | Checkpoint at this % of the weekly cap (default `25`) |
 | `TOKEN_SCOPE_CHECKPOINT_TURNS` | Checkpoint at this turn count (default `50`) |
-| `TOKEN_SCOPE_TURN_WARN_PCT` | Warn when ONE turn costs this % of the cap (default `0.5`) |
+| `TOKEN_SCOPE_TURN_WARN_PCT` | Warn when one turn's CONTEXT costs this % of the cap (default `0.04`) |
 | `TOKEN_SCOPE_CHECKPOINT_DIR` | Checkpoint output dir (default `~/.claude/checkpoints`) |
 | `NO_COLOR` | Disable ANSI color |
 

@@ -15,8 +15,15 @@ const weeklyCap = parseFloat(process.argv[4] ?? "166700000");
 const checkpointTurns = parseInt(process.argv[5] ?? "50");
 /** Checkpoint once a session has consumed this share of the weekly cap. */
 const checkpointPct = parseFloat(process.argv[6] ?? "25");
-/** Warn when a SINGLE turn costs this share of the weekly cap. */
-const turnWarnPct = parseFloat(process.argv[7] ?? "0.5");
+/**
+ * Warn when a single turn's CONTEXT costs this share of the weekly cap. The
+ * default is calibrated against a real turn rather than picked round: a ~1.1M
+ * token context costs ~110k credits, which is 0.066% of a 166.7M cap. The first
+ * cut used 0.5%, needing 8.3M tokens of context against a 1M window — it could
+ * never fire, and the README example it shipped with was 7x below its own
+ * threshold, which is how the mistake was caught.
+ */
+const turnWarnPct = parseFloat(process.argv[7] ?? "0.04");
 
 // A malformed value must not silently become 0 and fire every rung at once.
 for (const [name, v] of [["cap", weeklyCap], ["checkpoint-pct", checkpointPct], ["turn-warn-pct", turnWarnPct], ["turns", checkpointTurns]] as const) {
@@ -119,12 +126,26 @@ if (turnCount === 0) { console.log("{}"); process.exit(0); }
 
 const avgCost = totalCost / turnCount;
 const lastCredits = turnCredits.at(-1) ?? 0;
-const prevCredits = turnCredits.at(-2) ?? 0;
 const avgCredits = totalCredits / turnCount;
 const last3Avg = turnCredits.length >= 3
   ? turnCredits.slice(-3).reduce((a, b) => a + b, 0) / 3
   : lastCredits;
 const context = turnContext.at(-1) ?? 0;
+/**
+ * Credits attributable to re-sending context, per turn. Separate from the turn's
+ * total because output-driven cost is real but /clear does nothing for it, and a
+ * warning that says "context" while measuring output sends the reader to the
+ * wrong lever.
+ */
+// Cache-read weight only: cache WRITES are context being established, which
+// /clear also resets, but they are one-off per prefix — folding them in would
+// make a fresh session look like a bloated one.
+const contextCredits = turnContext.map((c) => c * CREDIT_WEIGHTS.cacheRead);
+const lastContextCredits = contextCredits.at(-1) ?? 0;
+/** Highest so far, so the warning fires once ever — not again on every dip and rise. */
+const priorContextPeak = contextCredits.length > 1
+  ? Math.max(...contextCredits.slice(0, -1))
+  : 0;
 const capPct = (totalCredits / weeklyCap) * 100;
 
 const alerts: string[] = [];
@@ -138,7 +159,7 @@ const RUNG_PCTS = [100, 50, 25, 10, 5];
 for (const pct of RUNG_PCTS) {
   const rung = weeklyCap * (pct / 100);
   if (totalCredits >= rung && (totalCredits - lastCredits) < rung) {
-    alerts.push(`Session is ${pct}% of the weekly cap (${fmtCredits(totalCredits)} credits)`);
+    alerts.push(`Crossed ${pct}% of the weekly cap (${fmtCredits(totalCredits)} credits)`);
     break;
   }
 }
@@ -148,10 +169,11 @@ for (const pct of RUNG_PCTS) {
 // one turn alone costs a meaningful slice of the week — and only on the crossing
 // turn, so a long session in a big context doesn't nag every turn.
 const turnWarnAt = weeklyCap * (turnWarnPct / 100);
-if (lastCredits >= turnWarnAt && prevCredits < turnWarnAt) {
+if (lastContextCredits >= turnWarnAt && priorContextPeak < turnWarnAt) {
   alerts.push(
-    `Context is ${fmtCredits(context)} tokens — each turn now costs ~${fmtCredits(lastCredits)} credits ` +
-    `(${((lastCredits / weeklyCap) * 100).toFixed(2)}% of the week). /clear or a fresh session resets it`
+    `Context is ${fmtCredits(context)} tokens — re-sending it costs ~${fmtCredits(lastContextCredits)} credits ` +
+    `per turn (${((lastContextCredits / weeklyCap) * 100).toFixed(2)}% of the week, every turn). ` +
+    `/clear or a fresh session resets it`
   );
 }
 
@@ -159,10 +181,12 @@ if (turnCount >= 10 && last3Avg > avgCredits * 3) {
   alerts.push(`Spending is spiking: ${fmtCredits(last3Avg)} credits/turn vs ${fmtCredits(avgCredits)} avg`);
 }
 
-if (turnCount >= checkpointTurns) {
-  shouldCheckpoint = true;
-  if (turnCount === checkpointTurns) alerts.push(`${turnCount} turns reached`);
-}
+// Turn count alone no longer checkpoints. That trigger, not the dollar
+// threshold, is what kept the pile growing: a 60-turn session that spent almost
+// nothing still got a file, and now that the credit rungs are quiet it got one
+// with NO status message at all — silently, which is worse than noisily. A
+// checkpoint is for a session worth resuming, and cheap-but-long is not that.
+if (turnCount === checkpointTurns) alerts.push(`${turnCount} turns reached`);
 
 if (capPct >= checkpointPct) shouldCheckpoint = true;
 
@@ -178,6 +202,7 @@ if (turnCount > checkpointTurns && turnCount % 50 === 0) {
 // reader learns to ignore — which costs the rungs their meaning too.
 
 const checkpointFile = join(checkpointDir, (sessionId || "unknown") + ".md");
+let wroteCheckpoint = false;
 if (shouldCheckpoint && !existsSync(checkpointFile)) {
   try {
     mkdirSync(checkpointDir, { recursive: true });
@@ -221,7 +246,16 @@ if (shouldCheckpoint && !existsSync(checkpointFile)) {
     ].join("\n");
 
     writeFileSync(checkpointFile, md);
+    wroteCheckpoint = true;
   } catch {}
+}
+
+// A checkpoint the user is never told about is a file that accumulates unread —
+// 634 of them did. Announce the write, and only the write: keying this on
+// `shouldCheckpoint` would re-announce on every later turn, which is the
+// every-turn nag this change exists to remove.
+if (wroteCheckpoint && alerts.length === 0) {
+  alerts.push(`Checkpointed at ${capPct.toFixed(0)}% of the weekly cap`);
 }
 
 const result: Record<string, string> = {};

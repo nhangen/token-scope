@@ -61,6 +61,21 @@ CHECKPOINT_TURNS="${TOKEN_SCOPE_CHECKPOINT_TURNS:-50}"
 CHECKPOINT_PCT="${TOKEN_SCOPE_CHECKPOINT_PCT:-25}"
 TURN_WARN_PCT="${TOKEN_SCOPE_TURN_WARN_PCT:-0.5}"
 
+# The worker also validates these, but cost-alert.sh discards its stderr, so a
+# typo'd cap would silently disable all alerting with no diagnostic anywhere.
+# Check here, where the message survives.
+for pair in "TOKEN_SCOPE_CREDIT_CAP:$CREDIT_CAP" "TOKEN_SCOPE_CHECKPOINT_PCT:$CHECKPOINT_PCT" \
+            "TOKEN_SCOPE_TURN_WARN_PCT:$TURN_WARN_PCT" "TOKEN_SCOPE_CHECKPOINT_TURNS:$CHECKPOINT_TURNS"; do
+  name="${pair%%:*}"; value="${pair#*:}"
+  case "$value" in
+    ''|*[!0-9.]*|*.*.*) echo "[cost-alert] $name must be a positive number (got '$value') — alerts disabled this turn" >&2
+      echo '{}'; exit 0 ;;
+  esac
+  case "$value" in 0|0.0|0.00) echo "[cost-alert] $name must be greater than zero — alerts disabled this turn" >&2
+      echo '{}'; exit 0 ;;
+  esac
+done
+
 if [ -n "${TOKEN_SCOPE_CHECKPOINT_AT:-}" ]; then
   echo "[cost-alert] TOKEN_SCOPE_CHECKPOINT_AT is retired (it was a dollar threshold); use TOKEN_SCOPE_CHECKPOINT_PCT — a percentage of TOKEN_SCOPE_CREDIT_CAP. Ignoring it." >&2
 fi
