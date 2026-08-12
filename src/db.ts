@@ -87,6 +87,15 @@ export interface CreditWeekRow {
   turns: number;
   /** Of `turns`, how many came from subagent transcripts. */
   subagentTurns: number;
+  /**
+   * The subagent share of each component, already included in the totals below.
+   * Broken out because "move work off subagents" is only an actionable lever if
+   * the report can say what that work costs — a turn count cannot.
+   */
+  subagentInputTokens: number;
+  subagentCacheReadTokens: number;
+  subagentCacheWriteTokens: number;
+  subagentOutputTokens: number;
   inputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
@@ -397,6 +406,8 @@ export function queryByProject(db: Database, since: number, limit: number): Proj
       COUNT(DISTINCT bm.session_id) AS sessions,
       COUNT(*) AS turns,
       0 AS subagentTurns,
+      0 AS subagentInputTokens, 0 AS subagentCacheReadTokens,
+      0 AS subagentCacheWriteTokens, 0 AS subagentOutputTokens,
       SUM(CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER)) AS outputTokens,
       SUM(am.cost_usd) AS totalCostUsd,
       CASE WHEN COUNT(DISTINCT bm.session_id) > 0 THEN SUM(am.cost_usd) / COUNT(DISTINCT bm.session_id) ELSE NULL END AS avgSessionCost
@@ -468,6 +479,8 @@ export function queryCreditWeeks(db: Database, since: number): CreditWeeks {
       SUM(CAST(COALESCE(json_extract(am.message, '$.usage.cache_creation_input_tokens'), 0) AS INTEGER)) AS cacheWriteTokens,
       SUM(CAST(COALESCE(json_extract(am.message, '$.usage.output_tokens'), 0) AS INTEGER)) AS outputTokens
     ${JOIN}
+    ${""/* mirrors the JSONL reader's guard so `turns` means the same thing on both sources */}
+    AND CAST(COALESCE(json_extract(am.message, '$.usage.output_tokens'), 0) AS INTEGER) > 0
     GROUP BY weekStart ORDER BY weekStart ASC
   `).all(since);
   return { weeks, subagentsIncluded: false };

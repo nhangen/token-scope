@@ -8,7 +8,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
-- `--credits` — weekly consumption in credits (weighted tokens) against the plan cap, with an end-of-week projection for the week in progress. `--cap` / `TOKEN_SCOPE_CREDIT_CAP` set the allowance. Alone among the reports it includes subagent turns, which spend the same allowance.
+- `--credits` — weekly consumption in credits (weighted tokens) against the plan cap, with an end-of-week projection for the week in progress (suppressed below 20% elapsed, where extrapolation is noise). `--cap` / `TOKEN_SCOPE_CREDIT_CAP` set the allowance. Alone among the reports it includes subagent turns, which spend the same allowance, and prices their share rather than only counting them. Weeks whose start falls outside `--since` are marked `partial (window)` and excluded from the average, so a half-observed week can't be read as a whole one.
 
 ### Fixed
 - Every JSONL total over-reported by ~2.1x. Claude Code writes one entry per content block and repeats the whole `usage` object on each; the reader summed lines. Totals now collapse on `message.id` (#19, #20). Affects tokens, cost, and turn counts — a trailing week previously read $1,456 / 14,378 turns against a real $603 / 7,108.

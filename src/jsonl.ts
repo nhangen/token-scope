@@ -350,15 +350,26 @@ export class JsonlReader implements Reader {
       const key = mondayUtc(t.timestampMs);
       let w = weeks.get(key);
       if (!w) {
-        w = { weekStart: key, turns: 0, subagentTurns: 0, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
+        w = {
+          weekStart: key, turns: 0, subagentTurns: 0,
+          inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0,
+          subagentInputTokens: 0, subagentCacheReadTokens: 0,
+          subagentCacheWriteTokens: 0, subagentOutputTokens: 0,
+        };
         weeks.set(key, w);
       }
       w.turns += 1;
-      if (isSubagent) w.subagentTurns += 1;
       w.inputTokens += t.inputTokens;
       w.cacheReadTokens += t.cacheReadTokens;
       w.cacheWriteTokens += t.cacheWriteTokens;
       w.outputTokens += t.outputTokens;
+      if (isSubagent) {
+        w.subagentTurns += 1;
+        w.subagentInputTokens += t.inputTokens;
+        w.subagentCacheReadTokens += t.cacheReadTokens;
+        w.subagentCacheWriteTokens += t.cacheWriteTokens;
+        w.subagentOutputTokens += t.outputTokens;
+      }
     };
     for (const t of this.turns) bucket(t, false);
     for (const t of this.subagentTurns) bucket(t, true);

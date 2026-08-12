@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { computeWeeks, CREDIT_WEIGHTS, DEFAULT_WEEKLY_CAP } from "@/reports/credits";
+import { computeWeeks, CREDIT_WEIGHTS, DEFAULT_WEEKLY_CAP, MIN_ELAPSED_TO_PROJECT } from "@/reports/credits";
 import { parseCap } from "@/parse";
 import { JsonlReader } from "@/jsonl";
 import { openDb, createSqliteReader, resolveDbPath } from "@/db";
@@ -12,6 +12,8 @@ function row(over: Partial<CreditWeekRow> = {}): CreditWeekRow {
   return {
     weekStart: MON, turns: 1, subagentTurns: 0,
     inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0,
+    subagentInputTokens: 0, subagentCacheReadTokens: 0,
+    subagentCacheWriteTokens: 0, subagentOutputTokens: 0,
     ...over,
   };
 }
@@ -53,13 +55,26 @@ describe("credits — partial weeks and projection", () => {
     expect(w!.projected).toBeCloseTo(1_000, 6); // 100*5 spent at half-time
   });
 
-  it("clamps a week that has barely started instead of projecting to infinity", () => {
-    // A synced host with a skewed clock can stamp a turn before its own week
-    // start; dividing by ~0 elapsed would print an absurd projection as fact.
+  it("refuses to project a week that has barely started", () => {
+    // Monday morning is the common case, not an edge one. Extrapolating from the
+    // first hours multiplies whatever landed there by 20x or more, so the report
+    // must print no forecast rather than a confident wrong one.
+    const [w] = computeWeeks([row({ outputTokens: 100 })], MON_MS + 3 * 3_600_000);
+    expect(w!.partial).toBe(true);
+    expect(w!.elapsed).toBeLessThan(MIN_ELAPSED_TO_PROJECT);
+    expect(w!.projected).toBeNull();
+  });
+
+  it("starts projecting once a fifth of the week has elapsed", () => {
+    const at = MON_MS + MIN_ELAPSED_TO_PROJECT * 7 * 86_400_000;
+    const [w] = computeWeeks([row({ outputTokens: 100 })], at);
+    expect(w!.projected).toBeCloseTo(500 / MIN_ELAPSED_TO_PROJECT, 4);
+  });
+
+  it("never divides by zero elapsed", () => {
     const [w] = computeWeeks([row({ outputTokens: 100 })], MON_MS);
-    expect(w!.elapsed).toBe(0.01);
-    expect(Number.isFinite(w!.projected!)).toBe(true);
-    expect(w!.projected).toBeCloseTo(50_000, 6);
+    expect(w!.elapsed).toBe(0);
+    expect(w!.projected).toBeNull();
   });
 });
 
@@ -117,5 +132,46 @@ describe("credits — reader", () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe("credits — window truncation", () => {
+  // The bug this guards: a week whose start predates --since holds only part of
+  // its spend, but is calendar-complete, so it read as a whole week and was
+  // averaged in. Real data showed the same week as 592.0M at --since 30d and
+  // 297.6M at 21d, with nothing in the output distinguishing them.
+  const afterWeek = MON_MS + 8 * 86_400_000;
+
+  it("flags a week whose start precedes the window", () => {
+    const midWeek = MON_MS + 3 * 86_400_000;
+    const [w] = computeWeeks([row({ outputTokens: 100 })], afterWeek, midWeek);
+    expect(w!.truncated).toBe(true);
+    expect(w!.partial).toBe(false);
+  });
+
+  it("does not flag a week fully inside the window", () => {
+    const [w] = computeWeeks([row({ outputTokens: 100 })], afterWeek, MON_MS);
+    expect(w!.truncated).toBe(false);
+  });
+
+  it("treats sinceMs exactly at the week start as complete coverage", () => {
+    const [w] = computeWeeks([row({ outputTokens: 100 })], afterWeek, MON_MS);
+    expect(w!.truncated).toBe(false);
+  });
+});
+
+describe("credits — subagent share", () => {
+  it("sizes subagent credits, not just their turn count", () => {
+    // A turn count cannot answer "what would I save by dispatching fewer?" —
+    // subagent turns carry different context sizes than main-session ones.
+    const [w] = computeWeeks([row({
+      outputTokens: 1_000, cacheReadTokens: 10_000,
+      subagentOutputTokens: 400, subagentCacheReadTokens: 8_000,
+      turns: 10, subagentTurns: 4,
+    })], MON_MS + 8 * 86_400_000);
+    expect(w!.credits).toBeCloseTo(6_000, 6);       // 1000*5 + 10000*0.1
+    expect(w!.subagentCredits).toBeCloseTo(2_800, 6); // 400*5 + 8000*0.1
+    // 40% of turns but 47% of credits — the point of measuring credits
+    expect(w!.subagentCredits / w!.credits).toBeGreaterThan(w!.subagentTurns / w!.turns);
   });
 });
