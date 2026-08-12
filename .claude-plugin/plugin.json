@@ -1,6 +1,6 @@
 {
   "name": "token-scope",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Token spend analytics and cost alerts for Claude Code. 16 report modes including weekly credit consumption against your plan cap, cache intelligence, tooling analysis by layer, per-artifact Write/Edit cost, and a credit-denominated auto-checkpoint hook.",
   "author": {
     "name": "nhangen"
