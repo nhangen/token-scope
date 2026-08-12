@@ -5,7 +5,7 @@ All notable changes to token-scope are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.5.0] — 2026-08-12
 
 ### Changed
 - **cost-alert hook thresholds are credits, not dollars.** The old $10 default tripped on essentially every real session (634 unread checkpoints on one machine), and dollars can't answer whether a session is a rounding error or a fifth of the week — the cap is metered in credits. Rungs are now 5/10/25/50/100% of `TOKEN_SCOPE_CREDIT_CAP`, each firing once on the turn that crosses it. New: `TOKEN_SCOPE_CHECKPOINT_PCT` (default 25), `TOKEN_SCOPE_TURN_WARN_PCT` (default 0.5). `TOKEN_SCOPE_CHECKPOINT_AT` is retired — the hook ignores it and says so on stderr rather than silently reading a dollar figure as a percentage.
