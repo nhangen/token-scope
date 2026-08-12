@@ -14,6 +14,7 @@ const lines = raw.split("\n").filter(Boolean);
 let totalCost = 0;
 let turnCount = 0;
 const turnCosts: number[] = [];
+const countedTurns = new Set<string>();
 let sessionId = "";
 let cwd = "";
 const filesModified = new Set<string>();
@@ -58,6 +59,16 @@ for (const line of lines) {
       }
     }
   }
+
+  // Every content-block entry of one response repeats the same `usage` object,
+  // so cost and turn count collapse on message.id (#19) — but the tool_use walk
+  // above must NOT, since each entry carries a different block. Skipping the
+  // whole iteration would drop every tool after the first.
+  const turnKey = typeof msg["id"] === "string" && msg["id"] !== ""
+    ? `id:${msg["id"]}`
+    : `uuid:${String(obj["uuid"] ?? "")}`;
+  if (countedTurns.has(turnKey)) continue;
+  countedTurns.add(turnKey);
 
   const model = String(msg["model"] ?? "");
   let inR = 3.0, crR = 0.3, cwR = 3.75, outR = 15.0;
