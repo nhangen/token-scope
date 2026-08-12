@@ -401,3 +401,33 @@ describe("JsonlReader — mtime prefilter", () => {
     rmSync(root, { recursive: true, force: true });
   });
 });
+
+describe("JsonlReader — one row per API response (#19)", () => {
+  // Claude Code repeats the full usage object on every content-block entry, so
+  // a line-per-row reader bills a 3-block message three times. These assertions
+  // fail (turnCount 6, output 415) if the message.id collapse is reverted.
+  const dedupDir = new URL("./fixtures/dedup-projects", import.meta.url).pathname;
+  const dedupReader = new JsonlReader(dedupDir);
+
+  it("counts a multi-block message once", () => {
+    const totals = dedupReader.querySummaryTotals(0);
+    expect(totals.turnCount).toBe(4);
+    expect(totals.totalOutputTokens).toBe(310);
+    expect(totals.totalCacheReadTokens).toBe(3020);
+    expect(totals.totalInputTokens).toBe(32);
+    expect(totals.totalCacheWriteTokens).toBe(110);
+  });
+
+  it("keeps entries that carry no message.id distinct", () => {
+    // Both fall back to their entry uuid; keying them to one empty id would
+    // silently merge unrelated turns and under-report spend.
+    const turns = dedupReader.querySessionTurns("sess-dedup");
+    expect(turns.map((t) => t.outputTokens)).toEqual([100, 200, 5, 5]);
+  });
+
+  it("dedupes subagent spend on message.id too", () => {
+    const spend = dedupReader.querySubagentSpend("sess-dedup");
+    expect(spend.outputTokens).toBe(70);
+    expect(spend.cacheReadTokens).toBe(700);
+  });
+});

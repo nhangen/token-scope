@@ -42,8 +42,26 @@ function scanJsonlFiles(dir: string): string[] {
   return files;
 }
 
+/**
+ * Claude Code writes one JSONL entry per content block, and every entry repeats
+ * the whole `message.usage` object. A message with a text block plus two
+ * tool_use blocks therefore lands as three lines carrying identical token
+ * counts, and summing lines inflates every total (measured 2.08x across ~16.5k
+ * real entries, #19). `message.id` is the API's per-response identifier, so it
+ * is the unit of billing; collapse on it.
+ *
+ * Entries with no `message.id` fall back to the entry `uuid` — some transcripts
+ * (and several fixtures) omit the id, and keying those all to the same empty
+ * string would collapse unrelated turns into one.
+ */
+function turnKey(obj: Record<string, unknown>, msg: Record<string, unknown>): string {
+  const id = msg["id"];
+  return typeof id === "string" && id !== "" ? `id:${id}` : `uuid:${String(obj["uuid"] ?? "")}`;
+}
+
 function loadTurns(dirs: string[], sinceMs?: number): JsonlTurn[] {
   const turns: JsonlTurn[] = [];
+  const seen = new Set<string>();
   for (const file of dirs.flatMap(scanJsonlFiles)) {
     if (sinceMs !== undefined) {
       // Assumes mtime is local-clock; vaults synced across hosts (iCloud,
@@ -66,6 +84,9 @@ function loadTurns(dirs: string[], sinceMs?: number): JsonlTurn[] {
       if (!usage) continue;
       const out = Number(usage["output_tokens"] ?? 0);
       if (out <= 0) continue;
+      const key = turnKey(obj, msg);
+      if (seen.has(key)) continue;
+      seen.add(key);
       const model = String(msg["model"] ?? "");
       const inp = Number(usage["input_tokens"] ?? 0);
       const cacheRead = Number(usage["cache_read_input_tokens"] ?? 0);
@@ -130,6 +151,7 @@ export class JsonlReader implements Reader {
     const files = findSubagentFiles(this.projectsDirs, sessionId);
     let outputTokens = 0, inputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0;
     let knownCost = 0, anyKnownCost = false, anyUnknownModel = false;
+    const seen = new Set<string>();
     for (const file of files) {
       let raw: string;
       try { raw = readFileSync(file, "utf8"); } catch { continue; }
@@ -143,6 +165,9 @@ export class JsonlReader implements Reader {
         if (!msg || !usage) continue;
         const out = Number(usage["output_tokens"] ?? 0);
         if (out <= 0) continue;
+        const key = turnKey(obj, msg);
+        if (seen.has(key)) continue;
+        seen.add(key);
         const inp = Number(usage["input_tokens"] ?? 0);
         const cr = Number(usage["cache_read_input_tokens"] ?? 0);
         const cw = Number(usage["cache_creation_input_tokens"] ?? 0);
