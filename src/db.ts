@@ -70,6 +70,38 @@ export interface TurnRow {
   message: string;
 }
 
+/**
+ * One ISO week of raw token components, Monday-start, UTC. Credit weighting is
+ * deliberately NOT applied here — the query reports what was consumed, the
+ * report decides what it costs. See CREDIT_WEIGHTS in reports/credits.ts.
+ *
+ * Unlike every other report's queries, these totals INCLUDE subagent turns.
+ * Subagents are separate transcripts under `<session>/subagents/`, excluded
+ * everywhere else so per-session numbers describe the session you were in — but
+ * they consume the same plan allowance, so a credit total that omitted them
+ * would be ~30% low on a subagent-heavy week and useless for its one purpose.
+ */
+export interface CreditWeekRow {
+  /** Monday of the week, YYYY-MM-DD (UTC). */
+  weekStart: string;
+  turns: number;
+  /** Of `turns`, how many came from subagent transcripts. */
+  subagentTurns: number;
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+}
+
+export interface CreditWeeks {
+  weeks: CreditWeekRow[];
+  /**
+   * False when the source cannot see subagent transcripts at all — `__store.db`
+   * holds only main-session rows, so the sqlite totals are a floor, not a total.
+   */
+  subagentsIncluded: boolean;
+}
+
 export interface WeekRow {
   weekLabel: string;
   sessions: number;
@@ -364,6 +396,7 @@ export function queryByProject(db: Database, since: number, limit: number): Proj
     SELECT bm.cwd,
       COUNT(DISTINCT bm.session_id) AS sessions,
       COUNT(*) AS turns,
+      0 AS subagentTurns,
       SUM(CAST(json_extract(am.message, '$.usage.output_tokens') AS INTEGER)) AS outputTokens,
       SUM(am.cost_usd) AS totalCostUsd,
       CASE WHEN COUNT(DISTINCT bm.session_id) > 0 THEN SUM(am.cost_usd) / COUNT(DISTINCT bm.session_id) ELSE NULL END AS avgSessionCost
@@ -423,6 +456,21 @@ export function queryWeeklyTrend(db: Database, since: number): WeekRow[] {
     ${JOIN}
     GROUP BY weekLabel ORDER BY weekLabel DESC LIMIT 5
   `).all(since);
+}
+
+export function queryCreditWeeks(db: Database, since: number): CreditWeeks {
+  const weeks = db.query<CreditWeekRow, [number]>(`
+    SELECT
+      date(bm.timestamp, 'unixepoch', '-' || ((strftime('%w', bm.timestamp, 'unixepoch') + 6) % 7) || ' days') AS weekStart,
+      COUNT(*) AS turns,
+      SUM(CAST(COALESCE(json_extract(am.message, '$.usage.input_tokens'), 0) AS INTEGER)) AS inputTokens,
+      SUM(CAST(COALESCE(json_extract(am.message, '$.usage.cache_read_input_tokens'), 0) AS INTEGER)) AS cacheReadTokens,
+      SUM(CAST(COALESCE(json_extract(am.message, '$.usage.cache_creation_input_tokens'), 0) AS INTEGER)) AS cacheWriteTokens,
+      SUM(CAST(COALESCE(json_extract(am.message, '$.usage.output_tokens'), 0) AS INTEGER)) AS outputTokens
+    ${JOIN}
+    GROUP BY weekStart ORDER BY weekStart ASC
+  `).all(since);
+  return { weeks, subagentsIncluded: false };
 }
 
 // ─── Thinking Turns ───────────────────────────────────────────────────────────
@@ -768,6 +816,7 @@ interface SqliteReaderInterface {
   queryByTool(since: number, limit: number): ToolRow[];
   queryByProject(since: number, limit: number): ProjectRow[];
   queryWeeklyTrend(since: number): WeekRow[];
+  queryCreditWeeks(since: number): CreditWeeks;
   querySessions(since: number, limit: number): SessionRow[];
   querySessionTurns(sessionId: string): TurnRow[];
   queryThinkingTurns(since: number): ThinkingTurnRow[];
@@ -803,6 +852,7 @@ export function createSqliteReader(db: Database): SqliteReaderInterface {
     queryByTool: (since, limit) => queryByTool(db, since, limit),
     queryByProject: (since, limit) => queryByProject(db, since, limit),
     queryWeeklyTrend: (since) => queryWeeklyTrend(db, since),
+    queryCreditWeeks: (since) => queryCreditWeeks(db, since),
     querySessions: (since, limit) => querySessions(db, since, limit),
     querySessionTurns: (sessionId) => querySessionTurns(db, sessionId),
     queryThinkingTurns: (since) => queryThinkingTurns(db, since),

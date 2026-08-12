@@ -88,3 +88,17 @@ export function parseContentBlocks(messageJson: string): ContentBlock[] {
   }
 }
 
+
+/**
+ * Parses a credit allowance: a positive number, optionally suffixed K/M/B
+ * (case-insensitive). Returns null on anything else — a silently-misread cap
+ * would move the line a burn report is judged against.
+ */
+export function parseCap(raw: string): number | null {
+  const m = /^([0-9]+(?:\.[0-9]+)?)\s*([kKmMbB]?)$/.exec(raw.trim());
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const mult = { "": 1, k: 1e3, m: 1e6, b: 1e9 }[m[2]!.toLowerCase()] ?? 1;
+  return Math.round(n * mult);
+}

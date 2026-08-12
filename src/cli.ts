@@ -5,6 +5,7 @@ import type { Reader } from "@/reader";
 import type { ArtifactFormat } from "@/artifacts";
 import { KNOWN_ARTIFACT_FORMATS } from "@/artifacts";
 import { VERSION } from "@/version";
+import { parseCap } from "@/parse";
 
 const ARTIFACT_FORMAT_SET = new Set<string>(KNOWN_ARTIFACT_FORMATS);
 const ARTIFACT_MODES = new Set(["artifacts", "artifact-show", "artifact-compare"]);
@@ -35,6 +36,10 @@ REPORT MODES (mutually exclusive)
   --base-load             Base load analysis (system prompt tax per project)
   --cache-growth <id>    Turn-by-turn cache growth waterfall for one session
   --budget               Session budget analysis (optimal session length)
+  --credits               Weekly credit consumption vs plan cap (weighted tokens,
+                          not dollars — a subscription meters credits)
+  --cap <n>               (with --credits) weekly credit allowance; accepts 166.7M
+                          or a raw integer. Default TOKEN_SCOPE_CREDIT_CAP else 166.7M
   --context-loop          Savings + ROI analytics for the context-loop plugin
   --tuning                (with --context-loop) threshold curve, acted/ignored, time-to-action
   --reclamation           (with --context-loop) per-cwd ROI, what got reclaimed, no-fire baseline
@@ -93,7 +98,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop" | "artifacts" | "artifact-show" | "artifact-compare" | "spend" | "savings";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop" | "artifacts" | "artifact-show" | "artifact-compare" | "spend" | "savings" | "credits";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -104,6 +109,7 @@ interface CliArgs {
   source?: "jsonl" | "sqlite" | "auto";
   projectsDirs: string[];
   contextLoopSections: Array<"tuning" | "reclamation" | "patterns" | "roi" | "all">;
+  creditCap?: number;
   artifactFormat?: ArtifactFormat;
   artifactPathFragment?: string;
   artifactPath?: string;
@@ -208,6 +214,15 @@ export function parseArgs(argv: string[]): CliArgs {
       case "--contributors": setMode("contributors"); break;
       case "--base-load": setMode("base-load"); break;
       case "--budget": setMode("budget"); break;
+      case "--credits": setMode("credits"); break;
+      case "--cap": {
+        const raw = argv[++i];
+        if (!raw) { process.stderr.write("Error: --cap requires a value.\n"); process.exit(1); }
+        const cap = parseCap(raw);
+        if (cap === null) { process.stderr.write(`Error: --cap must be a positive number, optionally suffixed K/M/B (got ${raw}).\n`); process.exit(1); }
+        args.creditCap = cap;
+        break;
+      }
       case "--context-loop": setMode("context-loop"); break;
       case "--artifacts": setMode("artifacts"); break;
       case "--artifact-format": {
@@ -483,6 +498,12 @@ async function main() {
     case "budget": {
       const { renderSessionBudgetReport } = await import("@/reports/session-budget");
       renderSessionBudgetReport(reader, options); break;
+    }
+    case "credits": {
+      const { renderCreditsReport, DEFAULT_WEEKLY_CAP } = await import("@/reports/credits");
+      const envCap = process.env["TOKEN_SCOPE_CREDIT_CAP"];
+      const cap = args.creditCap ?? (envCap ? parseCap(envCap) : null) ?? DEFAULT_WEEKLY_CAP;
+      renderCreditsReport(reader, { ...options, cap }); break;
     }
     case "context-loop": {
       const { renderContextLoopReport } = await import("@/reports/context-loop");

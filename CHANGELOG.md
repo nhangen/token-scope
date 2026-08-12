@@ -5,6 +5,15 @@ All notable changes to token-scope are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `--credits` — weekly consumption in credits (weighted tokens) against the plan cap, with an end-of-week projection for the week in progress. `--cap` / `TOKEN_SCOPE_CREDIT_CAP` set the allowance. Alone among the reports it includes subagent turns, which spend the same allowance.
+
+### Fixed
+- Every JSONL total over-reported by ~2.1x. Claude Code writes one entry per content block and repeats the whole `usage` object on each; the reader summed lines. Totals now collapse on `message.id` (#19, #20). Affects tokens, cost, and turn counts — a trailing week previously read $1,456 / 14,378 turns against a real $603 / 7,108.
+- `hooks/cost-alert-worker.ts` had the same bug independently, so its thresholds fired at roughly half the intended spend and checkpointed at half the intended turn count.
+
 ## [1.2.0] — 2026-04-21
 
 ### Fixed

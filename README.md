@@ -381,6 +381,47 @@ Optimal session length analysis — where the per-turn cost curve breaks.
 
 ---
 
+### Credits (weekly burn vs plan cap)
+
+```bash
+token-scope --credits --since 60d
+token-scope --credits --cap 41.7M          # Max 5x instead of Max 20x
+```
+
+Weekly consumption in **credits**, not dollars. A subscription's cap is denominated
+in credits, so a dollar total — however accurate — cannot answer "am I over?".
+
+```
+  Weekly cap                   166.7M credits
+  Avg complete week            545.6M  (3.27x cap)
+  Week in progress             250.6M so far → 619.9M projected  (3.72x cap)
+
+Week (Mon)   │ Turns   │ Sub    │ Credits    │ vs Cap   │ Cache Rd  │ Cache Wr  │ Output
+2026-08-03   │    8201 │   3077 │     294.3M │    1.77x │     60.6% │     31.2% │     8.2%
+2026-08-10   │    7241 │   2204 │     250.6M │    1.50x │     63.1% │     28.5% │     8.4% │ → 620M
+```
+
+Three things worth knowing about this report:
+
+- **Credits are weighted tokens**, at 1 input : 1.25 cache-write : 0.1 cache-read :
+  5 output. Fitted against one metered week — 294.3M computed vs ~296M metered, 0.6%
+  — with no scaling constant. It tracks the meter; it is not the meter. See the
+  caveat in `src/reports/credits.ts`, which is blunt about why a single observation
+  cannot fully confirm the weighting.
+- **Subagent turns are included here and nowhere else.** Every other report prunes
+  `subagents/` so per-session numbers describe the session you were in. Subagents
+  spend the same allowance, so omitting them read ~30% cheap on a subagent-heavy
+  week. The `Sub` column shows how many of the week's turns were subagents. The
+  sqlite source cannot see them at all and says so in a footnote.
+- **Cache read + write is ~90% of the bill.** Output is ~8%. Shorter responses
+  barely move the number; smaller contexts do. That is the actionable finding —
+  what costs money is how much context is re-sent each turn, not how much is said.
+
+The week in progress is projected to end-of-week at its observed rate, and marked
+`→` so it is never mistaken for a complete week.
+
+---
+
 ### Context-loop ROI
 
 ```bash
@@ -447,6 +488,7 @@ Replace the path with wherever you cloned token-scope. Requires `bun` in PATH (o
 | `--source <jsonl\|sqlite>` | auto | Force data source |
 | `--db <path>` | auto | Override SQLite database path |
 | `--projects-dir <path>` | auto | Override JSONL projects directory |
+| `--cap <n>` | `166.7M` | (with `--credits`) weekly credit allowance; accepts `166700000` or `166.7M` |
 
 ## Environment Variables
 
@@ -455,10 +497,13 @@ Replace the path with wherever you cloned token-scope. Requires `bun` in PATH (o
 | `TOKEN_SCOPE_DB` | Override SQLite database path |
 | `TOKEN_SCOPE_PROJECTS_DIR` | Colon-separated JSONL project dirs |
 | `TOKEN_SCOPE_PRICING_FILE` | Custom pricing JSON |
+| `TOKEN_SCOPE_CREDIT_CAP` | Default weekly credit cap for `--credits` (`--cap` wins) |
 | `NO_COLOR` | Disable ANSI color |
 
 ## Accuracy Notes
 
+- **One row per API response** — Claude Code writes one JSONL entry per content block and repeats the whole `usage` object on each, so a naive line-sum over-reports by ~2.1x. Every total collapses on `message.id` (#19); the sqlite store already stores one row per response.
+- **Credits** — weighted-token estimate, calibrated to one metered week (0.6%). Alone among the reports, `--credits` includes subagent turns.
 - **Costs** — computed from Anthropic pricing constants in `src/pricing.ts`
 - **Thinking tokens** — character-ratio estimates (±15–30% error), prefixed with `~`
 - **Cache savings** — estimated from cache read vs full input pricing differential

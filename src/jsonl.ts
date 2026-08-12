@@ -6,7 +6,7 @@ import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow,
   WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, RawTurnForArtifact,
   ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow,
-  SessionBudgetRow, SubagentSpend,
+  SessionBudgetRow, SubagentSpend, CreditWeekRow, CreditWeeks,
 } from "@/reader";
 import type { Reader } from "@/reader";
 
@@ -54,15 +54,46 @@ function scanJsonlFiles(dir: string): string[] {
  * (and several fixtures) omit the id, and keying those all to the same empty
  * string would collapse unrelated turns into one.
  */
+/** Monday 00:00 UTC of the week containing `ms`, as YYYY-MM-DD. */
+function mondayUtc(ms: number): string {
+  const d = new Date(ms);
+  // getUTCDay() is 0 for Sunday; shift so Monday is 0.
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+
 function turnKey(obj: Record<string, unknown>, msg: Record<string, unknown>): string {
   const id = msg["id"];
   return typeof id === "string" && id !== "" ? `id:${id}` : `uuid:${String(obj["uuid"] ?? "")}`;
 }
 
-function loadTurns(dirs: string[], sinceMs?: number): JsonlTurn[] {
+/**
+ * Every subagent transcript under every slug, at any depth. `scanJsonlFiles`
+ * deliberately prunes `subagents` so per-session reports describe the session
+ * you were in; the credit report needs the opposite, because a subagent turn
+ * spends the same allowance. Kept as a separate walk rather than a flag on
+ * `scanJsonlFiles` so no existing caller can pick these up by accident.
+ */
+function scanSubagentFiles(dir: string): string[] {
+  const files: string[] = [];
+  if (!existsSync(dir)) return files;
+  function walk(current: string, inSubagents: boolean) {
+    let entries;
+    try { entries = readdirSync(current, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const p = join(current, entry.name);
+      if (entry.isDirectory()) walk(p, inSubagents || entry.name === "subagents");
+      else if (inSubagents && entry.name.endsWith(".jsonl")) files.push(p);
+    }
+  }
+  walk(dir, false);
+  return files;
+}
+
+function loadTurns(dirs: string[], sinceMs?: number, scan = scanJsonlFiles): JsonlTurn[] {
   const turns: JsonlTurn[] = [];
   const seen = new Set<string>();
-  for (const file of dirs.flatMap(scanJsonlFiles)) {
+  for (const file of dirs.flatMap(scan)) {
     if (sinceMs !== undefined) {
       // Assumes mtime is local-clock; vaults synced across hosts (iCloud,
       // Syncthing, rsync -a) preserve source mtime, so cross-host clock
@@ -139,11 +170,15 @@ function findSubagentFiles(dirs: string[], sessionId: string): string[] {
 export class JsonlReader implements Reader {
   private readonly turns: JsonlTurn[];
   private readonly projectsDirs: string[];
+  private readonly loadSinceMs: number | undefined;
+  /** Loaded on first credit query only — most reports never need these. */
+  private subagentTurns: JsonlTurn[] | null = null;
 
   constructor(projectsDirs: string | string[], sinceSec?: number) {
     const dirs = Array.isArray(projectsDirs) ? projectsDirs : [projectsDirs];
     this.projectsDirs = dirs;
     const sinceMs = sinceSec !== undefined ? sinceSec * 1000 : undefined;
+    this.loadSinceMs = sinceMs;
     this.turns = loadTurns(dirs, sinceMs);
   }
 
@@ -302,6 +337,35 @@ export class JsonlReader implements Reader {
       })
       .sort((a, b) => (b.totalCostUsd ?? 0) - (a.totalCostUsd ?? 0))
       .slice(0, limit);
+  }
+
+  queryCreditWeeks(since: number): CreditWeeks {
+    if (this.subagentTurns === null) {
+      this.subagentTurns = loadTurns(this.projectsDirs, this.loadSinceMs, scanSubagentFiles);
+    }
+    const sinceMs = since * 1000;
+    const weeks = new Map<string, CreditWeekRow>();
+    const bucket = (t: JsonlTurn, isSubagent: boolean): void => {
+      if (!Number.isFinite(t.timestampMs) || t.timestampMs <= sinceMs) return;
+      const key = mondayUtc(t.timestampMs);
+      let w = weeks.get(key);
+      if (!w) {
+        w = { weekStart: key, turns: 0, subagentTurns: 0, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
+        weeks.set(key, w);
+      }
+      w.turns += 1;
+      if (isSubagent) w.subagentTurns += 1;
+      w.inputTokens += t.inputTokens;
+      w.cacheReadTokens += t.cacheReadTokens;
+      w.cacheWriteTokens += t.cacheWriteTokens;
+      w.outputTokens += t.outputTokens;
+    };
+    for (const t of this.turns) bucket(t, false);
+    for (const t of this.subagentTurns) bucket(t, true);
+    return {
+      weeks: [...weeks.values()].sort((a, b) => a.weekStart.localeCompare(b.weekStart)),
+      subagentsIncluded: true,
+    };
   }
 
   queryWeeklyTrend(since: number): WeekRow[] {
