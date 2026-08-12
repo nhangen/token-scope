@@ -1,35 +1,12 @@
 import type { Reader, CreditWeekRow } from "@/reader";
 import { renderHeader, renderKV, renderTable, renderFootnote, formatTokens, formatPct, bold } from "@/format";
 import { VERSION } from "@/version";
+import { CREDIT_WEIGHTS } from "@/credits";
 
-/**
- * Weight per token by component. A subscription meters "credits", not dollars,
- * and the two are not interchangeable: the plan cap is denominated in credits,
- * so a dollar figure cannot answer "am I over?".
- *
- * These weights were fitted against a metered week: with them, and no scaling
- * constant, the week of 2026-08-03 computes to 294.3M against a metered ~296M
- * (0.6%). They are the same 1 : 1.25 : 0.1 : 5 shape as the published per-model
- * dollar prices, which share those ratios across every model — so the model mix
- * cancels and one number per component is enough.
- *
- * The honest caveat: every model in the price table carries identical component
- * ratios, so "weights are proportional to price" collapses to a single free
- * scalar that one observation always determines exactly. The 0.6% agreement is
- * a consistency check, not an independent confirmation, and a mix dominated by
- * one model (opus was 97% of the fitted week) cannot distinguish a
- * model-agnostic weighting from an opus-normalized one. Treat the output as a
- * calibrated estimate that tracks the meter, not as the meter.
- */
-export const CREDIT_WEIGHTS = {
-  input: 1,
-  cacheWrite: 1.25,
-  cacheRead: 0.1,
-  output: 5,
-} as const;
-
-/** Max 20x weekly allowance, in weighted tokens. Override with --cap or TOKEN_SCOPE_CREDIT_CAP. */
-export const DEFAULT_WEEKLY_CAP = 166_700_000;
+// Weights and cap live in @/credits so the cost-alert hook warns in the same
+// unit this report measures in. Re-exported here because the CLI and tests
+// import them from this module.
+export { CREDIT_WEIGHTS, DEFAULT_WEEKLY_CAP } from "@/credits";
 
 /**
  * Below this fraction of a week elapsed, no projection is printed. Extrapolating

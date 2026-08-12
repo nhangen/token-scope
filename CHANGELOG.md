@@ -5,6 +5,18 @@ All notable changes to token-scope are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **cost-alert hook thresholds are credits, not dollars.** The old $10 default tripped on essentially every real session (634 unread checkpoints on one machine), and dollars can't answer whether a session is a rounding error or a fifth of the week — the cap is metered in credits. Rungs are now 5/10/25/50/100% of `TOKEN_SCOPE_CREDIT_CAP`, each firing once on the turn that crosses it. New: `TOKEN_SCOPE_CHECKPOINT_PCT` (default 25), `TOKEN_SCOPE_TURN_WARN_PCT` (default 0.5). `TOKEN_SCOPE_CHECKPOINT_AT` is retired — the hook ignores it and says so on stderr rather than silently reading a dollar figure as a percentage.
+- The hook now warns on **context size**, the thing that actually drives the bill: when one turn's context costs more than 0.04% of the cap (~800k tokens), it reports the context and what each further turn costs just to re-send it. The threshold is calibrated against a real turn — 0.5% needed 8.3M tokens of context against a 1M window and could never fire.
+- **Turn count no longer writes a checkpoint.** That trigger, not the dollar threshold, was the other half of why 634 checkpoint files accumulated: a long-but-cheap session got a file, and once the credit rungs went quiet it got one silently. Checkpoints are credit-driven, and always announce themselves.
+- `TOKEN_SCOPE_CREDIT_CAP` accepts a `K`/`M`/`B` suffix in the hook, matching what `--credits` already accepted through the same variable. The hook used to reject `166.7M` and silently disable all alerting, so one variable meant two things to two consumers.
+- Threshold defaults now live only in `cost-alert-worker.ts`; `cost-alert.sh` passes an empty argument when a variable is unset. Writing them in both files is how the context threshold stayed at 0.5% in production after the worker moved to 0.04% — every worker-level test passed while the warning could never fire.
+- `.claude-plugin/plugin.json` now carries the same version as `package.json`, with a test asserting it. The 1.4.0 release bumped `package.json` and `src/version.ts` but not the manifest, so the marketplace kept installing 1.3.2 and every fix stayed undelivered.
+- Removed the "escalating cost warning" that fired on every turn once a session passed 5x the threshold. A warning that repeats forever is one the reader learns to ignore, which cost the other rungs their meaning too.
+- Credit weights, the cap, and `parseCap` moved to `src/credits.ts`, shared by the report and the hook so the two can't drift into different units.
+
 ## [1.4.0] — 2026-08-12
 
 ### Added

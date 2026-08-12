@@ -458,9 +458,32 @@ Per-file production cost: which artifacts (files written or edited) cost the mos
 
 ## Cost Alert Hook
 
-Real-time in-session cost alerts for Claude Code. Fires after each response and warns when:
-- Session cost crosses **$5, $10, $25, or $50**
-- Last 3 turns cost **>3× the session average** (context bloat spike)
+Real-time in-session spend alerts for Claude Code. Fires after each response and
+**only ever warns — it never stops or blocks a turn.** Thresholds are credits, so
+they mean the same thing as `--credits` and as your plan.
+
+It warns when:
+- The session crosses **5%, 10%, 25%, 50%, or 100% of the weekly credit cap** —
+  each rung once, on the turn that crosses it
+- **One turn's context** alone costs more than 0.04% of the cap (~800k tokens of
+  context), reporting the context size and what each further turn costs just to
+  re-send it. Calibrated against a real turn, not a round number: a 1.1M-token
+  context is ~110k credits, 0.066% of a 166.7M cap
+- The last 3 turns average **>3x the session's own average** (a bloat spike)
+- 50 turns is reached, then every 50 after
+
+It checkpoints (writes a resumable session summary) at **25% of the weekly cap** —
+and on credits alone. A long-but-cheap session gets no file: turn count was the
+other half of why 634 of them accumulated. A checkpoint always announces itself,
+because a file nobody is told about is a file nobody reads.
+
+**Thresholds used to be dollars, and that was the bug.** The default was $10, while
+real sessions run into the hundreds — so it tripped on essentially every session
+(634 unread checkpoint files on the machine this was found on) and the alert carried
+no information. Dollars also can't answer the question that matters, because the cap
+is metered in credits. `TOKEN_SCOPE_CHECKPOINT_AT` is retired; if it is still set the
+hook ignores it and says so on stderr rather than reinterpreting a dollar figure as a
+percentage.
 
 ### Install
 
@@ -479,9 +502,17 @@ Replace the path with wherever you cloned token-scope. Requires `bun` in PATH (o
 ### Example output
 
 ```
-⚠ Cost spiking: $0.467/turn vs $0.135 avg [$150.06 / 1112 turns]
-⚠ Session crossed $25 [$25.18 / 247 turns]
+⚠ Crossed 10% of the weekly cap (16.7M credits) [16.7M credits, 10.0% of cap / 412 turns / $251.03]
+⚠ Context is 1.1M tokens — re-sending it costs ~110k credits per turn (0.07% of the week, every turn). /clear or a fresh session resets it [144k credits, 0.1% of cap / 6 turns / $2.16]
+⚠ Spending is spiking: 121k credits/turn vs 34k avg [30.6M credits, 18.4% of cap / 885 turns / $459.75]
 ```
+
+The context line is real output from the shipped defaults, not an illustration.
+The first version of this section quoted a number 7x below the threshold it
+documented, which is how a warning that could never fire got caught.
+
+Dollars stay in the trailer because they're still useful — they're just not what
+the cap is denominated in.
 
 ---
 
@@ -504,7 +535,11 @@ Replace the path with wherever you cloned token-scope. Requires `bun` in PATH (o
 | `TOKEN_SCOPE_DB` | Override SQLite database path |
 | `TOKEN_SCOPE_PROJECTS_DIR` | Colon-separated JSONL project dirs |
 | `TOKEN_SCOPE_PRICING_FILE` | Custom pricing JSON |
-| `TOKEN_SCOPE_CREDIT_CAP` | Default weekly credit cap for `--credits` (`--cap` wins) |
+| `TOKEN_SCOPE_CREDIT_CAP` | Weekly credit cap, for `--credits` and the cost-alert hook; accepts `166700000` or `166.7M` (`--cap` wins) |
+| `TOKEN_SCOPE_CHECKPOINT_PCT` | Checkpoint at this % of the weekly cap (default `25`) |
+| `TOKEN_SCOPE_CHECKPOINT_TURNS` | Checkpoint at this turn count (default `50`) |
+| `TOKEN_SCOPE_TURN_WARN_PCT` | Warn when one turn's CONTEXT costs this % of the cap (default `0.04`) |
+| `TOKEN_SCOPE_CHECKPOINT_DIR` | Checkpoint output dir (default `~/.claude/checkpoints`) |
 | `NO_COLOR` | Disable ANSI color |
 
 ## Accuracy Notes
