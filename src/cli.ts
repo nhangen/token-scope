@@ -65,6 +65,10 @@ SAVINGS FLAGS (with --savings)
                           turns (1-indexed inclusive) instead of the whole
                           session. Requires --session. Excludes session-wide
                           subagent cost.
+  --by-label              Break the runs down by the label in each run's run_id
+                          (the second colon-separated segment, e.g. 412 from
+                          author:412 or review:412:p1of3), so a delegation's
+                          cost can be read per ticket instead of per session.
   --pm-cost <usd>         Use a caller-measured dollar figure as PM overhead —
                           the honest denominator when the PM was a subagent
                           (whose cost neither whole-session nor --pm-turns can
@@ -118,6 +122,7 @@ interface CliArgs {
   counterfactualModel?: string;
   pmTurnRange?: { from?: number; to?: number };
   pmCost?: number;
+  byLabel?: boolean;
 }
 
 /** Parses a --turns value: "N", "N..M", "N..", "..M" (1-indexed, inclusive). */
@@ -191,6 +196,9 @@ export function parseArgs(argv: string[]): CliArgs {
         catch (e) { process.stderr.write(`Error: ${e instanceof Error ? e.message : String(e)}\n`); process.exit(1); }
         break;
       }
+      case "--by-label":
+        args.byLabel = true;
+        break;
       case "--pm-cost": {
         const v = argv[++i];
         if (!v) { process.stderr.write("Error: --pm-cost requires a dollar amount (e.g. 0.87).\n"); process.exit(1); }
@@ -352,6 +360,11 @@ export function parseArgs(argv: string[]): CliArgs {
     process.exit(1);
   }
 
+  if (args.byLabel && args.mode !== "savings") {
+    process.stderr.write("Error: --by-label is only valid with --savings.\n");
+    process.exit(1);
+  }
+
   if (args.pmTurnRange) {
     if (args.mode !== "savings") {
       process.stderr.write("Error: --pm-turns is only valid with --savings.\n");
@@ -443,6 +456,7 @@ async function main() {
       counterfactualModel: args.counterfactualModel ?? DEFAULT_COUNTERFACTUAL_MODEL,
       pmTurnRange: args.pmTurnRange,
       pmCost: args.pmCost,
+      byLabel: args.byLabel,
     });
     reader.close();
     return;

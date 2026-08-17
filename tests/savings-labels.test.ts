@@ -125,6 +125,25 @@ describe("renderSavingsReport — --by-label breakdown", () => {
     expect(inTok).toBe(AUTHORING_IN + REVIEW_IN);
   });
 
+  it("sorts labels numerically with the unlabelled bucket last", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, byLabel: true })));
+    expect(p.by_label.map((x: any) => x.label)).toEqual(["412", "433", null]);
+  });
+
+  it("warns when the label table's scope is wider than the Totals counterfactual", () => {
+    // by_label spans every filtered run; Totals counts attributed sessions only.
+    // The shared fixture is the one with unattributed rows (a null session_id
+    // and a session absent from the transcripts), so it is what exercises this.
+    const mixed = new URL("./fixtures/ledger/runs.jsonl", import.meta.url).pathname;
+    const text = capture(() => renderSavingsReport(reader, { ...base, ledgerPath: mixed, json: false, byLabel: true }));
+    expect(text).toContain("will not add up");
+  });
+
+  it("stays silent about the scope gap when every run is attributed", () => {
+    const text = capture(() => renderSavingsReport(reader, { ...base, json: false, byLabel: true }));
+    expect(text).not.toContain("will not add up");
+  });
+
   it("prints a per-label table in the text report", () => {
     const text = capture(() => renderSavingsReport(reader, { ...base, json: false, byLabel: true }));
     expect(text).toContain("412");
