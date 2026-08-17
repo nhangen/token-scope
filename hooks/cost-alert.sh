@@ -6,7 +6,7 @@
 #
 # Config (env vars):
 #   TOKEN_SCOPE_CHECKPOINT_DIR   — default: ~/.claude/checkpoints
-#   TOKEN_SCOPE_CREDIT_CAP       — weekly credit allowance, default: 166.7M
+#   TOKEN_SCOPE_CREDIT_CAP       — weekly credit allowance, default: 1.2B
 #                                  (same variable --credits reads)
 #   TOKEN_SCOPE_CHECKPOINT_PCT   — checkpoint at this % of the weekly cap, default: 25
 #   TOKEN_SCOPE_CHECKPOINT_TURNS — turn threshold, default: 50

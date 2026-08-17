@@ -35,8 +35,15 @@ describe("credits — weighting", () => {
     expect(CREDIT_WEIGHTS.output / CREDIT_WEIGHTS.cacheRead).toBe(50);
   });
 
-  it("defaults to the Max 20x weekly allowance", () => {
-    expect(DEFAULT_WEEKLY_CAP).toBe(166_700_000);
+  it("defaults to the Max 20x weekly allowance as measured against /usage", () => {
+    expect(DEFAULT_WEEKLY_CAP).toBe(1_200_000_000);
+  });
+
+  it("puts a heavy real week under cap rather than several times over it", () => {
+    // Regression on the 30x-low constant: 722.4M credits was a real week, and
+    // /usage never showed it near the ceiling. A cap that reports it as 4.33x
+    // over is measuring in units nothing else uses.
+    expect(722_400_000 / DEFAULT_WEEKLY_CAP).toBeLessThan(1);
   });
 });
 

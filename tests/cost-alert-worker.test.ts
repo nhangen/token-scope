@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, readdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { DEFAULT_WEEKLY_CAP } from "@/credits";
 
 const worker = new URL("../hooks/cost-alert-worker.ts", import.meta.url).pathname;
 const transcript = new URL("./fixtures/hook/sess-hook.jsonl", import.meta.url).pathname;
@@ -100,7 +101,15 @@ describe("cost-alert-worker — thresholds are credits, not dollars", () => {
   it("warns when one turn's context alone costs a slice of the week", () => {
     // Turn 2 re-sends 1M tokens of context: 100k credits at the cache-read
     // weight, 10% of a 1M cap, against a 0.5% warn threshold.
-    const msg = statusMessage(context, CAP);
+    //
+    // The threshold is passed rather than defaulted, because CAP here is a
+    // synthetic 1M and the shipped default is calibrated against the real 1.2B.
+    // Left to default, 0.0056% of 1M is 56 credits — under which turn *1*'s
+    // context already crosses, and the "warn only on the crossing turn" guard
+    // then correctly suppresses turn 2. That tested the fixture's arithmetic,
+    // not the mechanism. The shipped default is exercised against the real cap
+    // in "defaults that actually fire" below, which is where it belongs.
+    const msg = statusMessage(context, CAP, { warn: "0.5" });
     expect(msg).toContain("Context is");
     expect(msg).toContain("/clear");
   });
@@ -133,7 +142,11 @@ describe("cost-alert-worker — thresholds are credits, not dollars", () => {
 });
 
 describe("cost-alert-worker — defaults that actually fire", () => {
-  const REAL_CAP = "166700000";   // the real Max 20x weekly allowance
+  // Read from the module rather than written out: this block asserts that the
+  // shipped thresholds fire against the REAL cap, so a hardcoded copy here would
+  // keep passing against a cap the tool no longer uses — which is what happened
+  // when the cap moved off 166.7M and these tests stayed green regardless.
+  const REAL_CAP = String(DEFAULT_WEEKLY_CAP);
   const bigContext = new URL("./fixtures/hook/sess-bigcontext.jsonl", import.meta.url).pathname;
   const cheapLong = new URL("./fixtures/hook/sess-cheap-long.jsonl", import.meta.url).pathname;
   const alternating = new URL("./fixtures/hook/sess-alternating.jsonl", import.meta.url).pathname;
@@ -265,7 +278,7 @@ describe("cost-alert.sh — the wrapper's own config handling", () => {
   });
 
   it("falls back to the default when the variable is unset or empty", () => {
-    expect(capPct("")).toBeCloseTo(capPct("166700000"), 1);
+    expect(capPct("")).toBeCloseTo(capPct(String(DEFAULT_WEEKLY_CAP)), 1);
   });
 
   it("warns about a big context THROUGH THE WRAPPER at shipped defaults", () => {
