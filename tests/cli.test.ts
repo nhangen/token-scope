@@ -122,6 +122,21 @@ describe("parseArgs --savings", () => {
     expect(stderrBuf).toContain("requires --session");
   });
 
+  it("accepts --by-label with --savings", () => {
+    const a = parseArgs(["--savings", "--by-label"]);
+    expect(a.byLabel).toBe(true);
+  });
+
+  it("defaults --by-label off", () => {
+    const a = parseArgs(["--savings"]);
+    expect(a.byLabel).toBeUndefined();
+  });
+
+  it("rejects --by-label without --savings", () => {
+    expect(() => parseArgs(["--by-label"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("only valid with --savings");
+  });
+
   it("accepts --pm-cost with --savings + --session and parses the dollar figure", () => {
     const a = parseArgs(["--savings", "--session", "abc123", "--pm-cost", "0.87"]);
     expect(a.pmCost).toBe(0.87);

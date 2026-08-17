@@ -31,6 +31,9 @@ interface SavingsOptions {
    *  --spend runs. Needs no local transcript, so it also attributes sessions
    *  that ran elsewhere. */
   pmCost?: number;
+  /** When set, emit a per-label breakdown (`by_label`) of the ledger's runs.
+   *  Label is the second colon-separated segment of a run's run_id. */
+  byLabel?: boolean;
 }
 
 /**
@@ -42,6 +45,20 @@ export function valueAtClaudePrices(inputTokens: number, outputTokens: number, m
   const p = getPricing(model);
   if (!p) return null;
   return (inputTokens * p.inputPerMillion + outputTokens * p.outputPerMillion) / 1_000_000;
+}
+
+/** A row is a review row iff its run_id is a string starting with `review:`.
+ *  Everything else — null, no colon, `author:...`, legacy ids — is authoring. */
+function isReviewRow(r: LedgerRun): boolean {
+  return typeof r.runId === "string" && r.runId.startsWith("review:");
+}
+
+/** A row's label: the second colon-separated segment of run_id, or null when
+ *  run_id is null, has no colon, or that segment is empty. */
+function labelOf(r: LedgerRun): string | null {
+  if (typeof r.runId !== "string" || !r.runId.includes(":")) return null;
+  const seg = r.runId.split(":")[1];
+  return seg === "" || seg === undefined ? null : seg;
 }
 
 /**
@@ -93,6 +110,9 @@ interface SessionGroup {
   runCount: number;
   ollamaInput: number;
   ollamaOutput: number;
+  reviewRunCount: number;
+  reviewInput: number;
+  reviewOutput: number;
   models: string[];
   counterfactual: number | null;
   pmOverhead: number | null;
@@ -100,6 +120,16 @@ interface SessionGroup {
   net: number | null;
   attributed: boolean;
   found: boolean;
+}
+
+interface LabelAgg {
+  label: string | null;
+  runCount: number;
+  reviewRunCount: number;
+  authorInput: number;
+  authorOutput: number;
+  reviewInput: number;
+  reviewOutput: number;
 }
 
 const UNATTRIBUTED = "(unattributed)";
@@ -134,7 +164,17 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     const ollamaInput = groupRuns.reduce((s, r) => s + r.ollamaInputTokens, 0);
     const ollamaOutput = groupRuns.reduce((s, r) => s + r.ollamaOutputTokens, 0);
     const models = [...new Set(groupRuns.map((r) => r.model).filter((m): m is string => m !== null))];
-    const counterfactual = valueAtClaudePrices(ollamaInput, ollamaOutput, opts.counterfactualModel);
+
+    // Review volume is reported separately and excluded from the counterfactual
+    // (pricing review as authoring would overstate "what Claude authoring would
+    // have cost"). Totals (ollamaInput/Output) still include every row.
+    const groupReview = groupRuns.filter(isReviewRow);
+    const reviewInput = groupReview.reduce((s, r) => s + r.ollamaInputTokens, 0);
+    const reviewOutput = groupReview.reduce((s, r) => s + r.ollamaOutputTokens, 0);
+    const reviewRunCount = groupReview.length;
+    const authorInput = ollamaInput - reviewInput;
+    const authorOutput = ollamaOutput - reviewOutput;
+    const counterfactual = valueAtClaudePrices(authorInput, authorOutput, opts.counterfactualModel);
 
     let pmOverhead: number | null = null, pmPartial = false, found = false;
     if (sessionId !== null && opts.pmCost !== undefined) {
@@ -151,7 +191,8 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
 
     groups.push({
       sessionId, cwd: groupRuns.find((r) => r.cwd !== null)?.cwd ?? null,
-      runCount: groupRuns.length, ollamaInput, ollamaOutput, models,
+      runCount: groupRuns.length, ollamaInput, ollamaOutput,
+      reviewRunCount, reviewInput, reviewOutput, models,
       counterfactual, pmOverhead, pmPartial, net, attributed, found,
     });
   }
@@ -178,6 +219,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   const totalIn = groups.reduce((s, g) => s + g.ollamaInput, 0);
   const totalOut = groups.reduce((s, g) => s + g.ollamaOutput, 0);
   const totalRuns = groups.reduce((s, g) => s + g.runCount, 0);
+  const totalReviewRuns = groups.reduce((s, g) => s + g.reviewRunCount, 0);
+  const totalReviewIn = groups.reduce((s, g) => s + g.reviewInput, 0);
+  const totalReviewOut = groups.reduce((s, g) => s + g.reviewOutput, 0);
   const attributedGroups = groups.filter((g) => g.attributed);
   const netTotal = attributedGroups.length > 0
     ? attributedGroups.reduce((s, g) => s + (g.net ?? 0), 0) : null;
@@ -185,8 +229,69 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   const pmAttributed = attributedGroups.reduce((s, g) => s + (g.pmOverhead ?? 0), 0);
   const unattributedRuns = groups.filter((g) => !g.attributed).reduce((s, g) => s + g.runCount, 0);
 
+  // Per-label breakdown, across the whole (filtered) ledger — not nested inside
+  // the per-session grouping. Label is the second colon-separated segment of a
+  // run's run_id; null for unlabelled rows.
+  const labelMap = new Map<string, LabelAgg>();
+  for (const r of runs) {
+    const label = labelOf(r);
+    const k = label === null ? "\u0000null" : label;
+    let agg = labelMap.get(k);
+    if (!agg) {
+      agg = { label, runCount: 0, reviewRunCount: 0, authorInput: 0, authorOutput: 0, reviewInput: 0, reviewOutput: 0 };
+      labelMap.set(k, agg);
+    }
+    agg.runCount++;
+    if (isReviewRow(r)) {
+      agg.reviewRunCount++;
+      agg.reviewInput += r.ollamaInputTokens;
+      agg.reviewOutput += r.ollamaOutputTokens;
+    } else {
+      agg.authorInput += r.ollamaInputTokens;
+      agg.authorOutput += r.ollamaOutputTokens;
+    }
+  }
+  // Deterministic across machines: the unlabelled bucket last, then a
+  // numeric-aware compare so ticket 412 precedes 1000. localeCompare's default
+  // collation is locale-dependent, which would let the same ledger order
+  // differently on two hosts \u2014 bad for a report that gets diffed.
+  const byLabelAgg = [...labelMap.values()].sort((a, b) => {
+    if (a.label === null) return b.label === null ? 0 : 1;
+    if (b.label === null) return -1;
+    return a.label.localeCompare(b.label, "en", { numeric: true });
+  });
+
   if (opts.json) {
-    console.log(JSON.stringify({
+    const sessions = groups.map((g) => {
+      const base = {
+        session_id: g.sessionId, cwd: g.cwd, run_count: g.runCount,
+        ollama_input: g.ollamaInput, ollama_output: g.ollamaOutput, models: g.models,
+        counterfactual_usd: g.counterfactual, pm_overhead_usd: g.pmOverhead,
+        pm_overhead_partial: g.pmPartial, net_savings_usd: g.net, attributed: g.attributed,
+      };
+      // Present on every session or on none — never per-session, or an array
+      // whose elements have different shapes hands a consumer NaN on the
+      // sessions that happen to have no review rows. The byte-identical
+      // guarantee for a review-free ledger is report-level, so this keeps it.
+      if (totalReviewRuns > 0) {
+        return { ...base, review_run_count: g.reviewRunCount, review_input: g.reviewInput, review_output: g.reviewOutput };
+      }
+      return base;
+    });
+    const totals: Record<string, unknown> = {
+      run_count: totalRuns, ollama_input: totalIn, ollama_output: totalOut,
+      counterfactual_usd: attributedGroups.length > 0 ? counterfactualAttributed : null,
+      pm_overhead_usd: attributedGroups.length > 0 ? pmAttributed : null,
+      net_savings_usd: netTotal,
+      attributed_session_count: attributedGroups.length,
+      unattributed_run_count: unattributedRuns,
+    };
+    if (totalReviewRuns > 0) {
+      totals.review_run_count = totalReviewRuns;
+      totals.review_input = totalReviewIn;
+      totals.review_output = totalReviewOut;
+    }
+    const payload: Record<string, unknown> = {
       meta: { generated_at: new Date().toISOString(), token_scope_version: VERSION },
       report: "savings",
       ledger_path: ledgerPath,
@@ -198,21 +303,22 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
         : opts.pmTurnRange
           ? { mode: "turns", from: opts.pmTurnRange.from ?? null, to: opts.pmTurnRange.to ?? null }
           : { mode: "whole-session" },
-      sessions: groups.map((g) => ({
-        session_id: g.sessionId, cwd: g.cwd, run_count: g.runCount,
-        ollama_input: g.ollamaInput, ollama_output: g.ollamaOutput, models: g.models,
-        counterfactual_usd: g.counterfactual, pm_overhead_usd: g.pmOverhead,
-        pm_overhead_partial: g.pmPartial, net_savings_usd: g.net, attributed: g.attributed,
-      })),
-      totals: {
-        run_count: totalRuns, ollama_input: totalIn, ollama_output: totalOut,
-        counterfactual_usd: attributedGroups.length > 0 ? counterfactualAttributed : null,
-        pm_overhead_usd: attributedGroups.length > 0 ? pmAttributed : null,
-        net_savings_usd: netTotal,
-        attributed_session_count: attributedGroups.length,
-        unattributed_run_count: unattributedRuns,
-      },
-    }, null, 2));
+      sessions,
+      totals,
+    };
+    if (opts.byLabel) {
+      payload.by_label = byLabelAgg.map((a) => ({
+        label: a.label,
+        run_count: a.runCount,
+        review_run_count: a.reviewRunCount,
+        author_input: a.authorInput,
+        author_output: a.authorOutput,
+        review_input: a.reviewInput,
+        review_output: a.reviewOutput,
+        counterfactual_usd: valueAtClaudePrices(a.authorInput, a.authorOutput, opts.counterfactualModel),
+      }));
+    }
+    console.log(JSON.stringify(payload, null, 2));
     return;
   }
 
@@ -255,15 +361,52 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     ])
   ));
 
+  if (opts.byLabel) {
+    console.log(`\n${bold("  By Label")}`);
+    console.log(renderTable(
+      [
+        { header: "Label", align: "left", width: 16 },
+        { header: "Runs", align: "right", width: 6 },
+        { header: "Author In", align: "right", width: 11 },
+        { header: "Author Out", align: "right", width: 11 },
+        { header: "Review In", align: "right", width: 11 },
+        { header: "Review Out", align: "right", width: 11 },
+        { header: "Counterfact.*", align: "right", width: 13 },
+      ],
+      byLabelAgg.map((a) => [
+        a.label ?? "(unlabelled)",
+        String(a.runCount),
+        formatTokens(a.authorInput), formatTokens(a.authorOutput),
+        formatTokens(a.reviewInput), formatTokens(a.reviewOutput),
+        formatUsd(valueAtClaudePrices(a.authorInput, a.authorOutput, opts.counterfactualModel)),
+      ])
+    ));
+    // This table spans every run in the filtered ledger; the Totals block below
+    // counts only sessions that could be attributed to a Claude session. So the
+    // two counterfactual figures legitimately differ, and saying so beats
+    // leaving a reader to find the gap themselves.
+    if (unattributedRuns > 0) {
+      console.log(renderFootnote(`By Label covers all ${totalRuns} run(s), including ${unattributedRuns} unattributed. The Totals counterfactual below counts attributed sessions only, so the two will not add up.`));
+    }
+  }
+
   console.log(`\n${bold("  Totals")}`);
-  console.log(renderKV([
+  const totalsKv: [string, string][] = [
     ["Ollama tokens", `in=${formatTokens(totalIn)}  out=${formatTokens(totalOut)}`],
     ["Counterfactual* (attributed)", formatUsd(attributedGroups.length > 0 ? counterfactualAttributed : null)],
     ["PM overhead† (attributed)", formatUsd(attributedGroups.length > 0 ? pmAttributed : null)],
     ["Net savings (headline)", bold(formatUsd(netTotal))],
-  ]));
+  ];
+  if (totalReviewRuns > 0) {
+    totalsKv.splice(1, 0, ["Review runs (excluded from counterfactual)",
+      `${totalReviewRuns}  in=${formatTokens(totalReviewIn)}  out=${formatTokens(totalReviewOut)}`]);
+  }
+  console.log(renderKV(totalsKv));
 
   console.log(renderFootnote(`Counterfactual (*) = ollama token volume valued at ${opts.counterfactualModel} prices. ollama and Claude tokenize differently, so this is a proxy for "what Claude authoring would have cost," not a measured figure.`));
+  if (totalReviewRuns > 0) {
+    console.log(renderFootnote(`Review rows (run_id starting with "review:") are excluded from the counterfactual (review is not authoring) but reported separately so no spend is hidden.`));
+  }
   if (opts.pmCost !== undefined) {
     console.log(renderFootnote(`PM overhead (†) = ${formatUsd(opts.pmCost)}, supplied by the caller as a measured figure (e.g. a subagent PM's cost from the subagent-bucket delta between two --spend runs). Net = Counterfactual − measured PM. The figure's accuracy is the caller's — the report does not verify it against transcripts.`));
   } else if (opts.pmTurnRange) {
