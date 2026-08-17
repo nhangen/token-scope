@@ -39,7 +39,8 @@ REPORT MODES (mutually exclusive)
   --credits               Weekly credit consumption vs plan cap (weighted tokens,
                           not dollars — a subscription meters credits)
   --cap <n>               (with --credits) weekly credit allowance; accepts 1.2B
-                          or a raw integer. Default TOKEN_SCOPE_CREDIT_CAP else 1.2B
+                          or a raw integer. Default TOKEN_SCOPE_CREDIT_CAP else
+                          1.2B (a measured Max 5x week; 20x is nearer 4.8B)
   --context-loop          Savings + ROI analytics for the context-loop plugin
   --tuning                (with --context-loop) threshold curve, acted/ignored, time-to-action
   --reclamation           (with --context-loop) per-cwd ROI, what got reclaimed, no-fire baseline

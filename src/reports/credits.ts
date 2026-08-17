@@ -96,6 +96,81 @@ export function computeWeeks(rows: CreditWeekRow[], nowMs: number, sinceMs = 0):
   });
 }
 
+/** A single turn of usage, timestamped in epoch milliseconds. */
+export interface CreditTurn {
+  timestamp: number;
+  isSubagent: boolean;
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+}
+
+/** A five-hour bucket of turns, anchored at the turn that opened it. */
+export interface CreditWindow {
+  startMs: number;
+  endMs: number;
+  turns: number;
+  subagentTurns: number;
+  credits: number;
+  /** The subagent share of `credits`, already counted in it. */
+  subagentCredits: number;
+  components: { input: number; cacheWrite: number; cacheRead: number; output: number };
+  /** True only for the window containing `now`. */
+  open: boolean;
+}
+
+export const WINDOW_MS = 5 * 3_600_000;
+
+export function computeWindows(turns: CreditTurn[], nowMs: number): CreditWindow[] {
+  const sorted = [...turns].sort((a, b) => a.timestamp - b.timestamp);
+  const windows: CreditWindow[] = [];
+  let current: CreditWindow | undefined;
+
+  for (const t of sorted) {
+    if (current === undefined || t.timestamp >= current.startMs + WINDOW_MS) {
+      // Anchor a new window at the turn that opened it — never at a rounded
+      // clock boundary or the previous turn — so idle gaps emit no window.
+      current = {
+        startMs: t.timestamp,
+        endMs: t.timestamp + WINDOW_MS,
+        turns: 0,
+        subagentTurns: 0,
+        credits: 0,
+        subagentCredits: 0,
+        components: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 },
+        open: false,
+      };
+      windows.push(current);
+    }
+    const w = current;
+    w.turns += 1;
+    const credits =
+      t.inputTokens * CREDIT_WEIGHTS.input +
+      t.cacheWriteTokens * CREDIT_WEIGHTS.cacheWrite +
+      t.cacheReadTokens * CREDIT_WEIGHTS.cacheRead +
+      t.outputTokens * CREDIT_WEIGHTS.output;
+    w.credits += credits;
+    w.components.input += t.inputTokens * CREDIT_WEIGHTS.input;
+    w.components.cacheWrite += t.cacheWriteTokens * CREDIT_WEIGHTS.cacheWrite;
+    w.components.cacheRead += t.cacheReadTokens * CREDIT_WEIGHTS.cacheRead;
+    w.components.output += t.outputTokens * CREDIT_WEIGHTS.output;
+    if (t.isSubagent) {
+      w.subagentTurns += 1;
+      w.subagentCredits += credits;
+    }
+  }
+
+  for (const w of windows) {
+    // Both bounds, not just the upper one. A future-dated turn — clock skew on a
+    // synced host, which the weekly view already guards against — anchors a
+    // window that starts after `now`, and `nowMs < endMs` alone would report
+    // that one as open too, contradicting this field's meaning.
+    w.open = nowMs >= w.startMs && nowMs < w.endMs;
+  }
+  return windows;
+}
+
 export function renderCreditsReport(reader: Reader, opts: Options): void {
   const nowMs = opts.nowMs ?? Date.now();
   const sinceMs = opts.since * 1000;

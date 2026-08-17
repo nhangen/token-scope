@@ -385,18 +385,20 @@ Optimal session length analysis — where the per-turn cost curve breaks.
 
 ```bash
 token-scope --credits --since 60d
-token-scope --credits --cap 300M           # Max 5x instead of Max 20x
+token-scope --credits --cap 4.8B           # Max 20x instead of the 5x default
 ```
 
 Weekly consumption in **credits**, not dollars. A subscription's cap is denominated
 in credits, so a dollar total — however accurate — cannot answer "am I over?".
 
-The default cap of **1.2B** is measured, not published: Claude Code's `/usage` read
-7% of the weekly limit over a window this tool measured at 126.8M credits, which
-solves to ~1.81B against a promo-inflated cap, ~1.2B base. It replaced a 166.7M
-figure that was never checked against the meter and was wrong by roughly 30x — see
-the comment on `DEFAULT_WEEKLY_CAP` for the error bars and for why the cap must be
-re-derived rather than hand-adjusted if the weights ever change.
+The default cap of **1.2B** is a **Max 5x** allowance, measured rather than
+published: Claude Code's `/usage` read 7% of the weekly limit over a window this
+tool measured at 126.8M credits, which solves to ~1.81B against a promo-inflated
+cap, ~1.2B base. It replaced a 166.7M figure that claimed to be Max 20x, was never
+checked against the meter, and was wrong by roughly 30x — so both its value and its
+tier label were wrong. Max 20x scales to roughly 4.8B, but that is inferred and
+unmeasured. See the comment on `DEFAULT_WEEKLY_CAP` for the error bars and for why
+the cap must be re-derived rather than hand-adjusted.
 
 ```
   Weekly cap                   1200.0M credits

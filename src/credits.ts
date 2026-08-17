@@ -33,18 +33,25 @@ export const CREDIT_WEIGHTS = {
 } as const;
 
 /**
- * Max 20x weekly allowance, in weighted tokens. Override with --cap or
+ * Max **5x** weekly allowance, in weighted tokens. Override with --cap or
  * TOKEN_SCOPE_CREDIT_CAP.
  *
- * Measured, not published. On 2026-08-17, one hour before the plan week rolled,
- * Claude Code's `/usage` reported 7% of the weekly limit consumed; the same
- * window measured 126.8M credits here. That solves to ~1.81B — against a cap
- * inflated by an active "+50% weekly limits" promo, so the base is ~1.2B.
+ * Measured, not published. On 2026-08-17 Claude Code's `/usage` reported 7% of
+ * the weekly limit consumed on a Max 5x plan; the same window measured 126.8M
+ * credits here. That solves to ~1.81B — against a cap inflated by an active
+ * "+50% weekly limits" promo, so the base is ~1.2B. Scaling by plan multiplier
+ * puts Max 20x near 4.8B, but that figure is inferred and has never been read
+ * off a meter; measure it the same way before trusting it.
  *
- * The previous value, 166.7M, was never measured against the credit meter at
- * all, and it was wrong by roughly 30x: it made four consecutive real weeks
- * report 1.77x-4.74x of cap, which would have meant sustained lockout that
- * never happened. Against 1.2B those weeks read 0.25x-0.66x.
+ * Note the tier: the previous constant claimed to be Max 20x while carrying
+ * 166.7M, and the fix here is a 5x number. Both the value and the label were
+ * wrong, and correcting only the value would have left the same defect in
+ * place. If the default tier changes, re-measure — do not multiply.
+ *
+ * The previous value was never checked against the credit meter at all, and it
+ * was wrong by roughly 30x: it made four consecutive real weeks report
+ * 1.77x-4.74x of cap, which would have meant sustained lockout that never
+ * happened. Against 1.2B those weeks read 0.25x-0.66x.
  *
  * Two honest caveats.
  *

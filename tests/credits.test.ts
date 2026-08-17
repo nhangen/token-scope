@@ -331,6 +331,20 @@ describe("credits — rolling 5h windows", () => {
     expect(ws[0]!.turns).toBe(3);
   });
 
+  it("does not call a future-dated window open", () => {
+    // Clock skew on a synced host puts a turn ahead of now, anchoring a window
+    // that has not started. Testing only `now < endMs` marks it open as well,
+    // so the report would show two live windows. The weekly view already
+    // guards the same skew when it picks the current week.
+    const ws = computeWindows([
+      turn(T0, { outputTokens: 100 }),
+      turn(T0 + 30 * H, { outputTokens: 100 }),
+    ], T0 + H);
+    expect(ws[0]!.open).toBe(true);
+    expect(ws[1]!.open).toBe(false);
+    expect(ws.filter((w) => w.open).length).toBe(1);
+  });
+
   it("returns nothing for no turns", () => {
     expect(computeWindows([], T0)).toEqual([]);
   });
