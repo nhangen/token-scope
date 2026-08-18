@@ -53,6 +53,13 @@ function isReviewRow(r: LedgerRun): boolean {
   return typeof r.runId === "string" && r.runId.startsWith("review:");
 }
 
+/** A row is unverified iff its verify command never passed (verified ===
+ *  false) and it is an authoring row. verified === null (absent) is unknown,
+ *  not failed, and review rows have their own reporting axis. */
+function isUnverifiedRow(r: LedgerRun): boolean {
+  return r.verified === false && !isReviewRow(r);
+}
+
 /** A row's label: the second colon-separated segment of run_id, or null when
  *  run_id is null, has no colon, or that segment is empty. */
 function labelOf(r: LedgerRun): string | null {
@@ -113,6 +120,9 @@ interface SessionGroup {
   reviewRunCount: number;
   reviewInput: number;
   reviewOutput: number;
+  unverifiedRunCount: number;
+  unverifiedInput: number;
+  unverifiedOutput: number;
   models: string[];
   counterfactual: number | null;
   pmOverhead: number | null;
@@ -130,6 +140,9 @@ interface LabelAgg {
   authorOutput: number;
   reviewInput: number;
   reviewOutput: number;
+  unverifiedRunCount: number;
+  unverifiedInput: number;
+  unverifiedOutput: number;
 }
 
 const UNATTRIBUTED = "(unattributed)";
@@ -172,6 +185,14 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     const reviewInput = groupReview.reduce((s, r) => s + r.ollamaInputTokens, 0);
     const reviewOutput = groupReview.reduce((s, r) => s + r.ollamaOutputTokens, 0);
     const reviewRunCount = groupReview.length;
+
+    // Unverified authoring runs (verify never passed) are a separate
+    // reporting axis only: they are authoring, so they stay in the
+    // counterfactual exactly as today.
+    const groupUnverified = groupRuns.filter(isUnverifiedRow);
+    const unverifiedInput = groupUnverified.reduce((s, r) => s + r.ollamaInputTokens, 0);
+    const unverifiedOutput = groupUnverified.reduce((s, r) => s + r.ollamaOutputTokens, 0);
+    const unverifiedRunCount = groupUnverified.length;
     const authorInput = ollamaInput - reviewInput;
     const authorOutput = ollamaOutput - reviewOutput;
     const counterfactual = valueAtClaudePrices(authorInput, authorOutput, opts.counterfactualModel);
@@ -192,7 +213,8 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     groups.push({
       sessionId, cwd: groupRuns.find((r) => r.cwd !== null)?.cwd ?? null,
       runCount: groupRuns.length, ollamaInput, ollamaOutput,
-      reviewRunCount, reviewInput, reviewOutput, models,
+      reviewRunCount, reviewInput, reviewOutput,
+      unverifiedRunCount, unverifiedInput, unverifiedOutput, models,
       counterfactual, pmOverhead, pmPartial, net, attributed, found,
     });
   }
@@ -222,6 +244,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   const totalReviewRuns = groups.reduce((s, g) => s + g.reviewRunCount, 0);
   const totalReviewIn = groups.reduce((s, g) => s + g.reviewInput, 0);
   const totalReviewOut = groups.reduce((s, g) => s + g.reviewOutput, 0);
+  const totalUnverifiedRuns = groups.reduce((s, g) => s + g.unverifiedRunCount, 0);
+  const totalUnverifiedIn = groups.reduce((s, g) => s + g.unverifiedInput, 0);
+  const totalUnverifiedOut = groups.reduce((s, g) => s + g.unverifiedOutput, 0);
   const attributedGroups = groups.filter((g) => g.attributed);
   const netTotal = attributedGroups.length > 0
     ? attributedGroups.reduce((s, g) => s + (g.net ?? 0), 0) : null;
@@ -238,7 +263,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     const k = label === null ? "\u0000null" : label;
     let agg = labelMap.get(k);
     if (!agg) {
-      agg = { label, runCount: 0, reviewRunCount: 0, authorInput: 0, authorOutput: 0, reviewInput: 0, reviewOutput: 0 };
+      agg = { label, runCount: 0, reviewRunCount: 0, authorInput: 0, authorOutput: 0, reviewInput: 0, reviewOutput: 0, unverifiedRunCount: 0, unverifiedInput: 0, unverifiedOutput: 0 };
       labelMap.set(k, agg);
     }
     agg.runCount++;
@@ -249,6 +274,11 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     } else {
       agg.authorInput += r.ollamaInputTokens;
       agg.authorOutput += r.ollamaOutputTokens;
+    }
+    if (isUnverifiedRow(r)) {
+      agg.unverifiedRunCount++;
+      agg.unverifiedInput += r.ollamaInputTokens;
+      agg.unverifiedOutput += r.ollamaOutputTokens;
     }
   }
   // Deterministic across machines: the unlabelled bucket last, then a
@@ -273,10 +303,18 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       // whose elements have different shapes hands a consumer NaN on the
       // sessions that happen to have no review rows. The byte-identical
       // guarantee for a review-free ledger is report-level, so this keeps it.
-      if (totalReviewRuns > 0) {
-        return { ...base, review_run_count: g.reviewRunCount, review_input: g.reviewInput, review_output: g.reviewOutput };
-      }
-      return base;
+      // Each axis contributes its keys independently. Enumerating the
+      // combinations instead doubles the branches every time an axis is added,
+      // and three of the four branches would be untested.
+      return {
+        ...base,
+        ...(totalReviewRuns > 0 ? {
+          review_run_count: g.reviewRunCount, review_input: g.reviewInput, review_output: g.reviewOutput,
+        } : {}),
+        ...(totalUnverifiedRuns > 0 ? {
+          unverified_run_count: g.unverifiedRunCount, unverified_input: g.unverifiedInput, unverified_output: g.unverifiedOutput,
+        } : {}),
+      };
     });
     const totals: Record<string, unknown> = {
       run_count: totalRuns, ollama_input: totalIn, ollama_output: totalOut,
@@ -290,6 +328,11 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       totals.review_run_count = totalReviewRuns;
       totals.review_input = totalReviewIn;
       totals.review_output = totalReviewOut;
+    }
+    if (totalUnverifiedRuns > 0) {
+      totals.unverified_run_count = totalUnverifiedRuns;
+      totals.unverified_input = totalUnverifiedIn;
+      totals.unverified_output = totalUnverifiedOut;
     }
     const payload: Record<string, unknown> = {
       meta: { generated_at: new Date().toISOString(), token_scope_version: VERSION },
@@ -315,6 +358,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
         author_output: a.authorOutput,
         review_input: a.reviewInput,
         review_output: a.reviewOutput,
+        unverified_run_count: a.unverifiedRunCount,
+        unverified_input: a.unverifiedInput,
+        unverified_output: a.unverifiedOutput,
         counterfactual_usd: valueAtClaudePrices(a.authorInput, a.authorOutput, opts.counterfactualModel),
       }));
     }
@@ -371,6 +417,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
         { header: "Author Out", align: "right", width: 11 },
         { header: "Review In", align: "right", width: 11 },
         { header: "Review Out", align: "right", width: 11 },
+        // Run count rather than tokens: "which ticket burned failed attempts"
+        // is the question, and two more token columns would not fit.
+        { header: "Unver.", align: "right", width: 7 },
         { header: "Counterfact.*", align: "right", width: 13 },
       ],
       byLabelAgg.map((a) => [
@@ -378,6 +427,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
         String(a.runCount),
         formatTokens(a.authorInput), formatTokens(a.authorOutput),
         formatTokens(a.reviewInput), formatTokens(a.reviewOutput),
+        String(a.unverifiedRunCount),
         formatUsd(valueAtClaudePrices(a.authorInput, a.authorOutput, opts.counterfactualModel)),
       ])
     ));
@@ -401,11 +451,18 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     totalsKv.splice(1, 0, ["Review runs (excluded from counterfactual)",
       `${totalReviewRuns}  in=${formatTokens(totalReviewIn)}  out=${formatTokens(totalReviewOut)}`]);
   }
+  if (totalUnverifiedRuns > 0) {
+    totalsKv.splice(1, 0, ["Unverified authoring runs (verify never passed)",
+      `${totalUnverifiedRuns}  in=${formatTokens(totalUnverifiedIn)}  out=${formatTokens(totalUnverifiedOut)}`]);
+  }
   console.log(renderKV(totalsKv));
 
   console.log(renderFootnote(`Counterfactual (*) = ollama token volume valued at ${opts.counterfactualModel} prices. ollama and Claude tokenize differently, so this is a proxy for "what Claude authoring would have cost," not a measured figure.`));
   if (totalReviewRuns > 0) {
     console.log(renderFootnote(`Review rows (run_id starting with "review:") are excluded from the counterfactual (review is not authoring) but reported separately so no spend is hidden.`));
+  }
+  if (totalUnverifiedRuns > 0) {
+    console.log(renderFootnote(`Unverified authoring runs (verified = false) are INCLUDED in the counterfactual — a failed attempt spent real tokens, and Claude would have paid for a wrong first try too — but reported separately so failed work is not hidden in the totals.`));
   }
   if (opts.pmCost !== undefined) {
     console.log(renderFootnote(`PM overhead (†) = ${formatUsd(opts.pmCost)}, supplied by the caller as a measured figure (e.g. a subagent PM's cost from the subagent-bucket delta between two --spend runs). Net = Counterfactual − measured PM. The figure's accuracy is the caller's — the report does not verify it against transcripts.`));

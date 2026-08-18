@@ -89,6 +89,16 @@ describe("renderSavingsReport — unverified authoring runs", () => {
     expect(l500.unverified_input).toBe(0);
   });
 
+  it("shows the unverified run count per label in the text table", () => {
+    // The point of --by-label plus this axis is answering "which ticket burned
+    // failed attempts" — a figure only in JSON does not answer it.
+    const text = capture(() => renderSavingsReport(reader, { ...base, json: false, byLabel: true }));
+    const row501 = text.split("\n").find((l) => l.startsWith("501"));
+    expect(row501).toBeDefined();
+    expect(row501!.trim().split(/\s*│\s*/).map((c) => c.trim())).toContain("1");
+    expect(text).toContain("Unver.");
+  });
+
   it("names the unverified volume in the text report", () => {
     const text = capture(() => renderSavingsReport(reader, { ...base, json: false }));
     expect(text.toLowerCase()).toContain("unverified");
