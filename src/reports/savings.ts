@@ -53,11 +53,19 @@ function isReviewRow(r: LedgerRun): boolean {
   return typeof r.runId === "string" && r.runId.startsWith("review:");
 }
 
+/** A row is a bench row iff its run_id is a string starting with `bench:` —
+ *  a benchmark/evaluation sweep. Like review, it is excluded from the
+ *  counterfactual: nobody would have paid Claude to generate benchmark
+ *  completions across a model grid. */
+function isBenchRow(r: LedgerRun): boolean {
+  return typeof r.runId === "string" && r.runId.startsWith("bench:");
+}
+
 /** A row is unverified iff its verify command never passed (verified ===
  *  false) and it is an authoring row. verified === null (absent) is unknown,
- *  not failed, and review rows have their own reporting axis. */
+ *  not failed, and review/bench rows have their own reporting axes. */
 function isUnverifiedRow(r: LedgerRun): boolean {
-  return r.verified === false && !isReviewRow(r);
+  return r.verified === false && !isReviewRow(r) && !isBenchRow(r);
 }
 
 /** A row's label: the second colon-separated segment of run_id, or null when
@@ -120,6 +128,9 @@ interface SessionGroup {
   reviewRunCount: number;
   reviewInput: number;
   reviewOutput: number;
+  benchRunCount: number;
+  benchInput: number;
+  benchOutput: number;
   unverifiedRunCount: number;
   unverifiedInput: number;
   unverifiedOutput: number;
@@ -136,10 +147,13 @@ interface LabelAgg {
   label: string | null;
   runCount: number;
   reviewRunCount: number;
+  benchRunCount: number;
   authorInput: number;
   authorOutput: number;
   reviewInput: number;
   reviewOutput: number;
+  benchInput: number;
+  benchOutput: number;
   unverifiedRunCount: number;
   unverifiedInput: number;
   unverifiedOutput: number;
@@ -186,6 +200,14 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     const reviewOutput = groupReview.reduce((s, r) => s + r.ollamaOutputTokens, 0);
     const reviewRunCount = groupReview.length;
 
+    // Bench volume (benchmark sweeps) is reported separately and excluded from
+    // the counterfactual exactly like review: those runs exist only because
+    // local inference is free. Totals (ollamaInput/Output) still include them.
+    const groupBench = groupRuns.filter(isBenchRow);
+    const benchInput = groupBench.reduce((s, r) => s + r.ollamaInputTokens, 0);
+    const benchOutput = groupBench.reduce((s, r) => s + r.ollamaOutputTokens, 0);
+    const benchRunCount = groupBench.length;
+
     // Unverified authoring runs (verify never passed) are a separate
     // reporting axis only: they are authoring, so they stay in the
     // counterfactual exactly as today.
@@ -193,8 +215,8 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     const unverifiedInput = groupUnverified.reduce((s, r) => s + r.ollamaInputTokens, 0);
     const unverifiedOutput = groupUnverified.reduce((s, r) => s + r.ollamaOutputTokens, 0);
     const unverifiedRunCount = groupUnverified.length;
-    const authorInput = ollamaInput - reviewInput;
-    const authorOutput = ollamaOutput - reviewOutput;
+    const authorInput = ollamaInput - reviewInput - benchInput;
+    const authorOutput = ollamaOutput - reviewOutput - benchOutput;
     const counterfactual = valueAtClaudePrices(authorInput, authorOutput, opts.counterfactualModel);
 
     let pmOverhead: number | null = null, pmPartial = false, found = false;
@@ -214,6 +236,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       sessionId, cwd: groupRuns.find((r) => r.cwd !== null)?.cwd ?? null,
       runCount: groupRuns.length, ollamaInput, ollamaOutput,
       reviewRunCount, reviewInput, reviewOutput,
+      benchRunCount, benchInput, benchOutput,
       unverifiedRunCount, unverifiedInput, unverifiedOutput, models,
       counterfactual, pmOverhead, pmPartial, net, attributed, found,
     });
@@ -244,6 +267,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   const totalReviewRuns = groups.reduce((s, g) => s + g.reviewRunCount, 0);
   const totalReviewIn = groups.reduce((s, g) => s + g.reviewInput, 0);
   const totalReviewOut = groups.reduce((s, g) => s + g.reviewOutput, 0);
+  const totalBenchRuns = groups.reduce((s, g) => s + g.benchRunCount, 0);
+  const totalBenchIn = groups.reduce((s, g) => s + g.benchInput, 0);
+  const totalBenchOut = groups.reduce((s, g) => s + g.benchOutput, 0);
   const totalUnverifiedRuns = groups.reduce((s, g) => s + g.unverifiedRunCount, 0);
   const totalUnverifiedIn = groups.reduce((s, g) => s + g.unverifiedInput, 0);
   const totalUnverifiedOut = groups.reduce((s, g) => s + g.unverifiedOutput, 0);
@@ -263,7 +289,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     const k = label === null ? "\u0000null" : label;
     let agg = labelMap.get(k);
     if (!agg) {
-      agg = { label, runCount: 0, reviewRunCount: 0, authorInput: 0, authorOutput: 0, reviewInput: 0, reviewOutput: 0, unverifiedRunCount: 0, unverifiedInput: 0, unverifiedOutput: 0 };
+      agg = { label, runCount: 0, reviewRunCount: 0, benchRunCount: 0, authorInput: 0, authorOutput: 0, reviewInput: 0, reviewOutput: 0, benchInput: 0, benchOutput: 0, unverifiedRunCount: 0, unverifiedInput: 0, unverifiedOutput: 0 };
       labelMap.set(k, agg);
     }
     agg.runCount++;
@@ -271,6 +297,10 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       agg.reviewRunCount++;
       agg.reviewInput += r.ollamaInputTokens;
       agg.reviewOutput += r.ollamaOutputTokens;
+    } else if (isBenchRow(r)) {
+      agg.benchRunCount++;
+      agg.benchInput += r.ollamaInputTokens;
+      agg.benchOutput += r.ollamaOutputTokens;
     } else {
       agg.authorInput += r.ollamaInputTokens;
       agg.authorOutput += r.ollamaOutputTokens;
@@ -311,6 +341,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
         ...(totalReviewRuns > 0 ? {
           review_run_count: g.reviewRunCount, review_input: g.reviewInput, review_output: g.reviewOutput,
         } : {}),
+        ...(totalBenchRuns > 0 ? {
+          bench_run_count: g.benchRunCount, bench_input: g.benchInput, bench_output: g.benchOutput,
+        } : {}),
         ...(totalUnverifiedRuns > 0 ? {
           unverified_run_count: g.unverifiedRunCount, unverified_input: g.unverifiedInput, unverified_output: g.unverifiedOutput,
         } : {}),
@@ -328,6 +361,11 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       totals.review_run_count = totalReviewRuns;
       totals.review_input = totalReviewIn;
       totals.review_output = totalReviewOut;
+    }
+    if (totalBenchRuns > 0) {
+      totals.bench_run_count = totalBenchRuns;
+      totals.bench_input = totalBenchIn;
+      totals.bench_output = totalBenchOut;
     }
     if (totalUnverifiedRuns > 0) {
       totals.unverified_run_count = totalUnverifiedRuns;
@@ -358,6 +396,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
         author_output: a.authorOutput,
         review_input: a.reviewInput,
         review_output: a.reviewOutput,
+        bench_run_count: a.benchRunCount,
+        bench_input: a.benchInput,
+        bench_output: a.benchOutput,
         unverified_run_count: a.unverifiedRunCount,
         unverified_input: a.unverifiedInput,
         unverified_output: a.unverifiedOutput,
@@ -451,6 +492,10 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     totalsKv.splice(1, 0, ["Review runs (excluded from counterfactual)",
       `${totalReviewRuns}  in=${formatTokens(totalReviewIn)}  out=${formatTokens(totalReviewOut)}`]);
   }
+  if (totalBenchRuns > 0) {
+    totalsKv.splice(1, 0, ["Benchmark runs (excluded from counterfactual)",
+      `${totalBenchRuns}  in=${formatTokens(totalBenchIn)}  out=${formatTokens(totalBenchOut)}`]);
+  }
   if (totalUnverifiedRuns > 0) {
     totalsKv.splice(1, 0, ["Unverified authoring runs (verify never passed)",
       `${totalUnverifiedRuns}  in=${formatTokens(totalUnverifiedIn)}  out=${formatTokens(totalUnverifiedOut)}`]);
@@ -460,6 +505,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   console.log(renderFootnote(`Counterfactual (*) = ollama token volume valued at ${opts.counterfactualModel} prices. ollama and Claude tokenize differently, so this is a proxy for "what Claude authoring would have cost," not a measured figure.`));
   if (totalReviewRuns > 0) {
     console.log(renderFootnote(`Review rows (run_id starting with "review:") are excluded from the counterfactual (review is not authoring) but reported separately so no spend is hidden.`));
+  }
+  if (totalBenchRuns > 0) {
+    console.log(renderFootnote(`Benchmark rows (run_id starting with "bench:") are excluded from the counterfactual (a benchmark sweep is an evaluation, not authoring — nobody would have paid Claude to generate benchmark completions across a model grid) but reported separately so no spend is hidden.`));
   }
   if (totalUnverifiedRuns > 0) {
     console.log(renderFootnote(`Unverified authoring runs (verified = false) are INCLUDED in the counterfactual — a failed attempt spent real tokens, and Claude would have paid for a wrong first try too — but reported separately so failed work is not hidden in the totals.`));
