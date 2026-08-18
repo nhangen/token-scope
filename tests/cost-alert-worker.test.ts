@@ -22,7 +22,12 @@ function spawn(t: string, cap: string, opts: { turns?: string; pct?: string; war
   const dir = mkdtempSync(join(tmpdir(), "ts-hook-"));
   const argv = ["bun", worker, t, dir, cap];
   if (opts.turns !== undefined || opts.pct !== undefined || opts.warn !== undefined) argv.push(opts.turns ?? "50");
-  if (opts.pct !== undefined || opts.warn !== undefined) argv.push(opts.pct ?? "25");
+  // Mirrors cost-alert-worker.ts's own default, needed only as a positional
+  // placeholder when `warn` is set without `pct`. It is a copy of a number that
+  // lives elsewhere — the thing this suite exists to catch — so the test below
+  // ("checkpoints at the SHIPPED default") deliberately omits every option and
+  // exercises the worker's real default rather than this one.
+  if (opts.pct !== undefined || opts.warn !== undefined) argv.push(opts.pct ?? "3.5");
   if (opts.warn !== undefined) argv.push(opts.warn);
   const proc = Bun.spawnSync(argv);
   return { dir, proc, stdout: proc.stdout.toString().trim(), stderr: proc.stderr.toString() };
@@ -176,6 +181,29 @@ describe("cost-alert-worker — defaults that actually fire", () => {
     const msg = statusMessage(alternating, REAL_CAP);
     // Turn 3 matches turn 1's context, so it is not a new peak and must not re-warn.
     expect(msg).not.toContain("Context is");
+  });
+
+  it("checkpoints at the SHIPPED default, not at a value the harness supplied", () => {
+    // The trip-wire the cap correction needed and did not have: every other
+    // checkpoint test passes argv[6] explicitly, so the default was the one
+    // number in the hook that nothing pinned — it could be moved to 90 with the
+    // whole suite green.
+    //
+    // The fixture is 100k credits. At a 1M cap that is 10% of the week, which
+    // sits between the shipped 3.5% and the old 25%: a checkpoint is written
+    // only if the default is the rescaled one. Every option is omitted so the
+    // worker's own default is what runs.
+    const { dir, proc } = spawn(transcript, "1000000");
+    expect(proc.exitCode).toBe(0);
+    expect(readdirSync(dir)).toEqual(["sess-hook.md"]);
+  });
+
+  it("does not checkpoint a session below the shipped default", () => {
+    // The other side of the same wire: 100k against a 10M cap is 1%, under
+    // 3.5%, so no file. Without this a default of 0 would pass the test above.
+    const { dir, proc } = spawn(transcript, "10000000");
+    expect(proc.exitCode).toBe(0);
+    expect(readdirSync(dir)).toEqual([]);
   });
 
   it("does not checkpoint a long but cheap session", () => {
