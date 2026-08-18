@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { computeWeeks, computeWindows, CREDIT_WEIGHTS, DEFAULT_WEEKLY_CAP, MIN_ELAPSED_TO_PROJECT } from "@/reports/credits";
+import { computeWeeks, computeWindows, computeWindowsChecked, WINDOW_MS, CREDIT_WEIGHTS, DEFAULT_WEEKLY_CAP, MIN_ELAPSED_TO_PROJECT } from "@/reports/credits";
 import type { CreditTurn } from "@/reports/credits";
 import { parseCap } from "@/parse";
 import { JsonlReader } from "@/jsonl";
@@ -36,7 +36,7 @@ describe("credits — weighting", () => {
     expect(CREDIT_WEIGHTS.output / CREDIT_WEIGHTS.cacheRead).toBe(50);
   });
 
-  it("defaults to the Max 20x weekly allowance as measured against /usage", () => {
+  it("defaults to the measured Max 5x weekly allowance", () => {
     expect(DEFAULT_WEEKLY_CAP).toBe(1_200_000_000);
   });
 
@@ -234,7 +234,7 @@ describe("credits — rolling 5h windows", () => {
 
   function turn(atMs: number, over: Partial<CreditTurn> = {}): CreditTurn {
     return {
-      timestamp: atMs, isSubagent: false,
+      timestampMs: atMs, isSubagent: false,
       inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0,
       ...over,
     };
@@ -286,11 +286,62 @@ describe("credits — rolling 5h windows", () => {
   });
 
   it("weights each component the same way the weekly view does", () => {
+    // All four, not just the total and one column. Asserting `credits` and
+    // `cacheRead` alone let a breakdown that filed output under `input` pass the
+    // whole suite — the total is right however the components are shuffled.
+    const tokens = { inputTokens: 1_000, cacheWriteTokens: 2_000, cacheReadTokens: 3_000, outputTokens: 4_000 };
+    const [w] = computeWindows([turn(T0, tokens)], T0);
+    const [week] = computeWeeks([row(tokens)], MON_MS + 8 * 86_400_000);
+    expect(w!.credits).toBeCloseTo(week!.credits, 6);
+    expect(w!.components.input).toBeCloseTo(week!.components.input, 6);
+    expect(w!.components.cacheWrite).toBeCloseTo(week!.components.cacheWrite, 6);
+    expect(w!.components.cacheRead).toBeCloseTo(week!.components.cacheRead, 6);
+    expect(w!.components.output).toBeCloseTo(week!.components.output, 6);
+  });
+
+  it("keeps the total equal to the sum of its components", () => {
     const [w] = computeWindows([turn(T0, {
-      inputTokens: 1_000, cacheWriteTokens: 1_000, cacheReadTokens: 1_000, outputTokens: 1_000,
+      inputTokens: 7, cacheWriteTokens: 11, cacheReadTokens: 13, outputTokens: 17,
     })], T0);
-    expect(w!.credits).toBeCloseTo(7_350, 6);
-    expect(w!.components.cacheRead).toBeCloseTo(100, 6);
+    const c = w!.components;
+    expect(c.input + c.cacheWrite + c.cacheRead + c.output).toBeCloseTo(w!.credits, 6);
+  });
+
+  it("puts a turn exactly at the window end into the next window", () => {
+    // The interval is half-open: [start, start + WINDOW_MS). Without a turn at
+    // exactly the boundary, `>=` and `>` are indistinguishable — and one of them
+    // makes consecutive windows overlap.
+    const ws = computeWindows([
+      turn(T0, { outputTokens: 100 }),
+      turn(T0 + WINDOW_MS, { outputTokens: 100 }),
+    ], T0 + WINDOW_MS);
+    expect(ws.length).toBe(2);
+    expect(ws[1]!.startMs).toBe(T0 + WINDOW_MS);
+  });
+
+  it("closes a window at the instant now reaches its end", () => {
+    const [w] = computeWindows([turn(T0, { outputTokens: 100 })], T0 + WINDOW_MS);
+    expect(w!.open).toBe(false);
+  });
+
+  it("drops a turn whose timestamp cannot be read, and says how many", () => {
+    // `src/jsonl.ts` yields NaN from a malformed timestamp, and NaN >= x is
+    // false — so an unguarded NaN anchor makes the new-window test permanently
+    // false and swallows every later turn into one window. The weekly path
+    // guards this at jsonl.ts:349; this one has to as well.
+    const { windows, droppedTurns } = computeWindowsChecked([
+      turn(NaN, { outputTokens: 100 }),
+      turn(T0, { outputTokens: 100 }),
+      turn(T0 + 6 * H, { outputTokens: 100 }),
+    ], T0 + 6 * H);
+    expect(droppedTurns).toBe(1);
+    expect(windows.length).toBe(2);
+    expect(windows[0]!.startMs).toBe(T0);
+    expect(Number.isFinite(windows[0]!.startMs)).toBe(true);
+  });
+
+  it("refuses a non-finite now rather than reporting every window closed", () => {
+    expect(() => computeWindows([turn(T0, { outputTokens: 100 })], NaN)).toThrow(TypeError);
   });
 
   it("breaks out the subagent share without double-counting it", () => {
