@@ -61,11 +61,23 @@ function isBenchRow(r: LedgerRun): boolean {
   return typeof r.runId === "string" && r.runId.startsWith("bench:");
 }
 
-/** A row is unverified iff its verify command never passed (verified ===
- *  false) and it is an authoring row. verified === null (absent) is unknown,
- *  not failed, and review/bench rows have their own reporting axes. */
+/** An authoring row that is not known to have succeeded: it either crashed or
+ *  hit the turn cap (completed === false), or it finished and its verify
+ *  command failed (verified === false).
+ *
+ *  Keying on `verified === false` alone — the first version of this — matched
+ *  ZERO rows in the live ledger while its own fixture passed, because the
+ *  bridge leaves `verified` null whenever there is no verify command and a
+ *  crashed run reports `completed:false, verified:null`. Measured across the
+ *  real ledger, `completed === false` is 4 rows and 1.72M input tokens, 56% of
+ *  the priced counterfactual. Build the predicate from the shapes the writer
+ *  emits, not from the ones the schema permits.
+ *
+ *  `completed:true, verified:null` is NOT failed — it is the commonest shape
+ *  (15 of 34 rows) and means "finished, nothing asserted". */
 function isUnverifiedRow(r: LedgerRun): boolean {
-  return r.verified === false && !isReviewRow(r) && !isBenchRow(r);
+  if (isReviewRow(r) || isBenchRow(r)) return false;
+  return r.completed === false || r.verified === false;
 }
 
 /** A row's label: the second colon-separated segment of run_id, or null when
@@ -497,7 +509,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       `${totalBenchRuns}  in=${formatTokens(totalBenchIn)}  out=${formatTokens(totalBenchOut)}`]);
   }
   if (totalUnverifiedRuns > 0) {
-    totalsKv.splice(1, 0, ["Unverified authoring runs (verify never passed)",
+    totalsKv.splice(1, 0, ["Authoring runs that did not succeed",
       `${totalUnverifiedRuns}  in=${formatTokens(totalUnverifiedIn)}  out=${formatTokens(totalUnverifiedOut)}`]);
   }
   console.log(renderKV(totalsKv));
@@ -510,7 +522,11 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     console.log(renderFootnote(`Benchmark rows (run_id starting with "bench:") are excluded from the counterfactual (a benchmark sweep is an evaluation, not authoring — nobody would have paid Claude to generate benchmark completions across a model grid) but reported separately so no spend is hidden.`));
   }
   if (totalUnverifiedRuns > 0) {
-    console.log(renderFootnote(`Unverified authoring runs (verified = false) are INCLUDED in the counterfactual — a failed attempt spent real tokens, and Claude would have paid for a wrong first try too — but reported separately so failed work is not hidden in the totals.`));
+    const failedShare = valueAtClaudePrices(totalUnverifiedIn, totalUnverifiedOut, opts.counterfactualModel);
+    const sharePct = failedShare !== null && counterfactualAttributed > 0
+      ? ` That is ${formatUsd(failedShare)} of the ${formatUsd(counterfactualAttributed)} counterfactual — ${Math.round(failedShare / counterfactualAttributed * 100)}% of the priced figure bought nothing.`
+      : "";
+    console.log(renderFootnote(`Authoring runs that did not succeed (crashed or hit the turn cap, or failed their verify command) are INCLUDED in the counterfactual — the tokens were really spent, and Claude would have paid for a wrong first try too — but reported separately so failed work is not hidden in the total.${sharePct}`));
   }
   if (opts.pmCost !== undefined) {
     console.log(renderFootnote(`PM overhead (†) = ${formatUsd(opts.pmCost)}, supplied by the caller as a measured figure (e.g. a subagent PM's cost from the subagent-bucket delta between two --spend runs). Net = Counterfactual − measured PM. The figure's accuracy is the caller's — the report does not verify it against transcripts.`));
