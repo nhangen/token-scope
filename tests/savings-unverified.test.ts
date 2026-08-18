@@ -1,0 +1,106 @@
+import { describe, expect, it, beforeAll, afterAll } from "bun:test";
+import { createReader } from "@/reader";
+import type { Reader } from "@/reader";
+import { renderSavingsReport, valueAtClaudePrices, DEFAULT_COUNTERFACTUAL_MODEL } from "@/reports/savings";
+
+const SPEND_DIR = new URL("./fixtures/spend-projects", import.meta.url).pathname;
+const LEDGER = new URL("./fixtures/ledger/runs-unverified.jsonl", import.meta.url).pathname;
+
+let reader: Reader;
+beforeAll(() => { reader = createReader({ source: "jsonl", projectsDirs: [SPEND_DIR] }); });
+afterAll(() => { reader.close(); });
+
+function capture(fn: () => void): string {
+  const lines: string[] = [];
+  const orig = console.log;
+  console.log = (...args: unknown[]) => { lines.push(args.map(String).join(" ")); };
+  try { fn(); } finally { console.log = orig; }
+  return lines.join("\n") + (lines.length > 0 ? "\n" : "");
+}
+
+const base = {
+  since: 0, sinceStr: "all", json: true,
+  ledgerPath: LEDGER, counterfactualModel: DEFAULT_COUNTERFACTUAL_MODEL,
+};
+
+// The fixture's five rows:
+//   author:500        100000 /  40000  verified: true
+//   author:501         30000 /   6000  verified: false   <- unverified authoring
+//   author:502          8000 /   1000  verified: false, completed: false  <- unverified
+//   review:500:p1of2   50000 /   2000  verified: false   <- review, NOT unverified authoring
+//   r-old               5000 /    500  verified absent   <- legacy, NOT unverified
+const AUTHORING_IN = 100000 + 30000 + 8000 + 5000;  // 143000
+const AUTHORING_OUT = 40000 + 6000 + 1000 + 500;    //  47500
+const UNVERIFIED_IN = 30000 + 8000;                 //  38000
+const UNVERIFIED_OUT = 6000 + 1000;                 //   7000
+
+describe("renderSavingsReport — unverified authoring runs", () => {
+  it("counts an authoring row with verified:false as unverified", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
+    const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
+    expect(s.unverified_run_count).toBe(2);
+    expect(s.unverified_input).toBe(UNVERIFIED_IN);
+    expect(s.unverified_output).toBe(UNVERIFIED_OUT);
+  });
+
+  it("surfaces the same figures in totals", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
+    expect(p.totals.unverified_run_count).toBe(2);
+    expect(p.totals.unverified_input).toBe(UNVERIFIED_IN);
+    expect(p.totals.unverified_output).toBe(UNVERIFIED_OUT);
+  });
+
+  it("does NOT count a review row as an unverified authoring run", () => {
+    // review:500:p1of2 carries verified:false, but review rows are already
+    // excluded from the counterfactual — counting them here would double-report
+    // the same volume under two different warnings.
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
+    const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
+    expect(s.unverified_input).not.toBe(UNVERIFIED_IN + 50000);
+    expect(s.review_run_count).toBe(1);
+  });
+
+  it("does NOT count a legacy row whose verified field is absent", () => {
+    // Absent is unknown, not failed. Treating it as failed would retroactively
+    // flag every pre-ledger-schema row.
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
+    const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
+    expect(s.unverified_run_count).toBe(2);
+    expect(s.unverified_input).not.toBe(UNVERIFIED_IN + 5000);
+  });
+
+  it("leaves the counterfactual pricing unchanged — a failed attempt still cost money", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
+    const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
+    expect(s.counterfactual_usd).toBeCloseTo(
+      valueAtClaudePrices(AUTHORING_IN, AUTHORING_OUT, DEFAULT_COUNTERFACTUAL_MODEL)!, 6,
+    );
+  });
+
+  it("breaks unverified volume down per label", () => {
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, byLabel: true })));
+    const l501 = p.by_label.find((x: any) => x.label === "501");
+    expect(l501.unverified_run_count).toBe(1);
+    expect(l501.unverified_input).toBe(30000);
+    expect(l501.unverified_output).toBe(6000);
+
+    const l500 = p.by_label.find((x: any) => x.label === "500");
+    expect(l500.unverified_run_count).toBe(0);
+    expect(l500.unverified_input).toBe(0);
+  });
+
+  it("names the unverified volume in the text report", () => {
+    const text = capture(() => renderSavingsReport(reader, { ...base, json: false }));
+    expect(text.toLowerCase()).toContain("unverified");
+  });
+
+  it("stays silent on a ledger where nothing failed", () => {
+    const clean = new URL("./fixtures/ledger/runs-labelled.jsonl", import.meta.url).pathname;
+    const text = capture(() => renderSavingsReport(reader, { ...base, ledgerPath: clean, json: false }));
+    expect(text.toLowerCase()).not.toContain("unverified");
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, ledgerPath: clean })));
+    const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
+    expect(s.unverified_run_count).toBeUndefined();
+    expect(p.totals.unverified_run_count).toBeUndefined();
+  });
+});
