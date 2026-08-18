@@ -5,6 +5,16 @@ All notable changes to token-scope are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **The weekly credit cap was measured instead of assumed.** `DEFAULT_WEEKLY_CAP` shipped as 166.7M, described as Max 20x and never checked against the meter. Read against Claude Code's `/usage` — 7% of a weekly limit on a Max 5x plan over a window measuring 126.8M credits — it is ~1.2B, so both the value and the tier label were wrong. Four consecutive real weeks used to report 1.77x-4.74x of cap, which would have meant sustained lockout that never happened; they now read 0.25x-0.66x. Max 20x scales to roughly 4.8B, but that is inferred and unmeasured.
+- **Two thresholds moved with it, because both are shares of the cap.** `TOKEN_SCOPE_TURN_WARN_PCT` is now `0.0056` (was `0.04`): its calibration target is a concrete ~1.1M-token turn, and at 0.04% of 1.2B that turn stopped firing. `TOKEN_SCOPE_CHECKPOINT_PCT` is now `3.5` (was `25`): 25% of 1.2B is 300M credits in one session, which fired on 1 of 963 real sessions against 18 for the old trigger — a checkpoint that never fires is indistinguishable from no session being heavy enough.
+- `cost-alert-worker.ts` no longer keeps its own copy of the cap default, and `cost-alert.sh`'s header no longer documents any threshold defaults. Both were second copies that had already drifted, under a comment explaining why second copies must not exist.
+
+### Added
+- `computeWindows()` buckets turns into **rolling 5-hour windows**, the limit that actually binds a heavy user — `/usage` showed 64% of a 5h window consumed in twenty minutes while the same week sat at 7%. Pure and tested; not yet wired into the `--credits` report.
+
 ## [1.5.0] — 2026-08-12
 
 ### Changed

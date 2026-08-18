@@ -30,15 +30,21 @@ const checkpointTurns = parseInt(process.argv[5] || "50");
 /**
  * Checkpoint once a session has consumed this share of the weekly cap.
  *
- * Left at 25% across the cap correction, unlike turnWarnPct below. The
- * difference is that this threshold's intent is genuinely relative — "this one
- * session ate a quarter of the week" means the same thing whatever the week is
- * worth — while turnWarnPct's comment pins it to a concrete turn it must catch,
- * and that anchor moves with the cap. Scaling this one to preserve its old
- * absolute trigger was tried and reverted: it made the checkpoint fire early
- * enough to displace the context warning in a session that needed the warning.
+ * Rescaled with the cap, like turnWarnPct below, because both are shares and
+ * raising the cap 7.2x made each one that much harder to trip. 25% of 1.2B is
+ * 300M credits in a single session: measured across 963 real sessions, the old
+ * 41.7M trigger fired on 18 of them and 300M fires on exactly 1. A checkpoint
+ * that never fires is indistinguishable from "no session was heavy enough",
+ * since nothing is written and nothing is said.
+ *
+ * 3.5% restores that 41.7M trigger, which is the value the behaviour was
+ * actually tuned against. An earlier revision kept 25% on the theory that a
+ * scaled value made the checkpoint displace the context warning — that was
+ * wrong. The checkpoint line is pushed only when `alerts` is already empty, so
+ * it is the displaced, never the displacer; the real cause of what was observed
+ * was turnWarnPct, fixed separately.
  */
-const checkpointPct = parseFloat(process.argv[6] || "25");
+const checkpointPct = parseFloat(process.argv[6] || "3.5");
 /**
  * Warn when a single turn's CONTEXT costs this share of the weekly cap. The
  * default is calibrated against a real turn rather than picked round: a ~1.1M
