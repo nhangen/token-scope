@@ -1,7 +1,7 @@
 import type { Reader, CreditWeekRow } from "@/reader";
 import { renderHeader, renderKV, renderTable, renderFootnote, formatTokens, formatPct, bold } from "@/format";
 import { VERSION } from "@/version";
-import { CREDIT_WEIGHTS } from "@/credits";
+import { CREDIT_WEIGHTS, creditsOf } from "@/credits";
 
 // Weights and cap live in @/credits so the cost-alert hook warns in the same
 // unit this report measures in. Re-exported here because the CLI and tests
@@ -94,6 +94,117 @@ export function computeWeeks(rows: CreditWeekRow[], nowMs: number, sinceMs = 0):
       projected: partial && !truncated && elapsed >= MIN_ELAPSED_TO_PROJECT ? credits / elapsed : null,
     };
   });
+}
+
+/**
+ * A single turn of usage.
+ *
+ * The field is `timestampMs`, not `timestamp`, and the suffix is load-bearing:
+ * `src/db.ts` and the JSONL rows both expose a field literally named
+ * `timestamp` carrying *seconds*. Fed those, this function returns one window
+ * spanning everything and says nothing, because a whole week in seconds is
+ * smaller than WINDOW_MS. `src/jsonl.ts` already uses `timestampMs` for exactly
+ * this value.
+ */
+export interface CreditTurn {
+  timestampMs: number;
+  isSubagent: boolean;
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+}
+
+/** A five-hour bucket of turns, anchored at the turn that opened it. */
+export interface CreditWindow {
+  startMs: number;
+  endMs: number;
+  turns: number;
+  subagentTurns: number;
+  credits: number;
+  /** The subagent share of `credits`, already counted in it. */
+  subagentCredits: number;
+  components: { input: number; cacheWrite: number; cacheRead: number; output: number };
+  /** True only for the window containing `now`. */
+  open: boolean;
+}
+
+export const WINDOW_MS = 5 * 3_600_000;
+
+/** What `computeWindowsChecked` returns: the windows, plus what it refused. */
+export interface CheckedWindows {
+  windows: CreditWindow[];
+  /** Turns discarded for an unreadable timestamp. Never silently zero. */
+  droppedTurns: number;
+}
+
+/**
+ * Bucket turns into rolling windows, reporting what it had to discard.
+ *
+ * A turn whose timestamp is unreadable is data loss and has to be counted as
+ * such. `src/jsonl.ts` yields NaN from a malformed timestamp, and `NaN >= x` is
+ * false — so an unguarded NaN anchor makes the new-window test permanently
+ * false and folds every later turn into one window with NaN bounds. Total and
+ * turn count come out right and the bucketing is entirely wrong, which is the
+ * worst shape for a bug to have. The weekly path guards the same field at
+ * `jsonl.ts:349`.
+ */
+export function computeWindowsChecked(turns: CreditTurn[], nowMs: number): CheckedWindows {
+  if (!Number.isFinite(nowMs)) {
+    throw new TypeError(`computeWindows: nowMs must be finite (got ${nowMs})`);
+  }
+  const usable = turns.filter((t) => Number.isFinite(t.timestampMs));
+  const sorted = [...usable].sort((a, b) => a.timestampMs - b.timestampMs);
+  const windows: CreditWindow[] = [];
+  let current: CreditWindow | undefined;
+
+  for (const t of sorted) {
+    if (current === undefined || t.timestampMs >= current.startMs + WINDOW_MS) {
+      // Anchor a new window at the turn that opened it — never at a rounded
+      // clock boundary or the previous turn — so idle gaps emit no window.
+      current = {
+        startMs: t.timestampMs,
+        endMs: t.timestampMs + WINDOW_MS,
+        turns: 0,
+        subagentTurns: 0,
+        credits: 0,
+        subagentCredits: 0,
+        components: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 },
+        open: false,
+      };
+      windows.push(current);
+    }
+    const w = current;
+    w.turns += 1;
+    // creditsOf, not a fourth hand-rolled copy of the same sum: a fifth entry
+    // in CREDIT_WEIGHTS would leave an open-coded copy silently low, with types
+    // happy and tests green. That is the shape of the constant this file's cap
+    // correction exists to fix.
+    const credits = creditsOf(t);
+    w.credits += credits;
+    w.components.input += t.inputTokens * CREDIT_WEIGHTS.input;
+    w.components.cacheWrite += t.cacheWriteTokens * CREDIT_WEIGHTS.cacheWrite;
+    w.components.cacheRead += t.cacheReadTokens * CREDIT_WEIGHTS.cacheRead;
+    w.components.output += t.outputTokens * CREDIT_WEIGHTS.output;
+    if (t.isSubagent) {
+      w.subagentTurns += 1;
+      w.subagentCredits += credits;
+    }
+  }
+
+  for (const w of windows) {
+    // Both bounds, not just the upper one. A future-dated turn — clock skew on a
+    // synced host, which the weekly view already guards against — anchors a
+    // window that starts after `now`, and `nowMs < endMs` alone would report
+    // that one as open too, contradicting this field's meaning.
+    w.open = nowMs >= w.startMs && nowMs < w.endMs;
+  }
+  return { windows, droppedTurns: turns.length - usable.length };
+}
+
+/** The common case: bucket turns and ignore the dropped count. */
+export function computeWindows(turns: CreditTurn[], nowMs: number): CreditWindow[] {
+  return computeWindowsChecked(turns, nowMs).windows;
 }
 
 export function renderCreditsReport(reader: Reader, opts: Options): void {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, readdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { DEFAULT_WEEKLY_CAP } from "@/credits";
 
 const worker = new URL("../hooks/cost-alert-worker.ts", import.meta.url).pathname;
 const transcript = new URL("./fixtures/hook/sess-hook.jsonl", import.meta.url).pathname;
@@ -21,7 +22,12 @@ function spawn(t: string, cap: string, opts: { turns?: string; pct?: string; war
   const dir = mkdtempSync(join(tmpdir(), "ts-hook-"));
   const argv = ["bun", worker, t, dir, cap];
   if (opts.turns !== undefined || opts.pct !== undefined || opts.warn !== undefined) argv.push(opts.turns ?? "50");
-  if (opts.pct !== undefined || opts.warn !== undefined) argv.push(opts.pct ?? "25");
+  // Mirrors cost-alert-worker.ts's own default, needed only as a positional
+  // placeholder when `warn` is set without `pct`. It is a copy of a number that
+  // lives elsewhere — the thing this suite exists to catch — so the test below
+  // ("checkpoints at the SHIPPED default") deliberately omits every option and
+  // exercises the worker's real default rather than this one.
+  if (opts.pct !== undefined || opts.warn !== undefined) argv.push(opts.pct ?? "3.5");
   if (opts.warn !== undefined) argv.push(opts.warn);
   const proc = Bun.spawnSync(argv);
   return { dir, proc, stdout: proc.stdout.toString().trim(), stderr: proc.stderr.toString() };
@@ -100,7 +106,15 @@ describe("cost-alert-worker — thresholds are credits, not dollars", () => {
   it("warns when one turn's context alone costs a slice of the week", () => {
     // Turn 2 re-sends 1M tokens of context: 100k credits at the cache-read
     // weight, 10% of a 1M cap, against a 0.5% warn threshold.
-    const msg = statusMessage(context, CAP);
+    //
+    // The threshold is passed rather than defaulted, because CAP here is a
+    // synthetic 1M and the shipped default is calibrated against the real 1.2B.
+    // Left to default, 0.0056% of 1M is 56 credits — under which turn *1*'s
+    // context already crosses, and the "warn only on the crossing turn" guard
+    // then correctly suppresses turn 2. That tested the fixture's arithmetic,
+    // not the mechanism. The shipped default is exercised against the real cap
+    // in "defaults that actually fire" below, which is where it belongs.
+    const msg = statusMessage(context, CAP, { warn: "0.5" });
     expect(msg).toContain("Context is");
     expect(msg).toContain("/clear");
   });
@@ -133,7 +147,11 @@ describe("cost-alert-worker — thresholds are credits, not dollars", () => {
 });
 
 describe("cost-alert-worker — defaults that actually fire", () => {
-  const REAL_CAP = "166700000";   // the real Max 20x weekly allowance
+  // Read from the module rather than written out: this block asserts that the
+  // shipped thresholds fire against the REAL cap, so a hardcoded copy here would
+  // keep passing against a cap the tool no longer uses — which is what happened
+  // when the cap moved off 166.7M and these tests stayed green regardless.
+  const REAL_CAP = String(DEFAULT_WEEKLY_CAP);
   const bigContext = new URL("./fixtures/hook/sess-bigcontext.jsonl", import.meta.url).pathname;
   const cheapLong = new URL("./fixtures/hook/sess-cheap-long.jsonl", import.meta.url).pathname;
   const alternating = new URL("./fixtures/hook/sess-alternating.jsonl", import.meta.url).pathname;
@@ -163,6 +181,29 @@ describe("cost-alert-worker — defaults that actually fire", () => {
     const msg = statusMessage(alternating, REAL_CAP);
     // Turn 3 matches turn 1's context, so it is not a new peak and must not re-warn.
     expect(msg).not.toContain("Context is");
+  });
+
+  it("checkpoints at the SHIPPED default, not at a value the harness supplied", () => {
+    // The trip-wire the cap correction needed and did not have: every other
+    // checkpoint test passes argv[6] explicitly, so the default was the one
+    // number in the hook that nothing pinned — it could be moved to 90 with the
+    // whole suite green.
+    //
+    // The fixture is 100k credits. At a 1M cap that is 10% of the week, which
+    // sits between the shipped 3.5% and the old 25%: a checkpoint is written
+    // only if the default is the rescaled one. Every option is omitted so the
+    // worker's own default is what runs.
+    const { dir, proc } = spawn(transcript, "1000000");
+    expect(proc.exitCode).toBe(0);
+    expect(readdirSync(dir)).toEqual(["sess-hook.md"]);
+  });
+
+  it("does not checkpoint a session below the shipped default", () => {
+    // The other side of the same wire: 100k against a 10M cap is 1%, under
+    // 3.5%, so no file. Without this a default of 0 would pass the test above.
+    const { dir, proc } = spawn(transcript, "10000000");
+    expect(proc.exitCode).toBe(0);
+    expect(readdirSync(dir)).toEqual([]);
   });
 
   it("does not checkpoint a long but cheap session", () => {
@@ -265,7 +306,7 @@ describe("cost-alert.sh — the wrapper's own config handling", () => {
   });
 
   it("falls back to the default when the variable is unset or empty", () => {
-    expect(capPct("")).toBeCloseTo(capPct("166700000"), 1);
+    expect(capPct("")).toBeCloseTo(capPct(String(DEFAULT_WEEKLY_CAP)), 1);
   });
 
   it("warns about a big context THROUGH THE WRAPPER at shipped defaults", () => {

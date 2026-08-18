@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { computeWeeks, CREDIT_WEIGHTS, DEFAULT_WEEKLY_CAP, MIN_ELAPSED_TO_PROJECT } from "@/reports/credits";
+import { computeWeeks, computeWindows, computeWindowsChecked, WINDOW_MS, CREDIT_WEIGHTS, DEFAULT_WEEKLY_CAP, MIN_ELAPSED_TO_PROJECT } from "@/reports/credits";
+import type { CreditTurn } from "@/reports/credits";
 import { parseCap } from "@/parse";
 import { JsonlReader } from "@/jsonl";
 import { openDb, createSqliteReader, resolveDbPath } from "@/db";
@@ -35,8 +36,15 @@ describe("credits — weighting", () => {
     expect(CREDIT_WEIGHTS.output / CREDIT_WEIGHTS.cacheRead).toBe(50);
   });
 
-  it("defaults to the Max 20x weekly allowance", () => {
-    expect(DEFAULT_WEEKLY_CAP).toBe(166_700_000);
+  it("defaults to the measured Max 5x weekly allowance", () => {
+    expect(DEFAULT_WEEKLY_CAP).toBe(1_200_000_000);
+  });
+
+  it("puts a heavy real week under cap rather than several times over it", () => {
+    // Regression on the 30x-low constant: 722.4M credits was a real week, and
+    // /usage never showed it near the ceiling. A cap that reports it as 4.33x
+    // over is measuring in units nothing else uses.
+    expect(722_400_000 / DEFAULT_WEEKLY_CAP).toBeLessThan(1);
   });
 });
 
@@ -217,5 +225,178 @@ describe("credits — subagent share", () => {
     expect(w!.subagentCredits).toBeCloseTo(2_800, 6); // 400*5 + 8000*0.1
     // 40% of turns but 47% of credits — the point of measuring credits
     expect(w!.subagentCredits / w!.credits).toBeGreaterThan(w!.subagentTurns / w!.turns);
+  });
+});
+
+describe("credits — rolling 5h windows", () => {
+  const H = 3_600_000;
+  const T0 = Date.parse("2026-08-17T12:40:00.000Z");
+
+  function turn(atMs: number, over: Partial<CreditTurn> = {}): CreditTurn {
+    return {
+      timestampMs: atMs, isSubagent: false,
+      inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0,
+      ...over,
+    };
+  }
+
+  it("opens a window at the first turn and closes it five hours later", () => {
+    const [w] = computeWindows([turn(T0, { outputTokens: 100 })], T0 + 60_000);
+    expect(w!.startMs).toBe(T0);
+    expect(w!.endMs).toBe(T0 + 5 * H);
+    expect(w!.credits).toBe(500);
+    expect(w!.turns).toBe(1);
+  });
+
+  it("keeps turns inside the window in the same window", () => {
+    // The window is anchored to its OWN start, not to the previous turn: four
+    // hours of steady chatter is one window, however the turns are spaced.
+    const ws = computeWindows(
+      [turn(T0), turn(T0 + 2 * H), turn(T0 + 4 * H)].map((t) => ({ ...t, outputTokens: 100 })),
+      T0 + 4 * H,
+    );
+    expect(ws.length).toBe(1);
+    expect(ws[0]!.turns).toBe(3);
+    expect(ws[0]!.credits).toBe(1_500);
+  });
+
+  it("opens a fresh window on the first turn past the previous window's end", () => {
+    // Not on a five-hour GAP between turns. A turn at +4h then one at +6h is two
+    // windows, because the first window expired at +5h — measuring the gap
+    // instead (2h) would wrongly fold them together.
+    const ws = computeWindows(
+      [turn(T0, { outputTokens: 100 }), turn(T0 + 4 * H, { outputTokens: 100 }), turn(T0 + 6 * H, { outputTokens: 100 })],
+      T0 + 6 * H,
+    );
+    expect(ws.length).toBe(2);
+    expect(ws[0]!.turns).toBe(2);
+    expect(ws[1]!.startMs).toBe(T0 + 6 * H);
+    expect(ws[1]!.turns).toBe(1);
+  });
+
+  it("leaves a gap with no turns as no window at all", () => {
+    // Idle time does not consume an allowance, so a quiet stretch must not
+    // appear as an empty window between two busy ones.
+    const ws = computeWindows(
+      [turn(T0, { outputTokens: 100 }), turn(T0 + 40 * H, { outputTokens: 100 })],
+      T0 + 40 * H,
+    );
+    expect(ws.length).toBe(2);
+    expect(ws[1]!.startMs).toBe(T0 + 40 * H);
+  });
+
+  it("weights each component the same way the weekly view does", () => {
+    // All four, not just the total and one column. Asserting `credits` and
+    // `cacheRead` alone let a breakdown that filed output under `input` pass the
+    // whole suite — the total is right however the components are shuffled.
+    const tokens = { inputTokens: 1_000, cacheWriteTokens: 2_000, cacheReadTokens: 3_000, outputTokens: 4_000 };
+    const [w] = computeWindows([turn(T0, tokens)], T0);
+    const [week] = computeWeeks([row(tokens)], MON_MS + 8 * 86_400_000);
+    expect(w!.credits).toBeCloseTo(week!.credits, 6);
+    expect(w!.components.input).toBeCloseTo(week!.components.input, 6);
+    expect(w!.components.cacheWrite).toBeCloseTo(week!.components.cacheWrite, 6);
+    expect(w!.components.cacheRead).toBeCloseTo(week!.components.cacheRead, 6);
+    expect(w!.components.output).toBeCloseTo(week!.components.output, 6);
+  });
+
+  it("keeps the total equal to the sum of its components", () => {
+    const [w] = computeWindows([turn(T0, {
+      inputTokens: 7, cacheWriteTokens: 11, cacheReadTokens: 13, outputTokens: 17,
+    })], T0);
+    const c = w!.components;
+    expect(c.input + c.cacheWrite + c.cacheRead + c.output).toBeCloseTo(w!.credits, 6);
+  });
+
+  it("puts a turn exactly at the window end into the next window", () => {
+    // The interval is half-open: [start, start + WINDOW_MS). Without a turn at
+    // exactly the boundary, `>=` and `>` are indistinguishable — and one of them
+    // makes consecutive windows overlap.
+    const ws = computeWindows([
+      turn(T0, { outputTokens: 100 }),
+      turn(T0 + WINDOW_MS, { outputTokens: 100 }),
+    ], T0 + WINDOW_MS);
+    expect(ws.length).toBe(2);
+    expect(ws[1]!.startMs).toBe(T0 + WINDOW_MS);
+  });
+
+  it("closes a window at the instant now reaches its end", () => {
+    const [w] = computeWindows([turn(T0, { outputTokens: 100 })], T0 + WINDOW_MS);
+    expect(w!.open).toBe(false);
+  });
+
+  it("drops a turn whose timestamp cannot be read, and says how many", () => {
+    // `src/jsonl.ts` yields NaN from a malformed timestamp, and NaN >= x is
+    // false — so an unguarded NaN anchor makes the new-window test permanently
+    // false and swallows every later turn into one window. The weekly path
+    // guards this at jsonl.ts:349; this one has to as well.
+    const { windows, droppedTurns } = computeWindowsChecked([
+      turn(NaN, { outputTokens: 100 }),
+      turn(T0, { outputTokens: 100 }),
+      turn(T0 + 6 * H, { outputTokens: 100 }),
+    ], T0 + 6 * H);
+    expect(droppedTurns).toBe(1);
+    expect(windows.length).toBe(2);
+    expect(windows[0]!.startMs).toBe(T0);
+    expect(Number.isFinite(windows[0]!.startMs)).toBe(true);
+  });
+
+  it("refuses a non-finite now rather than reporting every window closed", () => {
+    expect(() => computeWindows([turn(T0, { outputTokens: 100 })], NaN)).toThrow(TypeError);
+  });
+
+  it("breaks out the subagent share without double-counting it", () => {
+    const ws = computeWindows([
+      turn(T0, { outputTokens: 100 }),
+      turn(T0 + H, { outputTokens: 100, isSubagent: true }),
+    ], T0 + H);
+    expect(ws[0]!.credits).toBe(1_000);
+    expect(ws[0]!.subagentCredits).toBe(500);
+    expect(ws[0]!.subagentTurns).toBe(1);
+  });
+
+  it("marks only the window containing now as open", () => {
+    const ws = computeWindows(
+      [turn(T0, { outputTokens: 100 }), turn(T0 + 6 * H, { outputTokens: 100 })],
+      T0 + 7 * H,
+    );
+    expect(ws[0]!.open).toBe(false);
+    expect(ws[1]!.open).toBe(true);
+  });
+
+  it("closes the last window once now is past its end", () => {
+    const [w] = computeWindows([turn(T0, { outputTokens: 100 })], T0 + 6 * H);
+    expect(w!.open).toBe(false);
+  });
+
+  it("sorts unordered input rather than trusting the caller", () => {
+    // The JSONL reader walks files per project, so turns arrive interleaved
+    // across sessions and are not globally ordered. Bucketing them as-given
+    // opens a new window every time the file order jumps backwards.
+    const ws = computeWindows([
+      turn(T0 + 2 * H, { outputTokens: 100 }),
+      turn(T0, { outputTokens: 100 }),
+      turn(T0 + H, { outputTokens: 100 }),
+    ], T0 + 2 * H);
+    expect(ws.length).toBe(1);
+    expect(ws[0]!.startMs).toBe(T0);
+    expect(ws[0]!.turns).toBe(3);
+  });
+
+  it("does not call a future-dated window open", () => {
+    // Clock skew on a synced host puts a turn ahead of now, anchoring a window
+    // that has not started. Testing only `now < endMs` marks it open as well,
+    // so the report would show two live windows. The weekly view already
+    // guards the same skew when it picks the current week.
+    const ws = computeWindows([
+      turn(T0, { outputTokens: 100 }),
+      turn(T0 + 30 * H, { outputTokens: 100 }),
+    ], T0 + H);
+    expect(ws[0]!.open).toBe(true);
+    expect(ws[1]!.open).toBe(false);
+    expect(ws.filter((w) => w.open).length).toBe(1);
+  });
+
+  it("returns nothing for no turns", () => {
+    expect(computeWindows([], T0)).toEqual([]);
   });
 });

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
-import { creditsOf, fmtCredits, CREDIT_WEIGHTS } from "../src/credits";
+import { creditsOf, fmtCredits, CREDIT_WEIGHTS, DEFAULT_WEEKLY_CAP } from "../src/credits";
 
 // Defaults live HERE and only here. cost-alert.sh passes an empty argument when
 // the corresponding env var is unset, so a default written in both files cannot
@@ -16,20 +16,44 @@ import { creditsOf, fmtCredits, CREDIT_WEIGHTS } from "../src/credits";
 // every session (634 checkpoint files on this machine) and the signal was noise.
 const file = process.argv[2]!;
 const checkpointDir = process.argv[3]!;
-/** Weekly credit allowance this session's share is measured against. */
-const weeklyCap = parseFloat(process.argv[4] || "166700000");
+/**
+ * Weekly credit allowance this session's share is measured against.
+ *
+ * Imported rather than written out, because this file's own header rule — a
+ * default written in two places silently disagrees — applied to the cap too and
+ * was not being followed: this line carried its own copy of 166.7M, so
+ * correcting DEFAULT_WEEKLY_CAP would have moved the report while leaving every
+ * hook threshold on the old number.
+ */
+const weeklyCap = parseFloat(process.argv[4] || String(DEFAULT_WEEKLY_CAP));
 const checkpointTurns = parseInt(process.argv[5] || "50");
-/** Checkpoint once a session has consumed this share of the weekly cap. */
-const checkpointPct = parseFloat(process.argv[6] || "25");
+/**
+ * Checkpoint once a session has consumed this share of the weekly cap.
+ *
+ * Rescaled with the cap, like turnWarnPct below, because both are shares and
+ * raising the cap 7.2x made each one that much harder to trip. 25% of 1.2B is
+ * 300M credits in a single session: measured across 963 real sessions, the old
+ * 41.7M trigger fired on 18 of them and 300M fires on exactly 1. A checkpoint
+ * that never fires is indistinguishable from "no session was heavy enough",
+ * since nothing is written and nothing is said.
+ *
+ * 3.5% restores that 41.7M trigger, which is the value the behaviour was
+ * actually tuned against. An earlier revision kept 25% on the theory that a
+ * scaled value made the checkpoint displace the context warning — that was
+ * wrong. The checkpoint line is pushed only when `alerts` is already empty, so
+ * it is the displaced, never the displacer; the real cause of what was observed
+ * was turnWarnPct, fixed separately.
+ */
+const checkpointPct = parseFloat(process.argv[6] || "3.5");
 /**
  * Warn when a single turn's CONTEXT costs this share of the weekly cap. The
  * default is calibrated against a real turn rather than picked round: a ~1.1M
- * token context costs ~110k credits, which is 0.066% of a 166.7M cap. The first
+ * token context costs ~110k credits, which is 0.0092% of a 1.2B cap. The first
  * cut used 0.5%, needing 8.3M tokens of context against a 1M window — it could
  * never fire, and the README example it shipped with was 7x below its own
  * threshold, which is how the mistake was caught.
  */
-const turnWarnPct = parseFloat(process.argv[7] || "0.04");
+const turnWarnPct = parseFloat(process.argv[7] || "0.0056");
 
 // A malformed value must not silently become 0 and fire every rung at once.
 for (const [name, v] of [["cap", weeklyCap], ["checkpoint-pct", checkpointPct], ["turn-warn-pct", turnWarnPct], ["turns", checkpointTurns]] as const) {

@@ -32,8 +32,42 @@ export const CREDIT_WEIGHTS = {
   output: 5,
 } as const;
 
-/** Max 20x weekly allowance, in weighted tokens. Override with --cap or TOKEN_SCOPE_CREDIT_CAP. */
-export const DEFAULT_WEEKLY_CAP = 166_700_000;
+/**
+ * Max **5x** weekly allowance, in weighted tokens. Override with --cap or
+ * TOKEN_SCOPE_CREDIT_CAP.
+ *
+ * Measured, not published. On 2026-08-17 Claude Code's `/usage` reported 7% of
+ * the weekly limit consumed on a Max 5x plan; the same window measured 126.8M
+ * credits here. That solves to ~1.81B — against a cap inflated by an active
+ * "+50% weekly limits" promo, so the base is ~1.2B. Scaling by plan multiplier
+ * puts Max 20x near 4.8B, but that figure is inferred and has never been read
+ * off a meter; measure it the same way before trusting it.
+ *
+ * Note the tier: the previous constant claimed to be Max 20x while carrying
+ * 166.7M, and the fix here is a 5x number. Both the value and the label were
+ * wrong, and correcting only the value would have left the same defect in
+ * place. If the default tier changes, re-measure — do not multiply.
+ *
+ * The previous value was never checked against the credit meter at all, and it
+ * was wrong by roughly 30x: it made four consecutive real weeks report
+ * 1.77x-4.74x of cap, which would have meant sustained lockout that never
+ * happened. Against 1.2B those weeks read 0.25x-0.66x.
+ *
+ * Two honest caveats.
+ *
+ * `/usage` reports whole percents, so 7% carries ~±7% of relative error and the
+ * promo-inflated cap is only bounded to ~1.69B-1.95B. And `/usage` counts the
+ * whole account while this tool reads local sessions on one machine, so the
+ * numerator is a floor — which biases the derived cap *low*, never high.
+ *
+ * More subtly: this figure is a cap *in this module's own credit units*. If
+ * CREDIT_WEIGHTS is off from Anthropic's true weighting by some factor, the
+ * measurement above is off by exactly the same factor, and the ratio the report
+ * prints stays correct. That is the property worth having, and it is why the
+ * cap must be re-derived by this same procedure — not adjusted by hand —
+ * whenever the weights change.
+ */
+export const DEFAULT_WEEKLY_CAP = 1_200_000_000;
 
 export interface TokenComponents {
   inputTokens: number;

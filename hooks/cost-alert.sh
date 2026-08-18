@@ -6,11 +6,19 @@
 #
 # Config (env vars):
 #   TOKEN_SCOPE_CHECKPOINT_DIR   — default: ~/.claude/checkpoints
-#   TOKEN_SCOPE_CREDIT_CAP       — weekly credit allowance, default: 166.7M
-#                                  (same variable --credits reads)
-#   TOKEN_SCOPE_CHECKPOINT_PCT   — checkpoint at this % of the weekly cap, default: 25
-#   TOKEN_SCOPE_CHECKPOINT_TURNS — turn threshold, default: 50
-#   TOKEN_SCOPE_TURN_WARN_PCT    — warn when ONE turn costs this % of the cap, default: 0.5
+#   TOKEN_SCOPE_CREDIT_CAP       — weekly credit allowance (same variable
+#                                  --credits reads)
+#   TOKEN_SCOPE_CHECKPOINT_PCT   — checkpoint at this % of the weekly cap
+#   TOKEN_SCOPE_CHECKPOINT_TURNS — turn threshold
+#   TOKEN_SCOPE_TURN_WARN_PCT    — warn when ONE turn costs this % of the cap
+#
+# The defaults are deliberately NOT written here. They live in
+# cost-alert-worker.ts and only there — see the note above the reads below. This
+# header used to carry them and drifted twice: it still said the cap was 166.7M
+# after that moved, and still said TURN_WARN_PCT was 0.5 through two changes,
+# which is a live trap rather than a stale comment. A reader who copies the
+# documented value to "keep the default explicit" sets the threshold 89x too
+# high and the warning can never fire.
 #
 # Thresholds are credits, not dollars. TOKEN_SCOPE_CHECKPOINT_AT (a dollar
 # threshold, default $10) is gone: real sessions run into the hundreds of

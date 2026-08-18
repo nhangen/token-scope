@@ -385,22 +385,31 @@ Optimal session length analysis — where the per-turn cost curve breaks.
 
 ```bash
 token-scope --credits --since 60d
-token-scope --credits --cap 41.7M          # Max 5x instead of Max 20x
+token-scope --credits --cap 4.8B           # Max 20x instead of the 5x default
 ```
 
 Weekly consumption in **credits**, not dollars. A subscription's cap is denominated
 in credits, so a dollar total — however accurate — cannot answer "am I over?".
 
+The default cap of **1.2B** is a **Max 5x** allowance, measured rather than
+published: Claude Code's `/usage` read 7% of the weekly limit over a window this
+tool measured at 126.8M credits, which solves to ~1.81B against a promo-inflated
+cap, ~1.2B base. It replaced a 166.7M figure that claimed to be Max 20x, was never
+checked against the meter, and was wrong by roughly 30x — so both its value and its
+tier label were wrong. Max 20x scales to roughly 4.8B, but that is inferred and
+unmeasured. See the comment on `DEFAULT_WEEKLY_CAP` for the error bars and for why
+the cap must be re-derived rather than hand-adjusted.
+
 ```
-  Weekly cap                   166.7M credits
-  Avg full week                558.6M  (3.35x cap)   over 3 week(s)
-  Week in progress             252.6M so far → 623.2M projected  (3.74x cap)
+  Weekly cap                   1200.0M credits
+  Avg full week                558.6M  (0.47x cap)   over 3 week(s)
+  Week in progress             252.6M so far → 623.2M projected  (0.52x cap)
 
 Week (Mon)   │ Turns   │ Credits    │ vs Cap   │ Cache Rd  │ Cache Wr  │ Output   │ Subagent  │
-2026-07-13   │   11552 │     453.7M │    2.72x │     53.9% │     35.2% │    10.0% │     26.0% │ partial (window)
-2026-07-27   │   21790 │     789.5M │    4.74x │     64.9% │     26.3% │     8.8% │     17.7% │
-2026-08-03   │    8201 │     294.3M │    1.77x │     60.6% │     31.2% │     8.2% │     30.3% │
-2026-08-10   │    7308 │     252.6M │    1.52x │     63.1% │     28.5% │     8.4% │     23.3% │ → 623M
+2026-07-13   │   11552 │     453.7M │    0.38x │     53.9% │     35.2% │    10.0% │     26.0% │ partial (window)
+2026-07-27   │   21790 │     789.5M │    0.66x │     64.9% │     26.3% │     8.8% │     17.7% │
+2026-08-03   │    8201 │     294.3M │    0.25x │     60.6% │     31.2% │     8.2% │     30.3% │
+2026-08-10   │    7308 │     252.6M │    0.21x │     63.1% │     28.5% │     8.4% │     23.3% │ → 623M
 ```
 
 Four things worth knowing:
@@ -465,10 +474,10 @@ they mean the same thing as `--credits` and as your plan.
 It warns when:
 - The session crosses **5%, 10%, 25%, 50%, or 100% of the weekly credit cap** —
   each rung once, on the turn that crosses it
-- **One turn's context** alone costs more than 0.04% of the cap (~800k tokens of
-  context), reporting the context size and what each further turn costs just to
-  re-send it. Calibrated against a real turn, not a round number: a 1.1M-token
-  context is ~110k credits, 0.066% of a 166.7M cap
+- **One turn's context** alone costs more than 0.0056% of the cap (~670k tokens
+  of context), reporting the context size and what each further turn costs just
+  to re-send it. Calibrated against a real turn, not a round number: a 1.1M-token
+  context is ~110k credits, 0.0092% of a 1.2B cap
 - The last 3 turns average **>3x the session's own average** (a bloat spike)
 - 50 turns is reached, then every 50 after
 
@@ -526,7 +535,7 @@ the cap is denominated in.
 | `--source <jsonl\|sqlite>` | auto | Force data source |
 | `--db <path>` | auto | Override SQLite database path |
 | `--projects-dir <path>` | auto | Override JSONL projects directory |
-| `--cap <n>` | `166.7M` | (with `--credits`) weekly credit allowance; accepts `166700000` or `166.7M` |
+| `--cap <n>` | `1.2B` | (with `--credits`) weekly credit allowance; accepts `1200000000` or `1.2B` |
 
 ## Environment Variables
 
@@ -535,10 +544,10 @@ the cap is denominated in.
 | `TOKEN_SCOPE_DB` | Override SQLite database path |
 | `TOKEN_SCOPE_PROJECTS_DIR` | Colon-separated JSONL project dirs |
 | `TOKEN_SCOPE_PRICING_FILE` | Custom pricing JSON |
-| `TOKEN_SCOPE_CREDIT_CAP` | Weekly credit cap, for `--credits` and the cost-alert hook; accepts `166700000` or `166.7M` (`--cap` wins) |
-| `TOKEN_SCOPE_CHECKPOINT_PCT` | Checkpoint at this % of the weekly cap (default `25`) |
+| `TOKEN_SCOPE_CREDIT_CAP` | Weekly credit cap, for `--credits` and the cost-alert hook; accepts `1200000000` or `1.2B` (`--cap` wins) |
+| `TOKEN_SCOPE_CHECKPOINT_PCT` | Checkpoint at this % of the weekly cap (default `3.5`) |
 | `TOKEN_SCOPE_CHECKPOINT_TURNS` | Checkpoint at this turn count (default `50`) |
-| `TOKEN_SCOPE_TURN_WARN_PCT` | Warn when one turn's CONTEXT costs this % of the cap (default `0.04`) |
+| `TOKEN_SCOPE_TURN_WARN_PCT` | Warn when one turn's CONTEXT costs this % of the cap (default `0.0056`) |
 | `TOKEN_SCOPE_CHECKPOINT_DIR` | Checkpoint output dir (default `~/.claude/checkpoints`) |
 | `NO_COLOR` | Disable ANSI color |
 
