@@ -4,27 +4,23 @@ import { join } from "node:path";
 
 const DIR = new URL("./fixtures/ledger", import.meta.url).pathname;
 
-// A ledger fixture row must be a row the writer can actually produce. Traced
-// against `ollama_agent/agent.py` in nhangen/claude-ceo, the reachable
-// (reason, completed, verified) set is exactly:
+// A ledger fixture row must be a row the writer can actually produce. This file
+// owns the trace of what that means; other test files point here rather than
+// restating it, because two copies of a claim about someone else's source drift
+// independently.
 //
-//   reason "ok"            -> completed true,  verified true or null
-//   reason "turn-cap"      -> completed false, verified null
-//   reason "verify-failed" -> completed false, verified false
-//   reason absent (legacy) -> the same four (completed, verified) pairs
+// From `ollama_agent/agent.py` in nhangen/claude-ceo: `reason = "ok"` is
+// assigned at exactly two sites, and both set `completed = True` in the same
+// block. Everything else falls through to the post-loop assignment, where
+// `completed` is False. So `completed:true` implies `reason` is "ok" or absent,
+// and `verified:false` is only assignable inside the verify branch, which the
+// second "ok" site cannot reach.
 //
-// `reason = "ok"` is assigned at exactly two sites and both set completed=True
-// in the same block; everything else falls through to the post-loop assignment
-// where completed is False. So `completed:true, verified:false` is unreachable,
-// and so is any reason value sitting on `completed:true, verified:true` — that
-// pair IS the branch that hardcodes "ok".
-//
-// Why this test exists rather than a note somewhere: a fixture encoding a shape
-// production never emits makes a predicate look covered against inputs that
-// cannot occur. That is the defect the `reason` axis was filed about
-// (nhangen/token-scope#31), and a panel then found the same defect in the
-// fixture written to fix it. Catching it needed a reviewer tracing Python; it
-// should cost a test run.
+// Why a test and not a note: a fixture encoding a shape production never emits
+// makes a predicate look covered against inputs that cannot occur. That is the
+// defect nhangen/token-scope#31 was filed about, and a panel then found the same
+// defect in the fixture written to fix it. Catching it took a reviewer tracing
+// Python; it should cost a test run.
 const KNOWN_REASON: Record<string, string[]> = {
   "ok": ["true|true", "true|null"],
   "turn-cap": ["false|null"],
@@ -38,9 +34,17 @@ const REACHABLE_PAIRS = ["true|true", "true|null", "false|false", "false|null"];
 
 // An UNKNOWN reason is not a violation — the bridge is expected to grow new
 // termination causes, and a fixture probing one is the right instinct. What it
-// may not do is sit on a pair that contradicts it. `true|true` is the branch
-// that hardcodes "ok", so no other value can ever appear there.
-const UNKNOWN_REASON_FORBIDDEN_PAIRS = ["true|true", "true|false"];
+// may not do is sit on a pair that contradicts it. The rule is not a blocklist
+// of pairs but a consequence of the writer: `completed = True` is set only in
+// the two blocks that also assign `reason = "ok"`, so ANY non-ok reason on
+// `completed:true` is unreachable, whatever `verified` says.
+//
+// The first version of this listed `true|true` and `true|false` and omitted
+// `true|null` — which meant a probe row written as `completed:true,
+// verified:null` would have walked straight past the gate built to catch it.
+function unknownReasonAllowed(pair: string): boolean {
+  return !pair.startsWith("true|");
+}
 
 function violation(reason: string, pair: string): string | null {
   if (!REACHABLE_PAIRS.includes(pair)) return `pair ${pair} is unreachable`;
@@ -49,9 +53,9 @@ function violation(reason: string, pair: string): string | null {
   if (allowed) {
     return allowed.includes(pair) ? null : `reason "${reason}" cannot pair with ${pair}`;
   }
-  return UNKNOWN_REASON_FORBIDDEN_PAIRS.includes(pair)
-    ? `unknown reason "${reason}" cannot pair with ${pair} (that pair hardcodes "ok")`
-    : null;
+  return unknownReasonAllowed(pair)
+    ? null
+    : `unknown reason "${reason}" cannot sit on completed:true — that is the branch that hardcodes "ok"`;
 }
 
 // Rows that predate the invariant. Each is `completed:true, verified:false` —

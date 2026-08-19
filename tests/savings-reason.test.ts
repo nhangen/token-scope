@@ -23,17 +23,8 @@ const base = {
   ledgerPath: LEDGER, counterfactualModel: DEFAULT_COUNTERFACTUAL_MODEL,
 };
 
-// Every row here is a shape the bridge can actually emit. Traced against
-// `ollama_agent/agent.py`, the reachable set is exactly:
-//
-//   reason "ok"            -> completed true,  verified true or null
-//   reason "turn-cap"      -> completed false, verified null
-//   reason "verify-failed" -> completed false, verified false
-//   reason absent (legacy) -> the same four (completed, verified) pairs
-//
-// `completed:true, verified:false` is NOT in it, and neither is any reason
-// value paired with `completed:true, verified:true` — that pair is the branch
-// that hardcodes "ok". `tests/fixtures-emittable.test.ts` gates this.
+// Every row here is a shape the bridge can actually emit; the reachable set and
+// its derivation live in `tests/fixtures-emittable.test.ts`, which gates it.
 //
 // Production still contains rows written before the bridge recorded `reason`,
 // so the FALLBACK is not legacy dead weight — it is the path a real failure
@@ -99,9 +90,10 @@ describe("renderSavingsReport — reads the ledger's reason field", () => {
   });
 
   it("trusts reason over the old predicate when the two disagree", () => {
-    // author:606 is completed:true, verified:true — the old predicate calls it a
-    // success. Its reason is unrecognized, so it is NOT a success, and this
-    // assertion fails if the code still infers instead of reading.
+    // author:606 is completed:false, verified:null with an unrecognized reason.
+    // The old predicate would bucket it turn-cap; reading `reason` makes it
+    // "other". So this fails if the code infers instead of reading — and unlike
+    // the row it replaced, this shape is one the writer can actually emit.
     const t = totals();
     expect(t.unverified_other_run_count).toBe(1);
     expect(t.unverified_run_count).toBe(6);
