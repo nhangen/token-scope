@@ -23,20 +23,24 @@ const base = {
   ledgerPath: LEDGER, counterfactualModel: DEFAULT_COUNTERFACTUAL_MODEL,
 };
 
-// The fixture mirrors shapes counted in the live ledger (66 rows, 2026-08-18),
-// NOT shapes the schema merely permits. What is actually out there:
+// Every row here is a shape the bridge can actually emit. Traced against
+// `ollama_agent/agent.py`, the reachable set is exactly:
 //
-//   reason absent, completed:true,  verified:null   34  (25 review + 9 other)
-//   reason absent, completed:true,  verified:true   17
-//   reason absent, completed:false, verified:false   7  -> legacy verify-failed
-//   reason absent, completed:false, verified:null    5  -> legacy turn-cap
-//   reason "ok",   completed:true,  verified:null    9  (all review:, post-#327)
+//   reason "ok"            -> completed true,  verified true or null
+//   reason "turn-cap"      -> completed false, verified null
+//   reason "verify-failed" -> completed false, verified false
+//   reason absent (legacy) -> the same four (completed, verified) pairs
 //
-// Note what is NOT there: zero rows carry reason "turn-cap" or "verify-failed"
-// today. Every unverified row in production is a legacy row, so the FALLBACK is
-// the path that runs, and the fixture has to cover both halves or this axis
-// repeats the mistake the unverified axis already made once — a fixture that
-// passed while matching nothing real.
+// `completed:true, verified:false` is NOT in it, and neither is any reason
+// value paired with `completed:true, verified:true` — that pair is the branch
+// that hardcodes "ok". `tests/fixtures-emittable.test.ts` gates this.
+//
+// Production still contains rows written before the bridge recorded `reason`,
+// so the FALLBACK is not legacy dead weight — it is the path a real failure
+// takes. A fixture covering only the new field would pass while matching
+// nothing, which is the mistake this axis already made once. Both halves are
+// covered below, and the turn-cap and verify-failed counts are deliberately
+// ASYMMETRIC (3 vs 2) so that swapping the two mappings cannot go unnoticed.
 //
 // Fixture rows:
 //   author:600  10000/1000  reason ok             -> succeeded
@@ -46,10 +50,11 @@ const base = {
 //   author:604  50000/5000  no reason, c:f v:null -> unverified, turn-cap (inferred)
 //   author:605  60000/6000  no reason, c:t v:t    -> succeeded
 //   review:600  70000/7000  reason ok             -> review, excluded
-//   author:606  80000/8000  reason "meltdown"     -> unverified, unrecognized
+//   author:606  80000/8000  reason "killed"       -> unverified, unrecognized
 //   review:601  90000/9000  reason turn-cap       -> review, excluded ANYWAY
-const UNVERIFIED_IN = 20000 + 30000 + 40000 + 50000 + 80000;  // 220000
-const UNVERIFIED_OUT = 2000 + 3000 + 4000 + 5000 + 8000;      //  22000
+//   author:607  11000/1100  reason turn-cap       -> unverified, turn-cap
+const UNVERIFIED_IN = 20000 + 30000 + 40000 + 50000 + 80000 + 11000;  // 231000
+const UNVERIFIED_OUT = 2000 + 3000 + 4000 + 5000 + 8000 + 1100;      //  23100
 
 function sess(opts: Record<string, unknown> = {}): any {
   const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, ...opts })));
@@ -62,7 +67,7 @@ function totals(opts: Record<string, unknown> = {}): any {
 describe("renderSavingsReport — reads the ledger's reason field", () => {
   it("counts every run that did not succeed, from reason and from the fallback alike", () => {
     const s = sess();
-    expect(s.unverified_run_count).toBe(5);
+    expect(s.unverified_run_count).toBe(6);
     expect(s.unverified_input).toBe(UNVERIFIED_IN);
     expect(s.unverified_output).toBe(UNVERIFIED_OUT);
   });
@@ -71,8 +76,17 @@ describe("renderSavingsReport — reads the ledger's reason field", () => {
     // The whole point of the field: a gate rejecting the work and a cap set too
     // low are different problems, and the old predicate collapsed them.
     const t = totals();
-    expect(t.unverified_turn_cap_run_count).toBe(2);
+    expect(t.unverified_turn_cap_run_count).toBe(3);
     expect(t.unverified_verify_failed_run_count).toBe(2);
+    // Asymmetric on purpose. With 2 and 2 the two mappings could be swapped
+    // inside unverifiedKindOf and every assertion here would still hold.
+    expect(t.unverified_turn_cap_run_count).not.toBe(t.unverified_verify_failed_run_count);
+    // Same split per session, not only in totals — the per-session keys are a
+    // separate emission and were shipped unasserted.
+    const s2 = sess();
+    expect(s2.unverified_turn_cap_run_count).toBe(3);
+    expect(s2.unverified_verify_failed_run_count).toBe(2);
+    expect(s2.unverified_other_run_count).toBe(1);
   });
 
   it("classifies a pre-#327 row with no reason from completed and verified", () => {
@@ -80,7 +94,7 @@ describe("renderSavingsReport — reads the ledger's reason field", () => {
     // legacy rows must land in the same buckets as their reason-bearing twins,
     // or the split silently under-counts every run written before today.
     const t = totals();
-    expect(t.unverified_turn_cap_run_count).toBe(2);      // 601 (reason) + 604 (inferred)
+    expect(t.unverified_turn_cap_run_count).toBe(3);      // 601, 607 (reason) + 604 (inferred)
     expect(t.unverified_verify_failed_run_count).toBe(2); // 602 (reason) + 603 (inferred)
   });
 
@@ -90,7 +104,7 @@ describe("renderSavingsReport — reads the ledger's reason field", () => {
     // assertion fails if the code still infers instead of reading.
     const t = totals();
     expect(t.unverified_other_run_count).toBe(1);
-    expect(t.unverified_run_count).toBe(5);
+    expect(t.unverified_run_count).toBe(6);
   });
 
   it("does not silently treat an unrecognized reason as success", () => {
@@ -98,7 +112,6 @@ describe("renderSavingsReport — reads the ledger's reason field", () => {
     // Anything that is not "ok" did not succeed.
     const s = sess();
     expect(s.unverified_input).toBe(UNVERIFIED_IN);
-    expect(s.unverified_input).toBeGreaterThanOrEqual(80000);
   });
 
   it("excludes a review row that ran out of turns, not just a passing one", () => {
@@ -109,10 +122,10 @@ describe("renderSavingsReport — reads the ledger's reason field", () => {
     // and review rows already carry a reason today.
     const s = sess();
     expect(s.review_run_count).toBe(2);
-    expect(s.unverified_run_count).toBe(5);
+    expect(s.unverified_run_count).toBe(6);
     expect(s.unverified_input).toBe(UNVERIFIED_IN);
     const t = totals();
-    expect(t.unverified_turn_cap_run_count).toBe(2);
+    expect(t.unverified_turn_cap_run_count).toBe(3);
   });
 
   it("shows the split, with counts, in the text report", () => {
@@ -120,7 +133,7 @@ describe("renderSavingsReport — reads the ledger's reason field", () => {
     // against the old single-number line, which already said both in its
     // footnote prose. The counts are the thing that is new.
     const text = capture(() => renderSavingsReport(reader, { ...base, json: false }));
-    expect(text).toContain("turn cap 2");
+    expect(text).toContain("turn cap 3");
     expect(text).toContain("verify failed 2");
     expect(text).toContain("unrecognized reason 1");
   });
