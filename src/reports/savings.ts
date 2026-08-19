@@ -61,23 +61,51 @@ function isBenchRow(r: LedgerRun): boolean {
   return typeof r.runId === "string" && r.runId.startsWith("bench:");
 }
 
-/** An authoring row that is not known to have succeeded: it either crashed or
- *  hit the turn cap (completed === false), or it finished and its verify
- *  command failed (verified === false).
+/** Why an authoring row did not succeed, or null if it did (or is not an
+ *  authoring row at all).
  *
- *  Keying on `verified === false` alone — the first version of this — matched
- *  ZERO rows in the live ledger while its own fixture passed, because the
- *  bridge leaves `verified` null whenever there is no verify command and a
- *  crashed run reports `completed:false, verified:null`. Measured across the
- *  real ledger, `completed === false` is 4 rows and 1.72M input tokens, 56% of
- *  the priced counterfactual. Build the predicate from the shapes the writer
- *  emits, not from the ones the schema permits.
+ *  Prefers the ledger's own `reason` (nhangen/claude-ceo#327), which says in one
+ *  field what `completed`/`verified` only imply across two nullable ones. An
+ *  unrecognized value is "other", never success: when the bridge learns a new
+ *  termination cause, a report that has not caught up should say so rather than
+ *  quietly bank it as work that landed.
  *
- *  `completed:true, verified:null` is NOT failed — it is the commonest shape
- *  (15 of 34 rows) and means "finished, nothing asserted". */
+ *  The fallback is not legacy dead weight — as of 2026-08-18 it is the ONLY
+ *  path that fires on a failed run, because every row carrying a reason so far
+ *  says "ok". `verified === false` first, then `completed === false`, mirroring
+ *  the bridge's own rule so a legacy row and its modern twin land in the same
+ *  bucket.
+ *
+ *  `completed:true, verified:null` is NOT failed — it is the commonest shape in
+ *  the ledger and means "finished, nothing asserted". */
+type UnverifiedKind = "turn-cap" | "verify-failed" | "other";
+
+function unverifiedKindOf(r: LedgerRun): UnverifiedKind | null {
+  if (isReviewRow(r) || isBenchRow(r)) return null;
+  if (typeof r.reason === "string") {
+    if (r.reason === "ok") return null;
+    if (r.reason === "turn-cap") return "turn-cap";
+    if (r.reason === "verify-failed") return "verify-failed";
+    return "other";
+  }
+  if (r.verified === false) return "verify-failed";
+  if (r.completed === false) return "turn-cap";
+  return null;
+}
+
 function isUnverifiedRow(r: LedgerRun): boolean {
-  if (isReviewRow(r) || isBenchRow(r)) return false;
-  return r.completed === false || r.verified === false;
+  return unverifiedKindOf(r) !== null;
+}
+
+const KINDS: UnverifiedKind[] = ["turn-cap", "verify-failed", "other"];
+
+function tallyKinds(rows: LedgerRun[]): Record<UnverifiedKind, number> {
+  const out: Record<UnverifiedKind, number> = { "turn-cap": 0, "verify-failed": 0, other: 0 };
+  for (const r of rows) {
+    const k = unverifiedKindOf(r);
+    if (k !== null) out[k]++;
+  }
+  return out;
 }
 
 /** A row's label: the second colon-separated segment of run_id, or null when
@@ -146,6 +174,7 @@ interface SessionGroup {
   unverifiedRunCount: number;
   unverifiedInput: number;
   unverifiedOutput: number;
+  unverifiedByKind: Record<UnverifiedKind, number>;
   models: string[];
   counterfactual: number | null;
   pmOverhead: number | null;
@@ -227,6 +256,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     const unverifiedInput = groupUnverified.reduce((s, r) => s + r.ollamaInputTokens, 0);
     const unverifiedOutput = groupUnverified.reduce((s, r) => s + r.ollamaOutputTokens, 0);
     const unverifiedRunCount = groupUnverified.length;
+    const unverifiedByKind = tallyKinds(groupUnverified);
     const authorInput = ollamaInput - reviewInput - benchInput;
     const authorOutput = ollamaOutput - reviewOutput - benchOutput;
     const counterfactual = valueAtClaudePrices(authorInput, authorOutput, opts.counterfactualModel);
@@ -249,7 +279,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       runCount: groupRuns.length, ollamaInput, ollamaOutput,
       reviewRunCount, reviewInput, reviewOutput,
       benchRunCount, benchInput, benchOutput,
-      unverifiedRunCount, unverifiedInput, unverifiedOutput, models,
+      unverifiedRunCount, unverifiedInput, unverifiedOutput, unverifiedByKind, models,
       counterfactual, pmOverhead, pmPartial, net, attributed, found,
     });
   }
@@ -285,6 +315,10 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   const totalUnverifiedRuns = groups.reduce((s, g) => s + g.unverifiedRunCount, 0);
   const totalUnverifiedIn = groups.reduce((s, g) => s + g.unverifiedInput, 0);
   const totalUnverifiedOut = groups.reduce((s, g) => s + g.unverifiedOutput, 0);
+  const totalByKind: Record<UnverifiedKind, number> = { "turn-cap": 0, "verify-failed": 0, other: 0 };
+  for (const g of groups) {
+    for (const k of KINDS) totalByKind[k] += g.unverifiedByKind[k];
+  }
   const attributedGroups = groups.filter((g) => g.attributed);
   const netTotal = attributedGroups.length > 0
     ? attributedGroups.reduce((s, g) => s + (g.net ?? 0), 0) : null;
@@ -358,6 +392,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
         } : {}),
         ...(totalUnverifiedRuns > 0 ? {
           unverified_run_count: g.unverifiedRunCount, unverified_input: g.unverifiedInput, unverified_output: g.unverifiedOutput,
+          unverified_turn_cap_run_count: g.unverifiedByKind["turn-cap"],
+          unverified_verify_failed_run_count: g.unverifiedByKind["verify-failed"],
+          unverified_other_run_count: g.unverifiedByKind.other,
         } : {}),
       };
     });
@@ -383,6 +420,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       totals.unverified_run_count = totalUnverifiedRuns;
       totals.unverified_input = totalUnverifiedIn;
       totals.unverified_output = totalUnverifiedOut;
+      totals.unverified_turn_cap_run_count = totalByKind["turn-cap"];
+      totals.unverified_verify_failed_run_count = totalByKind["verify-failed"];
+      totals.unverified_other_run_count = totalByKind.other;
     }
     const payload: Record<string, unknown> = {
       meta: { generated_at: new Date().toISOString(), token_scope_version: VERSION },
@@ -509,8 +549,16 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       `${totalBenchRuns}  in=${formatTokens(totalBenchIn)}  out=${formatTokens(totalBenchOut)}`]);
   }
   if (totalUnverifiedRuns > 0) {
+    // Split rather than one number: a gate rejecting the work and a turn cap set
+    // too low are different problems with different fixes, and the old single
+    // count could not tell a reader which one they had.
+    const kindParts = [
+      totalByKind["turn-cap"] > 0 ? `turn cap ${totalByKind["turn-cap"]}` : null,
+      totalByKind["verify-failed"] > 0 ? `verify failed ${totalByKind["verify-failed"]}` : null,
+      totalByKind.other > 0 ? `unrecognized reason ${totalByKind.other}` : null,
+    ].filter((x): x is string => x !== null);
     totalsKv.splice(1, 0, ["Authoring runs that did not succeed",
-      `${totalUnverifiedRuns}  in=${formatTokens(totalUnverifiedIn)}  out=${formatTokens(totalUnverifiedOut)}`]);
+      `${totalUnverifiedRuns} (${kindParts.join(", ")})  in=${formatTokens(totalUnverifiedIn)}  out=${formatTokens(totalUnverifiedOut)}`]);
   }
   console.log(renderKV(totalsKv));
 
@@ -526,7 +574,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     const sharePct = failedShare !== null && counterfactualAttributed > 0
       ? ` That is ${formatUsd(failedShare)} of the ${formatUsd(counterfactualAttributed)} counterfactual — ${Math.round(failedShare / counterfactualAttributed * 100)}% of the priced figure bought nothing.`
       : "";
-    console.log(renderFootnote(`Authoring runs that did not succeed (crashed or hit the turn cap, or failed their verify command) are INCLUDED in the counterfactual — the tokens were really spent, and Claude would have paid for a wrong first try too — but reported separately so failed work is not hidden in the total.${sharePct}`));
+    console.log(renderFootnote(`Authoring runs that did not succeed (hit the turn cap, or failed their verify command) are INCLUDED in the counterfactual — the tokens were really spent, and Claude would have paid for a wrong first try too — but reported separately so failed work is not hidden in the total. A run that CRASHED is not counted here and is not in the ledger at all — the bridge writes its row after the failure path has already returned (nhangen/claude-ceo#328), so its tokens are missing from every figure on this report.${sharePct}`));
   }
   if (opts.pmCost !== undefined) {
     console.log(renderFootnote(`PM overhead (†) = ${formatUsd(opts.pmCost)}, supplied by the caller as a measured figure (e.g. a subagent PM's cost from the subagent-bucket delta between two --spend runs). Net = Counterfactual − measured PM. The figure's accuracy is the caller's — the report does not verify it against transcripts.`));
