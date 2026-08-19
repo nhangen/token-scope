@@ -18,6 +18,10 @@ export interface LedgerRun {
   turns: number | null;
   completed: boolean | null;
   verified: boolean | null;
+  /** Why the run ended: "ok" | "turn-cap" | "verify-failed", or null on any row
+   *  written before the bridge recorded it (nhangen/claude-ceo#327). null means
+   *  "not recorded" — never a claim about the run. */
+  reason: string | null;
 }
 
 /**
@@ -77,6 +81,7 @@ export function readLedger(path?: string): LedgerRun[] {
       turns: numOrNull(r["turns"]),
       completed: boolOrNull(r["completed"]),
       verified: boolOrNull(r["verified"]),
+      reason: strOrNull(r["reason"]),
     });
   }
   return runs;
