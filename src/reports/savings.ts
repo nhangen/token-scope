@@ -47,6 +47,57 @@ export function valueAtClaudePrices(inputTokens: number, outputTokens: number, m
   return (inputTokens * p.inputPerMillion + outputTokens * p.outputPerMillion) / 1_000_000;
 }
 
+/** The share of a run's recorded input tokens Claude would have paid FULL input
+ *  price for. The rest is re-read and would have hit the prompt cache.
+ *
+ *  ollama has no prompt cache, so an agentic run re-sends its entire prefix every
+ *  turn and `ollama_input_tokens` is the SUM of those re-sends. Claude would have
+ *  paid full price for each token exactly once — on the turn it first appeared —
+ *  and cache-read price for every later re-send. Pricing the whole sum as fresh
+ *  input therefore credits the delegation with avoiding a cost that never existed,
+ *  and the error grows with turn count (nhangen/llm-tools#465).
+ *
+ *  The uncached share is the FINAL prefix, not "the first turn": the per-turn
+ *  deltas telescope, since every token is new exactly once. Under linear prefix
+ *  growth (prefix_k = k*c) the recorded total is c*t*(t+1)/2 while the final
+ *  prefix is c*t, giving 2/(t+1).
+ *
+ *  That linear assumption is the estimate's one soft spot, and it is deliberately
+ *  crude: the ledger records a per-run total and a turn count, nothing per-turn,
+ *  so a better model needs the wrapper to record prompt sizes. Measured against
+ *  the alternative reading — only turn 1 uncached, i.e. 1/t — the live ledger's
+ *  counterfactual differs by 13% ($13.46 vs $11.93), so the choice between the two
+ *  does not change any conclusion. Pricing it all as fresh input differs by 4x.
+ *
+ *  An absent or nonsensical `turns` yields 1 — fully uncached, the pre-#465
+ *  behaviour. That is the conservative direction: it over-states the
+ *  counterfactual rather than inventing a discount from a field that isn't there.
+ */
+export function uncachedInputShare(turns: number | null): number {
+  if (turns === null || !Number.isFinite(turns) || turns < 2) return 1;
+  return 2 / (turns + 1);
+}
+
+/** Split one run's recorded input into the part Claude would have paid full input
+ *  price for and the part it would have read from cache. Rounded so the two always
+ *  sum to the recorded total — a split that loses or invents tokens would show up
+ *  as a counterfactual that disagrees with the volume it was computed from. */
+export function splitCachedInput(inputTokens: number, turns: number | null): { uncached: number; cached: number } {
+  const uncached = Math.round(inputTokens * uncachedInputShare(turns));
+  return { uncached, cached: inputTokens - uncached };
+}
+
+/** Counterfactual for authoring volume, with re-read input priced at cache-read. */
+export function valueAtClaudePricesCached(
+  uncachedInput: number, cachedInput: number, outputTokens: number, model: string,
+): number | null {
+  const p = getPricing(model);
+  if (!p) return null;
+  return (uncachedInput * p.inputPerMillion
+        + cachedInput * p.cacheReadPerMillion
+        + outputTokens * p.outputPerMillion) / 1_000_000;
+}
+
 /** A row is a review row iff its run_id is a string starting with `review:`.
  *  Everything else — null, no colon, `author:...`, legacy ids — is authoring. */
 function isReviewRow(r: LedgerRun): boolean {
@@ -175,6 +226,11 @@ interface SessionGroup {
   unverifiedInput: number;
   unverifiedOutput: number;
   unverifiedByKind: Record<UnverifiedKind, number>;
+  /** Authoring input split by what Claude would have paid for it: `uncachedInput`
+   *  at full input price, `cachedInput` at cache-read. They sum to authoring
+   *  input. See `uncachedInputShare`. */
+  uncachedInput: number;
+  cachedInput: number;
   models: string[];
   counterfactual: number | null;
   pmOverhead: number | null;
@@ -190,6 +246,8 @@ interface LabelAgg {
   reviewRunCount: number;
   benchRunCount: number;
   authorInput: number;
+  uncachedInput: number;
+  cachedInput: number;
   authorOutput: number;
   reviewInput: number;
   reviewOutput: number;
@@ -259,7 +317,21 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     const unverifiedByKind = tallyKinds(groupUnverified);
     const authorInput = ollamaInput - reviewInput - benchInput;
     const authorOutput = ollamaOutput - reviewOutput - benchOutput;
-    const counterfactual = valueAtClaudePrices(authorInput, authorOutput, opts.counterfactualModel);
+
+    // The cache split is per-run — it depends on that run's turn count — so it
+    // cannot be applied to the summed `authorInput`. Filter the authoring rows and
+    // split each. The two halves still sum to `authorInput`, which the assertion
+    // below pins: a filter that disagreed with the subtraction above (a new row
+    // class excluded from one but not the other) would silently misprice.
+    const groupAuthor = groupRuns.filter((r) => !isReviewRow(r) && !isBenchRow(r));
+    let uncachedInput = 0, cachedInput = 0;
+    for (const r of groupAuthor) {
+      const split = splitCachedInput(r.ollamaInputTokens, r.turns);
+      uncachedInput += split.uncached; cachedInput += split.cached;
+    }
+    const counterfactual = uncachedInput + cachedInput === authorInput
+      ? valueAtClaudePricesCached(uncachedInput, cachedInput, authorOutput, opts.counterfactualModel)
+      : valueAtClaudePrices(authorInput, authorOutput, opts.counterfactualModel);
 
     let pmOverhead: number | null = null, pmPartial = false, found = false;
     if (sessionId !== null && opts.pmCost !== undefined) {
@@ -280,6 +352,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       reviewRunCount, reviewInput, reviewOutput,
       benchRunCount, benchInput, benchOutput,
       unverifiedRunCount, unverifiedInput, unverifiedOutput, unverifiedByKind, models,
+      uncachedInput, cachedInput,
       counterfactual, pmOverhead, pmPartial, net, attributed, found,
     });
   }
@@ -323,6 +396,8 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   const netTotal = attributedGroups.length > 0
     ? attributedGroups.reduce((s, g) => s + (g.net ?? 0), 0) : null;
   const counterfactualAttributed = attributedGroups.reduce((s, g) => s + (g.counterfactual ?? 0), 0);
+  const totalUncachedInput = groups.reduce((n, g) => n + g.uncachedInput, 0);
+  const totalCachedInput = groups.reduce((n, g) => n + g.cachedInput, 0);
   const pmAttributed = attributedGroups.reduce((s, g) => s + (g.pmOverhead ?? 0), 0);
   const unattributedRuns = groups.filter((g) => !g.attributed).reduce((s, g) => s + g.runCount, 0);
 
@@ -335,7 +410,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     const k = label === null ? "\u0000null" : label;
     let agg = labelMap.get(k);
     if (!agg) {
-      agg = { label, runCount: 0, reviewRunCount: 0, benchRunCount: 0, authorInput: 0, authorOutput: 0, reviewInput: 0, reviewOutput: 0, benchInput: 0, benchOutput: 0, unverifiedRunCount: 0, unverifiedInput: 0, unverifiedOutput: 0 };
+      agg = { label, runCount: 0, reviewRunCount: 0, benchRunCount: 0, authorInput: 0, uncachedInput: 0, cachedInput: 0, authorOutput: 0, reviewInput: 0, reviewOutput: 0, benchInput: 0, benchOutput: 0, unverifiedRunCount: 0, unverifiedInput: 0, unverifiedOutput: 0 };
       labelMap.set(k, agg);
     }
     agg.runCount++;
@@ -349,6 +424,10 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       agg.benchOutput += r.ollamaOutputTokens;
     } else {
       agg.authorInput += r.ollamaInputTokens;
+      {
+        const split = splitCachedInput(r.ollamaInputTokens, r.turns);
+        agg.uncachedInput += split.uncached; agg.cachedInput += split.cached;
+      }
       agg.authorOutput += r.ollamaOutputTokens;
     }
     if (isUnverifiedRow(r)) {
@@ -405,6 +484,10 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       net_savings_usd: netTotal,
       attributed_session_count: attributedGroups.length,
       unattributed_run_count: unattributedRuns,
+      // The split behind counterfactual_usd, so a reader can see how much of the
+      // priced input was re-read rather than having to trust the total.
+      counterfactual_uncached_input: totalUncachedInput,
+      counterfactual_cached_input: totalCachedInput,
     };
     if (totalReviewRuns > 0) {
       totals.review_run_count = totalReviewRuns;
@@ -454,7 +537,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
         unverified_run_count: a.unverifiedRunCount,
         unverified_input: a.unverifiedInput,
         unverified_output: a.unverifiedOutput,
-        counterfactual_usd: valueAtClaudePrices(a.authorInput, a.authorOutput, opts.counterfactualModel),
+        counterfactual_usd: valueAtClaudePricesCached(a.uncachedInput, a.cachedInput, a.authorOutput, opts.counterfactualModel),
       }));
     }
     console.log(JSON.stringify(payload, null, 2));
@@ -472,6 +555,12 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
         ? `turns ${opts.pmTurnRange.from ?? 1}..${opts.pmTurnRange.to ?? "end"} (delegation only)`
         : "whole session"],
     ["Since floor", sinceFloorApplied ? `> ${opts.sinceStr}` : "none (all runs)"],
+    // ollama has no prompt cache, so the ledger's input total counts every re-read.
+    // Naming the split here is what stops the counterfactual reading as if Claude
+    // would have paid full price for all of it (#465).
+    ...(totalCachedInput > 0
+      ? [["Input priced", `${formatTokens(totalUncachedInput)} fresh + ${formatTokens(totalCachedInput)} re-read at cache-read rate`] as [string, string]]
+      : []),
   ]));
 
   if (totalRuns === 0) {
@@ -521,7 +610,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
         formatTokens(a.authorInput), formatTokens(a.authorOutput),
         formatTokens(a.reviewInput), formatTokens(a.reviewOutput),
         String(a.unverifiedRunCount),
-        formatUsd(valueAtClaudePrices(a.authorInput, a.authorOutput, opts.counterfactualModel)),
+        formatUsd(valueAtClaudePricesCached(a.uncachedInput, a.cachedInput, a.authorOutput, opts.counterfactualModel)),
       ])
     ));
     // This table spans every run in the filtered ledger; the Totals block below

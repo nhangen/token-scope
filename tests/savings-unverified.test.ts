@@ -72,9 +72,14 @@ describe("renderSavingsReport — unverified authoring runs", () => {
   it("leaves the counterfactual pricing unchanged — a failed attempt still cost money", () => {
     const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
     const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
-    expect(s.counterfactual_usd).toBeCloseTo(
-      valueAtClaudePrices(AUTHORING_IN, AUTHORING_OUT, DEFAULT_COUNTERFACTUAL_MODEL)!, 6,
-    );
+// 56,000 uncached + 87,000 cached + 47,500 out = 1.511. The point of this arm
+    // is that the unverified axis does not change pricing; the literal moved with
+    // #465, the invariant did not.
+    // Hand-computed, not built from valueAtClaudePrices — these assertions used to
+    // call the production pricing helper, so when #465 changed how input is priced
+    // every one of them moved with it and none reported the change. See the
+    // per-fixture derivation in the comment above each literal.
+    expect(s.counterfactual_usd).toBeCloseTo(1.511, 6);
   });
 
   it("breaks unverified volume down per label", () => {

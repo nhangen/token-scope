@@ -38,9 +38,12 @@ describe("renderSavingsReport — benchmark sweeps are not delegation savings", 
     // invents a saving that was never available.
     const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
     const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
-    expect(s.counterfactual_usd).toBeCloseTo(
-      valueAtClaudePrices(AUTHOR_IN, AUTHOR_OUT, DEFAULT_COUNTERFACTUAL_MODEL)!, 6,
-    );
+// 40,000 uncached @ $5/M + 60,000 cached @ $0.50/M + 40,000 out @ $25/M = 1.23.
+    // Hand-computed, not built from valueAtClaudePrices — these assertions used to
+    // call the production pricing helper, so when #465 changed how input is priced
+    // every one of them moved with it and none reported the change. See the
+    // per-fixture derivation in the comment above each literal.
+    expect(s.counterfactual_usd).toBeCloseTo(1.23, 6);
   });
 
   it("reports bench volume separately, per session and in totals", () => {

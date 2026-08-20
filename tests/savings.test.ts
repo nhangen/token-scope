@@ -49,7 +49,10 @@ describe("renderSavingsReport — aggregate", () => {
     const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
     const s = p.sessions.find((x: { session_id: string | null }) => x.session_id === "sess-spend");
     // in=120000 out=45000 @ opus-4-8 => (120000*5 + 45000*25)/1e6 = 1.725
-    expect(s.counterfactual_usd).toBeCloseTo(1.725, 6);
+    // 63,333 uncached @ $5/M + 56,667 cached @ $0.50/M + 45,000 out @ $25/M.
+    // = 1.4699985 exactly; 63,333 is round(100,000*2/4) + round(20,000*2/3).
+    // Was 1.725 when all 120,000 input priced as fresh (#465).
+    expect(s.counterfactual_usd).toBeCloseTo(1.4699985, 6);
   });
 
   it("subtracts the session's billed Claude spend as PM overhead", () => {
@@ -57,7 +60,7 @@ describe("renderSavingsReport — aggregate", () => {
     const s = p.sessions.find((x: { session_id: string | null }) => x.session_id === "sess-spend");
     // sess-spend billed spend = direct 0.01278 + subagent 0.01026 = 0.02304
     expect(s.pm_overhead_usd).toBeCloseTo(0.02304, 5);
-    expect(s.net_savings_usd).toBeCloseTo(1.70196, 5); // 1.725 - 0.02304
+    expect(s.net_savings_usd).toBeCloseTo(1.4469585, 5); // 1.4699985 - 0.02304
     expect(s.attributed).toBe(true);
   });
 
@@ -74,8 +77,8 @@ describe("renderSavingsReport — aggregate", () => {
 
   it("headline net sums ONLY attributed sessions", () => {
     const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
-    // only sess-spend is attributed => net headline = its net
-    expect(p.totals.net_savings_usd).toBeCloseTo(1.70196, 5);
+    // only sess-spend is attributed => net headline = its net (1.4699985 − 0.02304)
+    expect(p.totals.net_savings_usd).toBeCloseTo(1.4469585, 5);
     expect(p.totals.attributed_session_count).toBe(1);
     expect(p.totals.unattributed_run_count).toBe(2); // r3 (null) + r4 (unknown)
   });
@@ -111,8 +114,9 @@ describe("renderSavingsReport — turn-scoped PM overhead (--pm-turns)", () => {
     const s = p.sessions[0];
     // direct turns 1..3 = 0.01278; whole-session (0.02304) would add the 0.01026 subagent
     expect(s.pm_overhead_usd).toBeCloseTo(0.01278, 5);
-    // counterfactual (120k/45k @ opus-4-8 = 1.725) − scoped PM
-    expect(s.net_savings_usd).toBeCloseTo(1.71222, 5);
+    // counterfactual (1.4699985 — 120k input, but re-read priced at cache-read
+    // since #465) − scoped PM
+    expect(s.net_savings_usd).toBeCloseTo(1.4572185, 5);
   });
 
   it("a single-turn slice yields smaller PM overhead → larger net than whole-session", () => {
@@ -153,7 +157,7 @@ describe("renderSavingsReport — measured PM cost (--pm-cost)", () => {
     expect(p.pm_scope.cost_usd).toBe(0.5);
     const s = p.sessions[0];
     expect(s.pm_overhead_usd).toBe(0.5);          // NOT the billed 0.02304
-    expect(s.net_savings_usd).toBeCloseTo(1.225, 6); // 1.725 − 0.5
+    expect(s.net_savings_usd).toBeCloseTo(0.9699985, 6); // 1.4699985 − 0.5
     expect(s.attributed).toBe(true);
   });
 
