@@ -83,6 +83,40 @@ describe("renderSavingsReport — runs that did not succeed", () => {
     // The share, not just the presence of a line: a reader who sees only a run
     // count cannot tell whether it is a rounding error or half the figure.
     expect(text).toContain("bought nothing");
-    expect(text).toMatch(/\d+% of the priced figure/);
+    // The VALUE, not the shape. `/\d+%/` is why this shipped wrong: the footnote
+    // priced failed rows at the pre-#465 full-input rate while dividing by a
+    // cache-split counterfactual, and summed its numerator over all groups against an
+    // attributed-only denominator. It printed 93% here where 27% is honest, and on a
+    // ledger whose only row is an unattributed failure it printed 385%. A regex that
+    // accepts any integer accepts all of those.
+    expect(text).toMatch(/27% of the priced figure/);
+    // A share of the priced figure cannot exceed it.
+    const pct = Number(text.match(/(\d+)% of the priced figure/)![1]);
+    expect(pct).toBeLessThanOrEqual(100);
+  });
+});
+
+describe("renderSavingsReport — the failed share and its denominator cover the same rows", () => {
+  const MIXED = new URL("./fixtures/ledger/runs-failed-mixed.jsonl", import.meta.url).pathname;
+
+  it("excludes an unattributed failure from the numerator, as the denominator does", () => {
+    // The second leg of the #465 blocker, and the one with no coverage until now:
+    // pricing the numerator through the cache split fixed the fixtures while leaving
+    // the numerator summed over ALL groups against an attributed-only denominator.
+    // Every other failed-row fixture has only attributed groups, so the mutation was
+    // invisible. Here author:801 (1M input) is unattributed; if it entered the
+    // numerator the share would be several times its own whole.
+    const text = capture(() => renderSavingsReport(reader, {
+      ...base, json: false, ledgerPath: MIXED,
+    }));
+    // author:800 alone: round(100000*2/5)=40000 uncached, 60000 cached, 10000 out
+    //   = (40000*5 + 60000*0.5 + 10000*25)/1e6 = $0.4800, and it is the entire
+    //   attributed counterfactual, so the honest share is 100%.
+    expect(text).toMatch(/\$0\.4800 of the \$0\.4800 counterfactual/);
+    const pct = Number(text.match(/(\d+)% of the priced figure/)![1]);
+    expect(pct).toBe(100);
+    // Summing the numerator over all groups puts author:801's 1M input on top of a
+    // denominator that never saw it — the shape that printed 385%.
+    expect(pct).toBeLessThanOrEqual(100);
   });
 });

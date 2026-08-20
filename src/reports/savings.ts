@@ -226,6 +226,8 @@ interface SessionGroup {
   unverifiedInput: number;
   unverifiedOutput: number;
   unverifiedByKind: Record<UnverifiedKind, number>;
+  unverifiedUncachedInput: number;
+  unverifiedCachedInput: number;
   /** Authoring input split by what Claude would have paid for it: `uncachedInput`
    *  at full input price, `cachedInput` at cache-read. They sum to authoring
    *  input. See `uncachedInputShare`. */
@@ -313,6 +315,13 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     const groupUnverified = groupRuns.filter(isUnverifiedRow);
     const unverifiedInput = groupUnverified.reduce((s, r) => s + r.ollamaInputTokens, 0);
     const unverifiedOutput = groupUnverified.reduce((s, r) => s + r.ollamaOutputTokens, 0);
+    // Unverified rows are authoring rows, so the failed-work footnote has to price
+    // them the same way the counterfactual it is a share OF does. Split them here.
+    let unverifiedUncachedInput = 0, unverifiedCachedInput = 0;
+    for (const r of groupUnverified) {
+      const split = splitCachedInput(r.ollamaInputTokens, r.turns);
+      unverifiedUncachedInput += split.uncached; unverifiedCachedInput += split.cached;
+    }
     const unverifiedRunCount = groupUnverified.length;
     const unverifiedByKind = tallyKinds(groupUnverified);
     // The cache split is per-run — it depends on that run's turn count — so it
@@ -350,6 +359,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       reviewRunCount, reviewInput, reviewOutput,
       benchRunCount, benchInput, benchOutput,
       unverifiedRunCount, unverifiedInput, unverifiedOutput, unverifiedByKind, models,
+      unverifiedUncachedInput, unverifiedCachedInput,
       uncachedInput, cachedInput,
       counterfactual, pmOverhead, pmPartial, net, attributed, found,
     });
@@ -667,7 +677,21 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     console.log(renderFootnote(`Benchmark rows (run_id starting with "bench:") are excluded from the counterfactual (a benchmark sweep is an evaluation, not authoring — nobody would have paid Claude to generate benchmark completions across a model grid) but reported separately so no spend is hidden.`));
   }
   if (totalUnverifiedRuns > 0) {
-    const failedShare = valueAtClaudePrices(totalUnverifiedIn, totalUnverifiedOut, opts.counterfactualModel);
+    // Both legs matter and they are independent. (a) Price through the same split as
+    // the denominator: this line used to call valueAtClaudePrices — the pre-#465
+    // model — while dividing by a cache-split counterfactual, so the ratio mixed two
+    // pricing models and inflated by roughly the factor #465 moved. (b) Sum the SAME
+    // rows: the numerator was `groups`-wide while `counterfactualAttributed` is
+    // attributed-only, so an unattributed failed run entered the numerator and not
+    // the denominator. That is what let the share exceed 100% — a one-row ledger
+    // printed "385% of the priced figure bought nothing". Fixing (a) alone makes the
+    // fixtures look right and leaves the >100% case alive.
+    const failedShare = valueAtClaudePricesCached(
+      attributedGroups.reduce((s, g) => s + g.unverifiedUncachedInput, 0),
+      attributedGroups.reduce((s, g) => s + g.unverifiedCachedInput, 0),
+      attributedGroups.reduce((s, g) => s + g.unverifiedOutput, 0),
+      opts.counterfactualModel,
+    );
     const sharePct = failedShare !== null && counterfactualAttributed > 0
       ? ` That is ${formatUsd(failedShare)} of the ${formatUsd(counterfactualAttributed)} counterfactual — ${Math.round(failedShare / counterfactualAttributed * 100)}% of the priced figure bought nothing.`
       : "";

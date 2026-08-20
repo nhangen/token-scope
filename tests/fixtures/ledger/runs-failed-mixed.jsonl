@@ -1,0 +1,2 @@
+{"ts":"2026-08-02T10:00:00Z","run_id":"author:800","session_id":"sess-spend","model":"q","task_name":"attributed-fail","cwd":"/x","ollama_input_tokens":100000,"ollama_output_tokens":10000,"turns":4,"completed":false,"verified":false,"reason":"verify-failed"}
+{"ts":"2026-08-02T11:00:00Z","run_id":"author:801","session_id":"sess-nowhere","model":"q","task_name":"unattributed-fail","cwd":"/x","ollama_input_tokens":1000000,"ollama_output_tokens":20000,"turns":20,"completed":false,"verified":false,"reason":"verify-failed"}

@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
 import { createReader } from "@/reader";
 import type { Reader } from "@/reader";
-import { renderSavingsReport, DEFAULT_COUNTERFACTUAL_MODEL } from "@/reports/savings";
+import { renderSavingsReport, DEFAULT_COUNTERFACTUAL_MODEL, uncachedInputShare, splitCachedInput } from "@/reports/savings";
 import { getPricing } from "@/pricing";
 
 const SPEND_DIR = new URL("./fixtures/spend-projects", import.meta.url).pathname;
@@ -52,6 +52,12 @@ describe("counterfactual prices re-read input at the cache-read rate (#465)", ()
     const t = sess();
     expect(t.counterfactual_uncached_input).toBe(100000 + 150000 + 100000);
     expect(t.counterfactual_cached_input).toBe(150000);
+    // The share and the split are exported and pure, so pin them directly. Every gap
+    // the panel found here existed because all coverage ran indirectly through
+    // renderSavingsReport, where a wrong share is diluted by three other rows.
+    expect(uncachedInputShare(3)).toBeCloseTo(0.5, 12);
+    expect(uncachedInputShare(40)).toBeCloseTo(2 / 41, 12);
+    expect(splitCachedInput(300000, 3)).toEqual({ uncached: 150000, cached: 150000 });
   });
 
   it("prices the cached half at cache-read, not full input", () => {
@@ -87,5 +93,23 @@ describe("counterfactual prices re-read input at the cache-read rate (#465)", ()
     // If it leaked in, both split keys would jump by six figures.
     const t = sess();
     expect(t.counterfactual_uncached_input + t.counterfactual_cached_input).toBe(500000);
+  });
+
+  it("clamps a nonsensical turn count to fully uncached", () => {
+    // Only observable at turns <= 0: at turns=1 both `< 2` and `< 1` return 1, so the
+    // guard looks redundant and isn't. Without it `2/(0+1)` is 2 and the split emits a
+    // NEGATIVE cached-token count, priced at cache-read, silently REDUCING the
+    // counterfactual. `numOrNull` passes a real `turns: 0` straight through, so a run
+    // that dies before its first turn reaches this.
+    for (const t of [0, -1, null]) expect(uncachedInputShare(t)).toBe(1);
+    expect(splitCachedInput(100000, 0)).toEqual({ uncached: 100000, cached: 0 });
+    // Fractional turns are meaningless but degrade smoothly; chosen, not incidental.
+    expect(uncachedInputShare(2.5)).toBeCloseTo(2 / 3.5, 12);
+    // The guard's THRESHOLD, not just its existence. `< 2` and `< 1` agree on every
+    // integer — which is why sampling integers made the difference look unobservable
+    // — and diverge across the whole open interval (1, 2). Weakening it to `< 1` gives
+    // 0.8 here instead of 1, discounting a run that never re-read anything.
+    expect(uncachedInputShare(1.5)).toBe(1);
+    expect(uncachedInputShare(1.9999)).toBe(1);
   });
 });

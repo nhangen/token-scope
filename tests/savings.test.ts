@@ -53,6 +53,12 @@ describe("renderSavingsReport — aggregate", () => {
     // = 1.4699985 exactly; 63,333 is round(100,000*2/4) + round(20,000*2/3).
     // Was 1.725 when all 120,000 input priced as fresh (#465).
     expect(s.counterfactual_usd).toBeCloseTo(1.4699985, 6);
+    // The totals split had NO assertion: deleting both keys, or summing them over all
+    // groups instead of attributed ones, each left the suite fully green. This fixture
+    // has two unattributed groups (r3 null-session, r4 sess-unknown), so asserting the
+    // attributed figures here kills both mutations at once.
+    expect(p.totals.counterfactual_uncached_input).toBe(63333);
+    expect(p.totals.counterfactual_cached_input).toBe(56667);
   });
 
   it("subtracts the session's billed Claude spend as PM overhead", () => {
@@ -216,5 +222,18 @@ describe("renderSavingsReport — empty ledger", () => {
     expect(p.totals.run_count).toBe(0);
     expect(p.sessions).toEqual([]);
     expect(p.totals.net_savings_usd).toBeNull();
+  });
+});
+
+describe("renderSavingsReport — the cache split is disclosed in the text report", () => {
+  it("names the fresh/re-read split", () => {
+    // Suppressing this line left 364/364 green. It is the disclosure that stops the
+    // counterfactual reading as if Claude would have paid full price for every token,
+    // so it is the feature, not decoration.
+    const text = capture(() => renderSavingsReport(reader, { ...base, json: false }));
+    expect(text).toContain("Input priced");
+    expect(text).toContain("re-read at cache-read rate");
+    expect(text).toContain("63,333");
+    expect(text).toContain("56,667");
   });
 });
