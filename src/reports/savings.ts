@@ -315,23 +315,21 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     const unverifiedOutput = groupUnverified.reduce((s, r) => s + r.ollamaOutputTokens, 0);
     const unverifiedRunCount = groupUnverified.length;
     const unverifiedByKind = tallyKinds(groupUnverified);
-    const authorInput = ollamaInput - reviewInput - benchInput;
-    const authorOutput = ollamaOutput - reviewOutput - benchOutput;
-
     // The cache split is per-run — it depends on that run's turn count — so it
-    // cannot be applied to the summed `authorInput`. Filter the authoring rows and
-    // split each. The two halves still sum to `authorInput`, which the assertion
-    // below pins: a filter that disagreed with the subtraction above (a new row
-    // class excluded from one but not the other) would silently misprice.
+    // cannot be applied to a summed input figure. Take the authoring rows once and
+    // derive BOTH the split and `authorInput` from them, rather than splitting rows
+    // while subtracting to get the total: two derivations of "authoring input" can
+    // disagree (a new excluded row class added to one and not the other), and the
+    // disagreement would surface only as a quietly mispriced dollar figure. One
+    // source of truth means there is no divergence to guard against.
     const groupAuthor = groupRuns.filter((r) => !isReviewRow(r) && !isBenchRow(r));
-    let uncachedInput = 0, cachedInput = 0;
+    let uncachedInput = 0, cachedInput = 0, authorInput = 0, authorOutput = 0;
     for (const r of groupAuthor) {
       const split = splitCachedInput(r.ollamaInputTokens, r.turns);
       uncachedInput += split.uncached; cachedInput += split.cached;
+      authorInput += r.ollamaInputTokens; authorOutput += r.ollamaOutputTokens;
     }
-    const counterfactual = uncachedInput + cachedInput === authorInput
-      ? valueAtClaudePricesCached(uncachedInput, cachedInput, authorOutput, opts.counterfactualModel)
-      : valueAtClaudePrices(authorInput, authorOutput, opts.counterfactualModel);
+    const counterfactual = valueAtClaudePricesCached(uncachedInput, cachedInput, authorOutput, opts.counterfactualModel);
 
     let pmOverhead: number | null = null, pmPartial = false, found = false;
     if (sessionId !== null && opts.pmCost !== undefined) {
@@ -396,8 +394,12 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   const netTotal = attributedGroups.length > 0
     ? attributedGroups.reduce((s, g) => s + (g.net ?? 0), 0) : null;
   const counterfactualAttributed = attributedGroups.reduce((s, g) => s + (g.counterfactual ?? 0), 0);
-  const totalUncachedInput = groups.reduce((n, g) => n + g.uncachedInput, 0);
-  const totalCachedInput = groups.reduce((n, g) => n + g.cachedInput, 0);
+  // Summed over ATTRIBUTED groups, matching `counterfactualAttributed` above — these
+  // are the split behind that dollar figure, so covering a different set of sessions
+  // would make them describe a total nobody reports. On the live ledger the two sets
+  // differ (8 groups vs 6), so this is not a distinction without a difference.
+  const totalUncachedInput = attributedGroups.reduce((n, g) => n + g.uncachedInput, 0);
+  const totalCachedInput = attributedGroups.reduce((n, g) => n + g.cachedInput, 0);
   const pmAttributed = attributedGroups.reduce((s, g) => s + (g.pmOverhead ?? 0), 0);
   const unattributedRuns = groups.filter((g) => !g.attributed).reduce((s, g) => s + g.runCount, 0);
 
@@ -452,6 +454,12 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
         session_id: g.sessionId, cwd: g.cwd, run_count: g.runCount,
         ollama_input: g.ollamaInput, ollama_output: g.ollamaOutput, models: g.models,
         counterfactual_usd: g.counterfactual, pm_overhead_usd: g.pmOverhead,
+        // The split behind this session's counterfactual. Emitted per session as
+        // well as in totals because the totals pair covers ATTRIBUTED sessions only
+        // (to match the dollar figure there), so an unattributed session's split is
+        // reachable nowhere else.
+        counterfactual_uncached_input: g.uncachedInput,
+        counterfactual_cached_input: g.cachedInput,
         pm_overhead_partial: g.pmPartial, net_savings_usd: g.net, attributed: g.attributed,
       };
       // Present on every session or on none — never per-session, or an array

@@ -72,7 +72,7 @@ describe("renderSavingsReport — unverified authoring runs", () => {
   it("leaves the counterfactual pricing unchanged — a failed attempt still cost money", () => {
     const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
     const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
-// 56,000 uncached + 87,000 cached + 47,500 out = 1.511. The point of this arm
+    // 56,000 uncached + 87,000 cached + 47,500 out = 1.511. The point of this arm
     // is that the unverified axis does not change pricing; the literal moved with
     // #465, the invariant did not.
     // Hand-computed, not built from valueAtClaudePrices — these assertions used to

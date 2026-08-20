@@ -49,7 +49,7 @@ const sess = () => payload().sessions[0];
 
 describe("counterfactual prices re-read input at the cache-read rate (#465)", () => {
   it("splits a multi-turn run's input into uncached and cached", () => {
-    const t = totals();
+    const t = sess();
     expect(t.counterfactual_uncached_input).toBe(100000 + 150000 + 100000);
     expect(t.counterfactual_cached_input).toBe(150000);
   });
@@ -72,16 +72,20 @@ describe("counterfactual prices re-read input at the cache-read rate (#465)", ()
   });
 
   it("treats turns=1 and turns=null as fully uncached", () => {
-    // Both single-pass rows contribute their full input at the input rate; if
-    // either were split, uncached would fall below 200000 for those two alone.
-    const t = totals();
-    expect(t.counterfactual_uncached_input).toBeGreaterThanOrEqual(200000);
+    // Exact, not a floor. `>= 200000` would also hold if turns:null were treated as
+    // fully CACHED, since author:701 alone contributes 150,000 uncached — so the
+    // loose form passes under the mutation it exists to catch.
+    // author:700 (turns=1) + author:702 (turns=null) = 200,000, and author:701
+    // contributes exactly half of 300,000. Anything else moves this number.
+    const t = sess();
+    expect(t.counterfactual_uncached_input).toBe(350000);
+    expect(t.counterfactual_cached_input).toBe(150000);
   });
 
   it("does not apply the split to review rows", () => {
     // review:700 is 900000 input over 9 turns — nine times the authoring volume.
     // If it leaked in, both split keys would jump by six figures.
-    const t = totals();
+    const t = sess();
     expect(t.counterfactual_uncached_input + t.counterfactual_cached_input).toBe(500000);
   });
 });

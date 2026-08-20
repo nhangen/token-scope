@@ -40,7 +40,7 @@ describe("renderSavingsReport — review passes are not priced as authoring", ()
     const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
     const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
     expect(s).toBeDefined();
-// 67,333 uncached + 66,667 cached + 46,400 out = 1.5299985 exactly.
+    // 67,333 uncached + 66,667 cached + 46,400 out = 1.5299985 exactly.
     // Hand-computed, not built from valueAtClaudePrices — these assertions used to
     // call the production pricing helper, so when #465 changed how input is priced
     // every one of them moved with it and none reported the change. See the
@@ -104,7 +104,7 @@ describe("renderSavingsReport — --by-label breakdown", () => {
     expect(l412.review_input).toBe(REVIEW_IN);
     expect(l412.review_output).toBe(REVIEW_OUT);
     expect(l412.review_run_count).toBe(2);
-// author:412 is 100,000 in over 4 turns -> 40,000 uncached, 60,000 cached,
+    // author:412 is 100,000 in over 4 turns -> 40,000 uncached, 60,000 cached,
     // plus 40,000 out. The two review:412 rows contribute nothing.
     expect(l412.counterfactual_usd).toBeCloseTo(1.23, 6);
 
