@@ -40,9 +40,12 @@ describe("renderSavingsReport — review passes are not priced as authoring", ()
     const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
     const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
     expect(s).toBeDefined();
-    expect(s.counterfactual_usd).toBeCloseTo(
-      valueAtClaudePrices(AUTHORING_IN, AUTHORING_OUT, DEFAULT_COUNTERFACTUAL_MODEL)!, 6,
-    );
+    // 67,333 uncached + 66,667 cached + 46,400 out = 1.5299985 exactly.
+    // Hand-computed, not built from valueAtClaudePrices — these assertions used to
+    // call the production pricing helper, so when #465 changed how input is priced
+    // every one of them moved with it and none reported the change. See the
+    // per-fixture derivation in the comment above each literal.
+    expect(s.counterfactual_usd).toBeCloseTo(1.5299985, 6);
   });
 
   it("keeps ollama_input/ollama_output as total volume so no spend is hidden", () => {
@@ -68,8 +71,11 @@ describe("renderSavingsReport — review passes are not priced as authoring", ()
     const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
     // r-legacy and the null-run_id row must stay inside the priced counterfactual;
     // if either were treated as non-authoring the figure would drop by their value.
-    const withLegacy = valueAtClaudePrices(AUTHORING_IN, AUTHORING_OUT, DEFAULT_COUNTERFACTUAL_MODEL)!;
-    const withoutLegacy = valueAtClaudePrices(AUTHORING_IN - 14000, AUTHORING_OUT - 1400, DEFAULT_COUNTERFACTUAL_MODEL)!;
+// r-legacy (10,000 in) and the null run_id (4,000 in) are both turns=1, so both
+    // are fully uncached and drop out at the full input rate: 14,000 @ $5/M +
+    // 1,400 out @ $25/M = 0.105 of the 1.5299985.
+    const withLegacy = 1.5299985;
+    const withoutLegacy = 1.4249985;
     const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
     expect(s.counterfactual_usd).toBeCloseTo(withLegacy, 6);
     expect(s.counterfactual_usd).not.toBeCloseTo(withoutLegacy, 6);
@@ -98,9 +104,9 @@ describe("renderSavingsReport — --by-label breakdown", () => {
     expect(l412.review_input).toBe(REVIEW_IN);
     expect(l412.review_output).toBe(REVIEW_OUT);
     expect(l412.review_run_count).toBe(2);
-    expect(l412.counterfactual_usd).toBeCloseTo(
-      valueAtClaudePrices(100000, 40000, DEFAULT_COUNTERFACTUAL_MODEL)!, 6,
-    );
+    // author:412 is 100,000 in over 4 turns -> 40,000 uncached, 60,000 cached,
+    // plus 40,000 out. The two review:412 rows contribute nothing.
+    expect(l412.counterfactual_usd).toBeCloseTo(1.23, 6);
 
     const l433 = p.by_label.find((x: any) => x.label === "433");
     expect(l433.run_count).toBe(1);
