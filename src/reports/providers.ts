@@ -20,6 +20,8 @@ export interface ProviderRow {
   reasoning: number | null;
   /** Events marked as retries of an earlier attempt. */
   retries: number;
+  /** Distinct source files/db behind this row, sorted. Provenance (#37 AC). */
+  provenance: string[];
 }
 
 const sum = (vals: Array<number | null>): number | null =>
@@ -30,14 +32,28 @@ const sum = (vals: Array<number | null>): number | null =>
 export interface ProviderReportJson {
   rows: ProviderRow[];
   unavailable: string[];
+  /** Files that existed but failed to read, by harness. */
+  partial: Record<string, number>;
+  /** Events outside --since only because they carry no timestamp. */
+  untimedExcluded: number;
   /** Every number above is read from source records; nothing is estimated. */
   measured: true;
 }
 
+/** Events dropped by the --since window purely for lacking a timestamp.
+ * Without --since nothing is dropped — untimed volume still counts. */
+export function untimedExcluded(collected: Collected, sinceMs?: number): number {
+  if (!sinceMs) return 0;
+  return collected.events.filter((e) => !e.ts).length;
+}
+
 export function providerRows(collected: Collected, sinceMs?: number): ProviderRow[] {
+  // No window: keep everything, including timestamp-less events. With a
+  // window there is no honest place to put an undated event — count them
+  // via untimedExcluded() so the loss is visible instead of silent.
   const filtered = sinceMs
     ? collected.events.filter((e) => e.ts && Date.parse(e.ts) >= sinceMs)
-    : collected.events.filter((e) => e.ts);
+    : collected.events;
   const groups = new Map<string, ProviderEvent[]>();
   for (const e of filtered) {
     const key = `${e.harness}|${e.billingRoute}|${e.modelProvider}|${e.model}`;
@@ -62,6 +78,7 @@ export function providerRows(collected: Collected, sinceMs?: number): ProviderRo
       cacheWrite: sum(evs.map((e) => e.cacheWriteTokens)),
       reasoning: sum(evs.map((e) => e.reasoningTokens)),
       retries: evs.filter((e) => e.retryOf !== null).length,
+      provenance: [...new Set(evs.map((e) => e.provenance))].sort(),
     });
   }
   return rows;
@@ -72,6 +89,7 @@ const dash = (v: number | null): string => (v === null ? "—" : String(v));
 export function renderProviderReport(
   rows: ProviderRow[],
   unavailable: string[],
+  partial: Record<string, number> = {},
 ): string {
   const lines: string[] = [];
   lines.push("provider usage by harness / billing route / model");
@@ -101,6 +119,10 @@ export function renderProviderReport(
     }
     lines.push("");
     lines.push("all values measured from source records; no estimates");
+    if (Object.keys(partial).length > 0) {
+      const parts = Object.entries(partial).map(([h, n]) => `${h}: ${n} file(s) skipped`);
+      lines.push(`partially read (${parts.join(", ")}) — skipped volume unknown`);
+    }
   }
   if (unavailable.length > 0) {
     lines.push("");
@@ -112,6 +134,8 @@ export function renderProviderReport(
 export function providerReportJson(
   rows: ProviderRow[],
   unavailable: string[],
+  partial: Record<string, number> = {},
+  untimedExcluded = 0,
 ): ProviderReportJson {
-  return { rows, unavailable, measured: true };
+  return { rows, unavailable, partial, untimedExcluded, measured: true };
 }

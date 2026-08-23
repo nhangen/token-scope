@@ -33,7 +33,10 @@ export function claudeEventsFromTranscript(
     const usage: ClaudeUsage | undefined = msg.usage;
     if (!usage) continue;
     events.push({
-      eventId: stableId("claude", rec.sessionId ?? provenance, index),
+      // File-anchored, not sessionId-anchored: resumed/forked sessions write
+      // fresh transcripts sharing one sessionId, so sessionId keys collide and
+      // dedup silently drops real usage. Re-scans of the same file are stable.
+      eventId: stableId("claude", provenance, index),
       harness: "claude",
       billingRoute: "subscription",
       modelProvider: "anthropic",
@@ -53,10 +56,13 @@ export function claudeEventsFromTranscript(
   return events;
 }
 
-export function claudeEvents(root: string): ProviderEvent[] {
+export function claudeEvents(
+  root: string,
+): { events: ProviderEvent[]; skipped: number } {
   const projectsDir = join(root, "projects");
-  if (!existsSync(projectsDir)) return [];
+  if (!existsSync(projectsDir)) return { events: [], skipped: 0 };
   const out: ProviderEvent[] = [];
+  let skipped = 0;
   for (const proj of readdirSync(projectsDir)) {
     const dir = join(projectsDir, proj);
     // Stray files (.DS_Store) live alongside project dirs; stat, don't assume.
@@ -73,9 +79,9 @@ export function claudeEvents(root: string): ProviderEvent[] {
       try {
         out.push(...claudeEventsFromTranscript(readFileSync(p, "utf8"), p));
       } catch {
-        continue; // unreadable file: never fabricate
+        skipped += 1; // unreadable file: volume unknown, surfaced not swallowed
       }
     }
   }
-  return out;
+  return { events: out, skipped };
 }

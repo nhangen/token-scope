@@ -31,6 +31,9 @@ export interface Collected {
   events: ProviderEvent[];
   /** Sources that could not be read. Their volume is unknown, never zero. */
   unavailable: string[];
+  /** Sources read partially: files that existed but failed to parse/read,
+   * by harness. Partial volume must not masquerade as complete (#38 panel). */
+  partial: Record<string, number>;
 }
 
 export function collectProviderEvents(opts?: {
@@ -40,11 +43,14 @@ export function collectProviderEvents(opts?: {
   opencodeDb?: string;
 }): Collected {
   const unavailable: string[] = [];
+  const partial: Record<string, number> = {};
   const claudeRoot = opts?.claudeRoot ?? join(homedir(), ".claude");
   let events: ProviderEvent[] = [];
 
   try {
-    events.push(...claudeEvents(claudeRoot));
+    const c = claudeEvents(claudeRoot);
+    events.push(...c.events);
+    if (c.skipped > 0) partial["claude"] = c.skipped;
   } catch {
     unavailable.push("claude");
   }
@@ -54,27 +60,21 @@ export function collectProviderEvents(opts?: {
     unavailable.push("ollama-claude");
   }
   try {
-    events.push(...codexEvents(opts?.codexHome ?? homedir()));
+    const cx = codexEvents(opts?.codexHome ?? homedir());
+    events.push(...cx.events);
+    if (cx.skipped > 0) partial["codex"] = cx.skipped;
   } catch {
     unavailable.push("codex");
   }
   try {
-    const oc = opencodeEvents(
-      opts?.opencodeDb ?? join(homedir(), ".local", "share", "opencode", "opencode.db"),
-    );
+    const dataRoot =
+      process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
+    const oc = opencodeEvents(opts?.opencodeDb ?? join(dataRoot, "opencode", "opencode.db"));
     if (oc === null) unavailable.push("opencode");
     else events.push(...oc);
   } catch {
     unavailable.push("opencode");
   }
 
-  // Deterministic dedup: stable sort by id, keep first occurrence.
-  const seen = new Set<string>();
-  events.sort((a, b) => (a.eventId < b.eventId ? -1 : a.eventId > b.eventId ? 1 : 0));
-  const deduped = events.filter((e) => {
-    if (seen.has(e.eventId)) return false;
-    seen.add(e.eventId);
-    return true;
-  });
-  return { events: deduped, unavailable };
+  return { events: dedupeEvents(events), unavailable, partial };
 }
