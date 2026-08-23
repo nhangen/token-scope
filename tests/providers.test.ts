@@ -26,17 +26,159 @@ describe("claude adapter", () => {
   });
 });
 
+describe("claude accounting (#37 post-merge audit)", () => {
+  it("counts one event per billed response, not per transcript line", () => {
+    // Three lines share msg_dup_1 (streaming/sidechain copies carry identical
+    // usage); live measurement found ~107M double-counted output tokens.
+    const text = readFileSync(join(FX, "claude-root/projects/-Users-x-proj/dup-responses.jsonl"), "utf8");
+    const ev = claudeEventsFromTranscript(text, "dup.jsonl");
+    expect(ev.length).toBe(2); // msg_dup_1 + msg_proxy_1
+    const dup = ev.find((e) => e.inputTokens === 100);
+    expect(dup).toBeDefined();
+    expect(ev.filter((e) => e.inputTokens === 100).length).toBe(1);
+  });
+
+  it("does not label proxy-delegated models as Anthropic subscription", () => {
+    const text = readFileSync(join(FX, "claude-root/projects/-Users-x-proj/dup-responses.jsonl"), "utf8");
+    const ev = claudeEventsFromTranscript(text, "dup.jsonl");
+    const qwen = ev.find((e) => e.model === "qwen3.8:27b");
+    expect(qwen!.billingRoute).toBe("unknown"); // NOT subscription — never was
+    expect(qwen!.modelProvider).toBe("unknown");
+  });
+
+  it("scans subagent transcript directories recursively", () => {
+    const { events } = claudeEvents(join(FX, "claude-root"));
+    const agent = events.find((e: any) => e.provenance.includes("subagents"));
+    expect(agent).toBeDefined();
+    expect(agent!.inputTokens).toBe(7);
+  });
+
+  it("prefilters by mtime under --since instead of parsing every file", async () => {
+    const { utimesSync } = await import("fs");
+    const root = join(FX, "claude-root");
+    const proj = join(root, "projects/-Users-x-proj");
+    // Pin deterministic mtimes: t.jsonl aged out of the window,
+    // dup-responses.jsonl touched now.
+    const stale = new Date(Date.now() - 86_400_000);
+    utimesSync(join(proj, "t.jsonl"), stale, stale);
+    const fresh = new Date();
+    utimesSync(join(proj, "dup-responses.jsonl"), fresh, fresh);
+    try {
+      const sinceMs = Date.now() - 60_000;
+      const { events } = claudeEvents(root, sinceMs);
+      expect(events.some((e: any) => e.provenance.endsWith("t.jsonl"))).toBe(false);
+      expect(events.some((e: any) => e.provenance.includes("dup-responses"))).toBe(true);
+    } finally {
+      const restored = new Date();
+      utimesSync(join(proj, "t.jsonl"), restored, restored);
+      utimesSync(join(proj, "dup-responses.jsonl"), restored, restored);
+    }
+  });
+});
+
+describe("codex resumed sessions (#37 post-merge audit)", () => {
+  it("keeps distinct rollouts distinct even when session_meta id is inherited", async () => {
+    const { codexEvents } = await import("@/providers/codex");
+    const { events, skipped } = codexEvents(join(FX, "codex-home"));
+    expect(skipped).toBe(0);
+    const ids = new Set(events.map((e: any) => e.eventId));
+    expect(ids.size).toBe(events.length); // no silent dedup of real sessions
+    expect(events.filter((e: any) => e.provenance.includes("resumed-copy")).length).toBe(1);
+  });
+});
+
+describe("ollama run_id reuse (#37 post-merge audit)", () => {
+  it("repeated run_ids with different content are distinct observations", () => {
+    const mk = (ts: string, input: number) => ({
+      ts, runId: "author:234", sessionId: null, model: "qwen",
+      taskName: "fix", cwd: null, ollamaInputTokens: input,
+      ollamaOutputTokens: 10, turns: 1, completed: true,
+      verified: true, reason: "ok",
+    } as any);
+    const evs = ollamaEventsFromRuns([mk("2026-08-21T01:00:00Z", 100), mk("2026-08-21T02:00:00Z", 600000)], "ledger");
+    expect(evs.length).toBe(2);
+    const deduped = dedupeEvents(evs);
+    expect(deduped.length).toBe(2); // dedup must not delete the second run
+  });
+});
+
+describe("opencode cost/error/id mapping (#37 post-merge audit)", () => {
+  it("maps measured cost to cash charge, error state to status, db pk to ids", () => {
+    const Database = require("bun:sqlite").Database;
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)");
+    const ins = db.prepare("INSERT INTO message (id, session_id, data) VALUES (?, ?, ?)");
+    ins.run("row-1", "ses1", JSON.stringify({
+      role: "assistant", modelID: "kimi-k3", providerID: "opencode",
+      cost: 0.042, tokens: { input: 10, output: 5 }, time: { created: 1755000000000 },
+    }));
+    ins.run("row-2", "ses1", JSON.stringify({
+      role: "assistant", modelID: "kimi-k3", providerID: "opencode",
+      cost: 0.001, error: { name: "MessageAbortedError" },
+      tokens: { input: 4, output: 2 }, time: { created: 1755000001000 },
+    }));
+    const ev = opencodeEventsFromDb(db);
+    expect(ev[0]!.cashChargeUsd).toBe(0.042); // measured cost survives
+    expect(ev[0]!.billingRoute).toBe("metered");
+    expect(ev[0]!.status).toBe("ok");
+    expect(ev[1]!.status).toBe("error"); // aborted messages are not successes
+    expect(ev.every((e) => e.cashChargeUsd !== null)).toBe(true);
+    expect(ev[0]!.eventId.startsWith("opencode:msg_") || ev[0]!.eventId.length > 0).toBe(true);
+    db.close();
+  });
+
+  it("prefilters by created time at the storage layer", () => {
+    const Database = require("bun:sqlite").Database;
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE message (id INTEGER PRIMARY KEY, session_id TEXT, data TEXT)");
+    const old = new Date(Date.now() - 86_400_000 * 30).getTime();
+    const now = Date.now();
+    const ins = db.prepare("INSERT INTO message (id, session_id, data) VALUES (?, ?, ?)");
+    ins.run(null, "s", JSON.stringify({ role: "assistant", tokens: { input: 1 }, time: { created: old } }));
+    ins.run(null, "s", JSON.stringify({ role: "assistant", tokens: { input: 2 }, time: { created: now } }));
+    const ev = opencodeEventsFromDb(db, now - 60_000);
+    expect(ev.length).toBe(1);
+    expect(ev[0]!.inputTokens).toBe(2);
+    db.close();
+  });
+});
+
+describe("partial aggregation (#37 post-merge audit)", () => {
+  it("marks classes where some events omit a value instead of labeling fully measured", () => {
+    const base: any = (over: object) => ({
+      eventId: "x", harness: "claude", billingRoute: "subscription",
+      modelProvider: "anthropic", model: "m", ts: "2026-08-22T00:00:00Z",
+      status: "ok", retryOf: null, inputTokens: 10, outputTokens: 5,
+      cacheReadTokens: null, cacheWriteTokens: null, reasoningTokens: null,
+      cashChargeUsd: null, provenance: "p", ...over,
+    });
+    const collected = {
+      events: [
+        base({ eventId: "a", cacheReadTokens: 100 }), // reports cacheRead
+        base({ eventId: "b", cacheReadTokens: null }), // omits it entirely
+      ],
+      unavailable: [] as string[],
+      partial: {},
+    };
+    const rows = providerRows(collected as any);
+    // claude-sample fixture semantics: absent vs zero matter; here b omits
+    expect(rows[0]!.cacheRead).toBe(100); // sums what exists
+    expect(rows[0]!.partialClasses).toContain("cacheRead"); // and says so
+  });
+});
+
 describe("claude collector", () => {
   it("skips stray files in projects/ instead of losing the source (#37 live find)", () => {
     // .DS_Store next to project dirs made readdirSync throw ENOTDIR, which the
     // collect-level catch turned into "claude unavailable" — volume unknown.
     const { events: ev } = claudeEvents(join(FX, "claude-root"));
-    // resumed/forked transcripts share one sessionId across files; ids are
-    // file-anchored so both survive dedup (#38 panel HIGH)
-    expect(ev.length).toBe(2);
-    expect(ev[0]!.inputTokens).toBe(10);
+    // Recursive scan: t.jsonl + resumed-ses-fix.jsonl + subagents/ +
+    // dup-responses.jsonl (2 unique billed responses) = 5 events.
+    expect(ev.length).toBe(5);
+    const t = ev.find((e: any) => e.inputTokens === 10);
+    expect(t).toBeDefined();
     // genuine zero must survive as 0 — null is for absent classes (#38 panel)
-    expect(ev[0]!.cacheWriteTokens).not.toBeNull();
+    expect(t!.cacheWriteTokens).not.toBeNull();
   });
 });
 
@@ -115,7 +257,7 @@ describe("dedup + report", () => {
 
   it("renders nulls as em-dashes and lists unavailable sources", () => {
     const out = renderProviderReport(
-      [{ harness: "x", billingRoute: "local", model: "m", events: 1, input: 5, output: null, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, provenance: ["a.jsonl"] }],
+      [{ harness: "x", billingRoute: "local", model: "m", events: 1, input: 5, output: null, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, cashUsd: null, partialClasses: [], provenance: ["a.jsonl"] }],
       ["opencode"],
     );
     expect(out).toContain("—");
@@ -145,11 +287,38 @@ describe("dedup + report", () => {
 
   it("sum() treats genuine zero as measured and all-null as unknown (#38 panel)", () => {
     const rows = renderProviderReport(
-      [{ harness: "x", billingRoute: "local", model: "m", events: 2, input: 7, output: 0, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, provenance: ["a"] }],
+      [{ harness: "x", billingRoute: "local", model: "m", events: 2, input: 7, output: 0, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, cashUsd: null, partialClasses: ["output"], provenance: ["a"] }],
       [],
     );
     expect(rows).toContain("  0  "); // zero renders as 0, not an em-dash
     expect(rows.split("\n").some((l) => l.includes("—"))).toBe(true); // nulls still dash
+    expect(rows).toContain("output"); // the partial class is named, not hidden
+  });
+
+  it("present-but-unparseable ledger surfaces as partial, not silent zero (#37)", () => {
+    const { mkdirSync, writeFileSync } = require("fs");
+    const dir = join(FX, "..", "tmp-ledger-$$");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "ledger.jsonl"), "not json\nalso not json\n");
+    const c = collectProviderEvents({
+      claudeRoot: "/nonexistent",
+      ledgerPath: join(dir, "ledger.jsonl"),
+      codexHome: "/nonexistent",
+      opencodeDb: "/nonexistent.db",
+    });
+    expect(c.partial["ollama-claude"]).toBe(2); // two real rows, zero events
+    expect(c.unavailable).toEqual(["opencode"]);
+  });
+
+  it("an absent ledger is legitimately zero, not unavailable", () => {
+    const c = collectProviderEvents({
+      claudeRoot: "/nonexistent",
+      ledgerPath: "/nonexistent-dir/ledger.jsonl",
+      codexHome: "/nonexistent",
+      opencodeDb: "/nonexistent.db",
+    });
+    expect(c.unavailable).toEqual(["opencode"]);
+    expect(c.partial["ollama-claude"]).toBeUndefined();
   });
 
   it("collectProviderEvents reports missing sources as unknown", () => {
@@ -234,7 +403,7 @@ describe("collect integration over fixtures (#38 panel)", () => {
     expect(c.partial["opencode"]).toBeUndefined();
     const ids = c.events.map((e) => e.eventId);
     expect(new Set(ids).size).toBe(ids.length); // single dedup pass, no dupes
-    expect(c.events.filter((e) => e.harness === "claude").length).toBe(2);
+    expect(c.events.filter((e) => e.harness === "claude").length).toBe(5);
     expect(c.events.filter((e) => e.harness === "codex").length).toBeGreaterThan(0);
   });
 

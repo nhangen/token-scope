@@ -425,8 +425,10 @@ async function main() {
   // Provider-neutral cross-harness report (#37). Independent of the Claude
   // JSONL pipeline entirely.
   if (args.mode === "providers") {
-    const collected = collectProviderEvents();
     const sinceMs = args.since ? Date.now() - parseSinceToMs(args.since) : undefined;
+    // --since bounds the SCAN (mtime prefilter / storage-layer filter), not
+    // just the aggregation: the stores are multi-GB (#37 post-merge audit).
+    const collected = collectProviderEvents({ sinceMs });
     const rows = providerRowsFiltered(collected, sinceMs);
     const untimed = untimedExcluded(collected, sinceMs);
     if (args.json) {
