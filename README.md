@@ -385,6 +385,9 @@ Optimal session length analysis — where the per-turn cost curve breaks.
 
 ```bash
 token-scope --credits --since 60d
+  --providers             Cross-harness usage: Claude native, Claude over Ollama,
+                          Codex, and OpenCode normalized into one provider-neutral
+                          report (pairs with --since)
 token-scope --credits --cap 4.8B           # Max 20x instead of the 5x default
 ```
 

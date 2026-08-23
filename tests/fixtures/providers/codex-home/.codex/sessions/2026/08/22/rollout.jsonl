@@ -1,0 +1,2 @@
+{"timestamp":"2026-08-22T11:00:00Z","type":"session_meta","payload":{"id":"019e-codex","timestamp":"2026-08-22T11:00:00Z","cwd":"/tmp","originator":"Codex Desktop","cli_version":"0.128.0","model_provider":"openai"}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":900,"cached_input_tokens":150,"output_tokens":70,"reasoning_output_tokens":40}}}}

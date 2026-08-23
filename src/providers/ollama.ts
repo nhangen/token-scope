@@ -1,0 +1,37 @@
+/**
+ * Adapter: Claude-over-Ollama delegations (ledger runs.jsonl, ground-truth
+ * counts from ollama's eval_count/prompt_eval_count). No cache/reasoning
+ * classes exist in this source — they stay null (#37).
+ */
+import { stableId, type ProviderEvent } from "./types";
+import { readLedger, type LedgerRun } from "@/ledger";
+
+export function ollamaEventsFromRuns(runs: LedgerRun[], provenance: string): ProviderEvent[] {
+  const events: ProviderEvent[] = [];
+  let index = 0;
+  for (const run of runs) {
+    index += 1;
+    events.push({
+      eventId: stableId("ollama-claude", run.runId ?? index),
+      harness: "ollama-claude",
+      billingRoute: "local",
+      modelProvider: "ollama",
+      model: run.model ?? "unknown",
+      ts: run.ts ?? null,
+      status: run.completed ? "ok" : run.verified === false ? "error" : "incomplete",
+      retryOf: run.reason === "turn-cap" || run.reason === "verify-failed" ? null : null,
+      inputTokens: run.ollamaInputTokens ?? null,
+      outputTokens: run.ollamaOutputTokens ?? null,
+      cacheReadTokens: null,
+      cacheWriteTokens: null,
+      reasoningTokens: null,
+      provenance,
+    });
+  }
+  return events;
+}
+
+export function ollamaEvents(override?: string): ProviderEvent[] {
+  // The house reader maps the ledger's snake_case fields to LedgerRun.
+  return ollamaEventsFromRuns(readLedger(override), override ?? "ledger");
+}

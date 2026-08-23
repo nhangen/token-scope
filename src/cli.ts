@@ -6,9 +6,23 @@ import type { ArtifactFormat } from "@/artifacts";
 import { KNOWN_ARTIFACT_FORMATS } from "@/artifacts";
 import { VERSION } from "@/version";
 import { parseCap } from "@/parse";
+import { collectProviderEvents } from "@/providers";
+import { renderProviderReport, providerRows } from "@/reports/providers";
 
 const ARTIFACT_FORMAT_SET = new Set<string>(KNOWN_ARTIFACT_FORMATS);
 const ARTIFACT_MODES = new Set(["artifacts", "artifact-show", "artifact-compare"]);
+
+function parseSinceToMs(since: string): number {
+  const m = /^(\d+)(h|d|w)$/.exec(since);
+  if (!m) return 0;
+  const n = Number(m[1]);
+  const unitMs = m[2] === "h" ? 3600_000 : m[2] === "d" ? 86_400_000 : 604_800_000;
+  return n * unitMs;
+}
+
+function providerRowsFiltered(collected: ReturnType<typeof collectProviderEvents>, sinceMs?: number) {
+  return providerRows(collected, sinceMs);
+}
 
 const HELP = `
 token-scope — Claude Code output token analytics
@@ -103,7 +117,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop" | "artifacts" | "artifact-show" | "artifact-compare" | "spend" | "savings" | "credits";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop" | "artifacts" | "artifact-show" | "artifact-compare" | "spend" | "savings" | "credits" | "providers";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -224,6 +238,7 @@ export function parseArgs(argv: string[]): CliArgs {
       case "--base-load": setMode("base-load"); break;
       case "--budget": setMode("budget"); break;
       case "--credits": setMode("credits"); break;
+      case "--providers": setMode("providers"); break;
       case "--cap": {
         const raw = argv[++i];
         if (!raw) { process.stderr.write("Error: --cap requires a value.\n"); process.exit(1); }
@@ -405,6 +420,16 @@ async function main() {
   } catch (e) {
     process.stderr.write(`${String(e)}\n`);
     process.exit(1);
+  }
+
+  // Provider-neutral cross-harness report (#37). Independent of the Claude
+  // JSONL pipeline entirely.
+  if (args.mode === "providers") {
+    const collected = collectProviderEvents();
+    const sinceMs = args.since ? Date.now() - parseSinceToMs(args.since) : undefined;
+    const rows = providerRowsFiltered(collected, sinceMs);
+    process.stdout.write(renderProviderReport(rows, collected.unavailable) + "\n");
+    return;
   }
 
   // Session-scoped modes pick a specific session_id; the mtime prefilter
