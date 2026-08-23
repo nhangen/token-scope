@@ -46,6 +46,7 @@ export function claudeEventsFromTranscript(
       cacheReadTokens: usage.cache_read_input_tokens ?? null,
       cacheWriteTokens: usage.cache_creation_input_tokens ?? null,
       reasoningTokens: null,
+      cashChargeUsd: null,
       provenance,
     });
   }

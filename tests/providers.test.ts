@@ -6,7 +6,7 @@ import { ollamaEvents } from "@/providers/ollama";
 import type { LedgerRun } from "@/ledger";
 import { codexEventsFromRollout } from "@/providers/codex";
 import { collectProviderEvents, dedupeEvents } from "@/providers";
-import { providerRows, renderProviderReport } from "@/reports/providers";
+import { providerRows, renderProviderReport, providerReportJson } from "@/reports/providers";
 
 const FX = join(import.meta.dir, "fixtures", "providers");
 
@@ -32,6 +32,35 @@ describe("claude collector", () => {
     const ev = claudeEvents(join(FX, "claude-root"));
     expect(ev.length).toBe(1);
     expect(ev[0]!.inputTokens).toBe(10);
+  });
+});
+
+describe("provider report", () => {
+  it("surfaces retries and marks every value measured (#37 acceptance criteria)", () => {
+    const base = {
+      eventId: "claude:1",
+      harness: "claude" as const,
+      billingRoute: "subscription" as const,
+      modelProvider: "anthropic",
+      model: "m1",
+      ts: "2026-08-22T00:00:00Z",
+      status: "ok" as const,
+      retryOf: null,
+      inputTokens: 1,
+      outputTokens: 2,
+      cacheReadTokens: null,
+      cacheWriteTokens: null,
+      reasoningTokens: null,
+      cashChargeUsd: null,
+      provenance: "p.jsonl",
+    };
+    const retry = { ...base, eventId: "claude:2", retryOf: "claude:1" };
+    const collected = { events: [base, retry], unavailable: [] as string[] };
+    const rows = providerRows(collected);
+    expect(rows[0]!.retries).toBe(1);
+    const out = renderProviderReport(rows, []);
+    expect(out).toContain("all values measured from source records; no estimates");
+    expect(providerReportJson(rows, []).measured).toBe(true);
   });
 });
 
@@ -79,7 +108,7 @@ describe("dedup + report", () => {
 
   it("renders nulls as em-dashes and lists unavailable sources", () => {
     const out = renderProviderReport(
-      [{ harness: "x", billingRoute: "local", model: "m", events: 1, input: 5, output: null, cacheRead: null, cacheWrite: null, reasoning: null }],
+      [{ harness: "x", billingRoute: "local", model: "m", events: 1, input: 5, output: null, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0 }],
       ["opencode"],
     );
     expect(out).toContain("—");

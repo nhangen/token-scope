@@ -37,6 +37,7 @@ export function opencodeEventsFromDb(db: Database): ProviderEvent[] {
       cacheReadTokens: t.cache?.read ?? null,
       cacheWriteTokens: t.cache?.write ?? null,
       reasoningTokens: t.reasoning ?? null,
+      cashChargeUsd: null,
       provenance: "opencode.db",
     });
   }

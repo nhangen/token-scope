@@ -468,6 +468,28 @@ Per-file production cost: which artifacts (files written or edited) cost the mos
 
 ---
 
+## Provider Report (`--providers`)
+
+`token-scope --providers --since 7d` normalizes the active coding harnesses into one provider-neutral table: per harness / billing route / model usage with nullable token classes (absent classes print `—`, never `0`), retry counts, and a measured-not-estimated footer. `--json` emits `{ rows, unavailable, measured }`.
+
+### Data sources and limitations
+
+| Source | Location | What it measures | Limitations |
+|---|---|---|---|
+| Claude native | `~/.claude/projects/**/*.jsonl` | Per-message input/output, cache read/write tokens; subscription billing route | No reasoning-token class; no per-request cash charge (subscription is included in the plan). `<synthetic>` model rows are harness bookkeeping messages. |
+| Claude over Ollama | `$XDG_STATE_HOME/ollama-agent/runs.jsonl` | One aggregate event per run: final cumulative input/output tokens; local route | No cache or reasoning classes (null); run-level, not per-request. |
+| Codex | `~/.codex/sessions/**/*.jsonl` rollouts | Session-aggregate token totals; reasoning class where recorded | Billing route unknown (not in rollout records); aggregate events, not individual requests. |
+| OpenCode | `$XDG_DATA_HOME/opencode/opencode.db` (sqlite) | Per-message input/output/cache/reasoning from message usage | Billing route unknown; zero-value classes can mean absent or genuinely zero depending on the provider plugin. |
+
+Cross-cutting rules:
+
+- A source that exists but cannot be read is reported under **unavailable sources** — its volume is *unknown*, not zero.
+- Event IDs are source-qualified and deterministic, so re-scans deduplicate; retries keep their own events and surface in the `retry` column.
+- Cash spend appears only for metered routes once a source meters per request — no manufactured per-request cost for subscription plans. Allowance utilization stays in `--credits` (native five-hour / weekly / monthly units).
+- All values are measured from source records; nothing is estimated.
+
+---
+
 ## Cost Alert Hook
 
 Real-time in-session spend alerts for Claude Code. Fires after each response and

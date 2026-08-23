@@ -7,7 +7,7 @@ import { KNOWN_ARTIFACT_FORMATS } from "@/artifacts";
 import { VERSION } from "@/version";
 import { parseCap } from "@/parse";
 import { collectProviderEvents } from "@/providers";
-import { renderProviderReport, providerRows } from "@/reports/providers";
+import { renderProviderReport, providerRows, providerReportJson } from "@/reports/providers";
 
 const ARTIFACT_FORMAT_SET = new Set<string>(KNOWN_ARTIFACT_FORMATS);
 const ARTIFACT_MODES = new Set(["artifacts", "artifact-show", "artifact-compare"]);
@@ -428,7 +428,11 @@ async function main() {
     const collected = collectProviderEvents();
     const sinceMs = args.since ? Date.now() - parseSinceToMs(args.since) : undefined;
     const rows = providerRowsFiltered(collected, sinceMs);
-    process.stdout.write(renderProviderReport(rows, collected.unavailable) + "\n");
+    if (args.json) {
+      process.stdout.write(JSON.stringify(providerReportJson(rows, collected.unavailable)) + "\n");
+    } else {
+      process.stdout.write(renderProviderReport(rows, collected.unavailable) + "\n");
+    }
     return;
   }
 

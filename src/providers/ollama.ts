@@ -25,6 +25,7 @@ export function ollamaEventsFromRuns(runs: LedgerRun[], provenance: string): Pro
       cacheReadTokens: null,
       cacheWriteTokens: null,
       reasoningTokens: null,
+      cashChargeUsd: null,
       provenance,
     });
   }

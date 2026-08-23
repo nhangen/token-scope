@@ -18,12 +18,21 @@ export interface ProviderRow {
   cacheRead: number | null;
   cacheWrite: number | null;
   reasoning: number | null;
+  /** Events marked as retries of an earlier attempt. */
+  retries: number;
 }
 
 const sum = (vals: Array<number | null>): number | null =>
   vals.every((v) => v === null)
     ? null
     : vals.reduce<number>((a, v) => a + (v ?? 0), 0);
+
+export interface ProviderReportJson {
+  rows: ProviderRow[];
+  unavailable: string[];
+  /** Every number above is read from source records; nothing is estimated. */
+  measured: true;
+}
 
 export function providerRows(collected: Collected, sinceMs?: number): ProviderRow[] {
   const filtered = sinceMs
@@ -52,6 +61,7 @@ export function providerRows(collected: Collected, sinceMs?: number): ProviderRo
       cacheRead: sum(evs.map((e) => e.cacheReadTokens)),
       cacheWrite: sum(evs.map((e) => e.cacheWriteTokens)),
       reasoning: sum(evs.map((e) => e.reasoningTokens)),
+      retries: evs.filter((e) => e.retryOf !== null).length,
     });
   }
   return rows;
@@ -70,7 +80,7 @@ export function renderProviderReport(
     lines.push("  (no timestamped provider events in range)");
   } else {
     lines.push(
-      "harness        route         model                      events   input       output     cache-r    cache-w    reasoning",
+      "harness        route         model                      events   input       output     cache-r    cache-w    reasoning   retry  cash-usd",
     );
     for (const r of rows) {
       lines.push(
@@ -84,13 +94,24 @@ export function renderProviderReport(
           dash(r.cacheRead).padStart(10),
           dash(r.cacheWrite).padStart(10),
           dash(r.reasoning).padStart(10),
+          String(r.retries).padStart(6),
+          dash(null).padStart(9), // cash charge: no source meters per request yet
         ].join("  "),
       );
     }
+    lines.push("");
+    lines.push("all values measured from source records; no estimates");
   }
   if (unavailable.length > 0) {
     lines.push("");
     lines.push(`unavailable sources (volume unknown, not zero): ${unavailable.join(", ")}`);
   }
   return lines.join("\n");
+}
+
+export function providerReportJson(
+  rows: ProviderRow[],
+  unavailable: string[],
+): ProviderReportJson {
+  return { rows, unavailable, measured: true };
 }

@@ -52,6 +52,7 @@ export function codexEventsFromRollout(
       cacheReadTokens: last?.cached_input_tokens ?? null,
       cacheWriteTokens: null,
       reasoningTokens: last?.reasoning_output_tokens ?? null,
+      cashChargeUsd: null,
       provenance,
     },
   ];

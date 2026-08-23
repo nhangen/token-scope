@@ -25,6 +25,9 @@ export interface ProviderEvent {
   cacheReadTokens: number | null;
   cacheWriteTokens: number | null;
   reasoningTokens: number | null;
+  /** Cash actually charged for this request. Null unless the source meters
+   * per request — never manufactured from subscription utilization (#37). */
+  cashChargeUsd: number | null;
   /** Source file (or db) the record came from. */
   provenance: string;
 }
