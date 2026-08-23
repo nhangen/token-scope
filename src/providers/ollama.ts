@@ -2,6 +2,14 @@
  * Adapter: Claude-over-Ollama delegations (ledger runs.jsonl, ground-truth
  * counts from ollama's eval_count/prompt_eval_count). No cache/reasoning
  * classes exist in this source — they stay null (#37).
+ *
+ * Event ids are content-composite: ledger run_ids like "author:234" or
+ * "review:446:p1of3" identify a TASK, not a run — the live ledger holds
+ * multiple legitimate rows per run_id with different token totals and
+ * timestamps. Keying on run_id alone made dedup silently delete real runs
+ * (#37 post-merge audit); keying on positional index broke dedup whenever
+ * rows rotated. The composite collapses true re-scan duplicates (identical
+ * row content) while keeping every distinct observation.
  */
 import { stableId, type ProviderEvent } from "./types";
 import { readLedger, type LedgerRun } from "@/ledger";
@@ -9,12 +17,15 @@ import { readLedger, type LedgerRun } from "@/ledger";
 export function ollamaEventsFromRuns(runs: LedgerRun[], provenance: string): ProviderEvent[] {
   const events: ProviderEvent[] = [];
   for (const run of runs) {
-    // Legacy rows (pre-reason logging, nhangen/claude-ceo#327) carry no run_id.
-    // Fall back to run content, not a positional index: indices shift when rows
-    // rotate or any earlier line goes unparseable, and a shifting id defeats
-    // dedup — the same physical run would double-count on the next scan.
-    const id = run.runId ??
-      `${run.sessionId ?? ""}:${run.model ?? ""}:${run.ts ?? ""}:${run.taskName ?? ""}:${run.ollamaInputTokens}:${run.ollamaOutputTokens}`;
+    const id = [
+      run.runId ?? "",
+      run.ts ?? "",
+      run.model ?? "",
+      run.taskName ?? "",
+      run.sessionId ?? "",
+      String(run.ollamaInputTokens),
+      String(run.ollamaOutputTokens),
+    ].join("|");
     events.push({
       eventId: stableId("ollama-claude", id),
       harness: "ollama-claude",

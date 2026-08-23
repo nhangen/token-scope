@@ -1,9 +1,15 @@
 /**
  * Adapter: Codex CLI/Desktop session rollouts (~/.codex/sessions JSONL rollouts).
+ *
  * token_count events carry cumulative totals; we emit one aggregate event per
  * session (final totals), so per-turn deltas are never double-counted.
+ *
+ * Event ids are file-anchored: resumed/forked rollouts can inherit a prior
+ * session_meta id, and an id-only key would make dedup silently drop one of
+ * two distinct files (#37 post-merge audit). The file path keeps re-scans
+ * deterministic while guaranteeing distinct rollouts stay distinct.
  */
-import { readFileSync, existsSync, readdirSync } from "fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { stableId, type ProviderEvent } from "./types";
 
@@ -51,17 +57,17 @@ export function codexEventsFromRollout(
     rawInput !== null && cached !== null ? Math.max(0, rawInput - cached) : rawInput;
   return [
     {
-      eventId: stableId("codex", meta?.id ?? provenance),
+      eventId: stableId("codex", meta?.id ?? "", provenance),
       harness: "codex",
       billingRoute: "unknown",
-      modelProvider: provider === "unknown" ? "unknown" : provider,
+      modelProvider: provider,
       model: model ?? "unknown", // session_meta carries the provider, not the model
       ts: lastTs ?? meta?.timestamp ?? null,
       status: sawTurnCap ? "incomplete" : "ok",
       retryOf: null,
       inputTokens: inputDisjoint,
       outputTokens: last?.output_tokens ?? null,
-      cacheReadTokens: last?.cached_input_tokens ?? null,
+      cacheReadTokens: cached,
       cacheWriteTokens: null,
       reasoningTokens: last?.reasoning_output_tokens ?? null,
       cashChargeUsd: null,
@@ -72,6 +78,7 @@ export function codexEventsFromRollout(
 
 export function codexEvents(
   root: string,
+  sinceMs?: number,
 ): { events: ProviderEvent[]; skipped: number } {
   const sessionsDir = join(root, ".codex", "sessions");
   if (!existsSync(sessionsDir)) return { events: [], skipped: 0 };
@@ -89,6 +96,13 @@ export function codexEvents(
       const p = join(dir, e.name);
       if (e.isDirectory()) walk(p);
       else if (e.name.endsWith(".jsonl")) {
+        if (sinceMs !== undefined) {
+          try {
+            if (statSync(p).mtimeMs < sinceMs) continue;
+          } catch {
+            continue;
+          }
+        }
         try {
           out.push(...codexEventsFromRollout(readFileSync(p, "utf8"), p));
         } catch {
