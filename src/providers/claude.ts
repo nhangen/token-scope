@@ -2,7 +2,7 @@
  * Adapter: Claude Code native transcripts (~/.claude/projects JSONL transcripts).
  * Assistant messages carry per-message usage with cache read/write classes.
  */
-import { readFileSync, readdirSync, existsSync } from "fs";
+import { readFileSync, readdirSync, existsSync, statSync } from "fs";
 import { join } from "path";
 import { stableId, type ProviderEvent } from "./types";
 
@@ -58,7 +58,14 @@ export function claudeEvents(root: string): ProviderEvent[] {
   const out: ProviderEvent[] = [];
   for (const proj of readdirSync(projectsDir)) {
     const dir = join(projectsDir, proj);
-    if (!existsSync(dir)) continue;
+    // Stray files (.DS_Store) live alongside project dirs; stat, don't assume.
+    let st;
+    try {
+      st = statSync(dir);
+    } catch {
+      continue; // vanished mid-scan: skip, never fabricate
+    }
+    if (!st.isDirectory()) continue;
     for (const f of readdirSync(dir)) {
       if (!f.endsWith(".jsonl")) continue;
       const p = join(dir, f);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { claudeEventsFromTranscript } from "@/providers/claude";
+import { claudeEvents, claudeEventsFromTranscript } from "@/providers/claude";
 import { ollamaEvents } from "@/providers/ollama";
 import type { LedgerRun } from "@/ledger";
 import { codexEventsFromRollout } from "@/providers/codex";
@@ -22,6 +22,16 @@ describe("claude adapter", () => {
     expect(ev[0]!.cacheWriteTokens).toBe(30);
     expect(ev[0]!.reasoningTokens).toBeNull();
     expect(ev[0]!.billingRoute).toBe("subscription");
+  });
+});
+
+describe("claude collector", () => {
+  it("skips stray files in projects/ instead of losing the source (#37 live find)", () => {
+    // .DS_Store next to project dirs made readdirSync throw ENOTDIR, which the
+    // collect-level catch turned into "claude unavailable" — volume unknown.
+    const ev = claudeEvents(join(FX, "claude-root"));
+    expect(ev.length).toBe(1);
+    expect(ev[0]!.inputTokens).toBe(10);
   });
 });
 
