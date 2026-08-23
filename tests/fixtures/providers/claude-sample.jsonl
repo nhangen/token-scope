@@ -1,0 +1,4 @@
+{"type":"assistant","sessionId":"ses-abc","timestamp":"2026-08-22T10:00:00Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":200,"cache_creation_input_tokens":30}}}
+{"type":"user","message":{"role":"user"}}
+{"type":"assistant","sessionId":"ses-abc","timestamp":"2026-08-22T10:01:00Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":80,"output_tokens":20,"cache_read_input_tokens":300,"cache_creation_input_tokens":0}}}
+not json at all
