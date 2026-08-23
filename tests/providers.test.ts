@@ -295,9 +295,10 @@ describe("dedup + report", () => {
     expect(rows).toContain("output"); // the partial class is named, not hidden
   });
 
-  it("present-but-unparseable ledger surfaces as partial, not silent zero (#37)", () => {
-    const { mkdirSync, writeFileSync } = require("fs");
-    const dir = join(FX, "..", "tmp-ledger-$$");
+  it("present-but-unparseable ledger surfaces as partial, not silent zero (#37)", async () => {
+    const { mkdirSync, writeFileSync } = await import("fs");
+    const { tmpdir } = await import("os");
+    const dir = join(tmpdir(), `ts-ledger-${Date.now()}-${Math.random()}`);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "ledger.jsonl"), "not json\nalso not json\n");
     const c = collectProviderEvents({
