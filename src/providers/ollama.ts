@@ -8,18 +8,22 @@ import { readLedger, type LedgerRun } from "@/ledger";
 
 export function ollamaEventsFromRuns(runs: LedgerRun[], provenance: string): ProviderEvent[] {
   const events: ProviderEvent[] = [];
-  let index = 0;
   for (const run of runs) {
-    index += 1;
+    // Legacy rows (pre-reason logging, nhangen/claude-ceo#327) carry no run_id.
+    // Fall back to run content, not a positional index: indices shift when rows
+    // rotate or any earlier line goes unparseable, and a shifting id defeats
+    // dedup — the same physical run would double-count on the next scan.
+    const id = run.runId ??
+      `${run.sessionId ?? ""}:${run.model ?? ""}:${run.ts ?? ""}:${run.taskName ?? ""}:${run.ollamaInputTokens}:${run.ollamaOutputTokens}`;
     events.push({
-      eventId: stableId("ollama-claude", run.runId ?? index),
+      eventId: stableId("ollama-claude", id),
       harness: "ollama-claude",
       billingRoute: "local",
       modelProvider: "ollama",
       model: run.model ?? "unknown",
       ts: run.ts ?? null,
       status: run.completed ? "ok" : run.verified === false ? "error" : "incomplete",
-      retryOf: run.reason === "turn-cap" || run.reason === "verify-failed" ? null : null,
+      retryOf: null,
       inputTokens: run.ollamaInputTokens ?? null,
       outputTokens: run.ollamaOutputTokens ?? null,
       cacheReadTokens: null,

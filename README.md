@@ -476,17 +476,18 @@ Per-file production cost: which artifacts (files written or edited) cost the mos
 
 | Source | Location | What it measures | Limitations |
 |---|---|---|---|
-| Claude native | `~/.claude/projects/**/*.jsonl` | Per-message input/output, cache read/write tokens; subscription billing route | No reasoning-token class; no per-request cash charge (subscription is included in the plan). `<synthetic>` model rows are harness bookkeeping messages. |
-| Claude over Ollama | `$XDG_STATE_HOME/ollama-agent/runs.jsonl` | One aggregate event per run: final cumulative input/output tokens; local route | No cache or reasoning classes (null); run-level, not per-request. |
-| Codex | `~/.codex/sessions/**/*.jsonl` rollouts | Session-aggregate token totals; reasoning class where recorded | Billing route unknown (not in rollout records); aggregate events, not individual requests. |
-| OpenCode | `$XDG_DATA_HOME/opencode/opencode.db` (sqlite) | Per-message input/output/cache/reasoning from message usage | Billing route unknown; zero-value classes can mean absent or genuinely zero depending on the provider plugin. |
+| Claude native | `~/.claude/projects/**/*.jsonl` | Per-message input/output, cache read/write tokens; subscription billing route | No reasoning-token class; no per-request cash charge (subscription is included in the plan). `<synthetic>` model rows are harness bookkeeping messages. Event ids are file-anchored, so resumed/forked transcripts sharing a sessionId stay distinct. |
+| Claude over Ollama | `$XDG_STATE_HOME/ollama-agent/runs.jsonl` | One aggregate event per run: final cumulative input/output tokens; local route | No cache or reasoning classes (null); run-level, not per-request. Legacy rows without `run_id` get content-derived ids so re-scans still dedup. The ledger records no attempt linkage, so `retryOf` stays null here. |
+| Codex | `~/.codex/sessions/**/*.jsonl` rollouts | Session-aggregate token totals; reasoning class where recorded | Billing route unknown (not in rollout records); aggregate events dated by the last token-count record, not session start. OpenAI-style `input_tokens` includes cached input — the adapter subtracts it so every source's columns are disjoint and summable. Model comes from turn-context records when present. |
+| OpenCode | `$XDG_DATA_HOME/opencode/opencode.db` (defaulting to `~/.local/share`) | Per-message input/output/cache/reasoning from message usage | Billing route unknown; zero-value classes can mean absent or genuinely zero depending on the provider plugin. |
 
 Cross-cutting rules:
 
-- A source that exists but cannot be read is reported under **unavailable sources** — its volume is *unknown*, not zero.
-- Event IDs are source-qualified and deterministic, so re-scans deduplicate; retries keep their own events and surface in the `retry` column.
+- A source that exists but cannot be read is reported under **unavailable sources** — its volume is *unknown*, not zero. A source that reads partially names the skipped file count in the footer.
+- Without `--since`, timestamp-less events count like any other. With `--since`, an undated event cannot be placed in the window: it is excluded and counted (`untimedExcluded` in JSON, footer line in text) rather than silently kept or dropped.
+- Event IDs are source-qualified and deterministic, so re-scans deduplicate. The `retry` column counts events carrying `retryOf`; no source currently links retry attempts, so it reads 0 until one does.
 - Cash spend appears only for metered routes once a source meters per request — no manufactured per-request cost for subscription plans. Allowance utilization stays in `--credits` (native five-hour / weekly / monthly units).
-- All values are measured from source records; nothing is estimated.
+- All values are measured from source records; nothing is estimated. Row provenance (distinct source files) ships in the `--json` rows.
 
 ---
 

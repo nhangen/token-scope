@@ -15,7 +15,7 @@ export function opencodeEventsFromDb(db: Database): ProviderEvent[] {
     )
     .all() as Array<{ data: string; session_id: string }>;
   const out: ProviderEvent[] = [];
-  for (const row of rows) {
+  for (const [i, row] of rows.entries()) {
     let rec: any;
     try {
       rec = JSON.parse(row.data);
@@ -24,7 +24,10 @@ export function opencodeEventsFromDb(db: Database): ProviderEvent[] {
     }
     const t = rec.tokens ?? {};
     out.push({
-      eventId: stableId("opencode", rec.id ?? `${row.session_id}:${rec.time?.created ?? ""}`),
+      eventId: stableId(
+        "opencode",
+        rec.id ?? `${row.session_id}:${rec.time?.created ?? ""}:${i}`,
+      ),
       harness: "opencode",
       billingRoute: "unknown",
       modelProvider: rec.providerID ?? "unknown",
