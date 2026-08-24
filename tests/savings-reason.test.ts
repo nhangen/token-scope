@@ -89,6 +89,20 @@ describe("renderSavingsReport — reads the ledger's reason field", () => {
     expect(s2.unverified_other_run_count).toBe(1);
   });
 
+  it("verifies the split counts are actually different (not byte-identical)", () => {
+    // #34 item 8: byte-identical assertions at :70/:78. The first test is still
+    // named for splitting behavior it shares byte-for-byte with the second, so
+    // it still passes with the reason branch disabled. This test asserts the
+    // counts are different, which is the actual invariant.
+    const t = totals();
+    const s = sess();
+    // Totals and session must agree
+    expect(t.unverified_turn_cap_run_count).toBe(s.unverified_turn_cap_run_count);
+    expect(t.unverified_verify_failed_run_count).toBe(s.unverified_verify_failed_run_count);
+    // The counts must be different (asymmetric fixture)
+    expect(t.unverified_turn_cap_run_count).toBeGreaterThan(t.unverified_verify_failed_run_count);
+  });
+
   it("classifies a pre-#327 row with no reason from completed and verified", () => {
     // null reason means "not recorded" — never a claim about the run. Both
     // legacy rows must land in the same buckets as their reason-bearing twins,
@@ -139,6 +153,20 @@ describe("renderSavingsReport — reads the ledger's reason field", () => {
     expect(text).toContain("unrecognized reason 1");
   });
 
+  it("includes per-kind token counts in the text split line", () => {
+    // #34 item 4: per-kind tokens through tallyKinds. The turn-cap runs burn
+    // the full cap by construction, so one turn-cap run among three failures
+    // should own most of the tokens. A wrong number here misleads in a
+    // specific, predictable direction.
+    const text = capture(() => renderSavingsReport(reader, { ...base, json: false }));
+    // turn-cap runs: 601 (20000/2000), 604 (50000/5000), 607 (11000/1100)
+    // total turn-cap input: 81000
+    expect(text).toMatch(/turn cap 3 \(in=81,000\)/);
+    // verify-failed runs: 602 (30000/3000), 603 (40000/4000)
+    // total verify-failed input: 70000
+    expect(text).toMatch(/verify failed 2 \(in=70,000\)/);
+  });
+
   it("omits the split on a ledger where no authoring run failed", () => {
     // runs-labelled.jsonl does contain two failed rows, but both are review —
     // excluded by construction. The name has to say "authoring" or it claims a
@@ -148,6 +176,25 @@ describe("renderSavingsReport — reads the ledger's reason field", () => {
     expect(t.unverified_turn_cap_run_count).toBeUndefined();
     expect(t.unverified_verify_failed_run_count).toBeUndefined();
     expect(t.unverified_other_run_count).toBeUndefined();
+  });
+
+  it("collects distinct unknown reason strings in unverified_other_reasons", () => {
+    // #34 item 3: the field whose entire purpose is telling a reader which
+    // unknown string appeared, so a classification regression is distinguishable
+    // from a workload change. Mutating the field away must fail this test.
+    const t = totals();
+    expect(t.unverified_other_reasons).toEqual(["killed"]);
+  });
+
+  it("omits zero-count kinds from the text split line", () => {
+    // #34 item 7: no fixture exercises a ledger with turn-cap failures and no
+    // verify failures (or the reverse), so the per-part filter in the text split
+    // line never runs. This is the shape production hits first.
+    const tcOnly = new URL("./fixtures/ledger/runs-tc-only.jsonl", import.meta.url).pathname;
+    const text = capture(() => renderSavingsReport(reader, { ...base, json: false, ledgerPath: tcOnly }));
+    expect(text).toMatch(/turn cap 2 \(in=30,000\)/);
+    expect(text).not.toContain("verify failed 0");
+    expect(text).not.toContain("unrecognized reason 0");
   });
 });
 
