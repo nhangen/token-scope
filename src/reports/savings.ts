@@ -41,6 +41,11 @@ interface SavingsOptions {
  * Values ollama token volume at Claude prices: the estimated cost had Claude
  * authored the same work. Input+output only — ollama has no prompt-cache
  * concept. Returns null if the model isn't in the price map.
+ *
+ * @deprecated No production callers. All dollar figures derived from ollama input
+ * tokens now go through the cache-split pricing (valueAtClaudePricesCached) so
+ * the counterfactual matches what Claude would actually pay. Kept for backward
+ * compatibility with external consumers; remove when none remain (#36).
  */
 export function valueAtClaudePrices(inputTokens: number, outputTokens: number, model: string): number | null {
   const p = getPricing(model);
@@ -419,7 +424,16 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   const totalUncachedInput = attributedGroups.reduce((n, g) => n + g.uncachedInput, 0);
   const totalCachedInput = attributedGroups.reduce((n, g) => n + g.cachedInput, 0);
   const pmAttributed = attributedGroups.reduce((s, g) => s + (g.pmOverhead ?? 0), 0);
+  // Attributed-only unverified volumes: the dollar figure (failedShare) is
+  // priced over attributed groups, so the token volumes printed beside it
+  // must cover the same set (#36 finding 2).
+  const attrUnverifiedIn = attributedGroups.reduce((s, g) => s + g.unverifiedInput, 0);
+  const attrUnverifiedOut = attributedGroups.reduce((s, g) => s + g.unverifiedOutput, 0);
   const unattributedRuns = groups.filter((g) => !g.attributed).reduce((s, g) => s + g.runCount, 0);
+  // Ledger-wide cached input: the "Input priced" disclosure line is a disclosure,
+  // not an arithmetic component — it should appear whenever the ledger has any
+  // cache-split input at all, even if no session could be attributed (#36 finding 3).
+  const ledgerWideCachedInput = groups.reduce((s, g) => s + g.cachedInput, 0);
 
   // Per-label breakdown, across the whole (filtered) ledger — not nested inside
   // the per-session grouping. Label is the second colon-separated segment of a
@@ -585,8 +599,8 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     // ollama has no prompt cache, so the ledger's input total counts every re-read.
     // Naming the split here is what stops the counterfactual reading as if Claude
     // would have paid full price for all of it (#465).
-    ...(totalCachedInput > 0
-      ? [["Input priced", `${formatTokens(totalUncachedInput)} fresh + ${formatTokens(totalCachedInput)} re-read at cache-read rate`] as [string, string]]
+    ...(ledgerWideCachedInput > 0
+      ? [["Input priced (attributed authoring)", `${formatTokens(totalUncachedInput)} fresh + ${formatTokens(totalCachedInput)} re-read at cache-read rate`] as [string, string]]
       : []),
   ]));
 
@@ -674,7 +688,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       totalByKind.other > 0 ? `unrecognized reason ${totalByKind.other}` : null,
     ].filter((x): x is string => x !== null);
     totalsKv.splice(1, 0, ["Authoring runs that did not succeed",
-      `${totalUnverifiedRuns} (${kindParts.join(", ")})  in=${formatTokens(totalUnverifiedIn)}  out=${formatTokens(totalUnverifiedOut)}`]);
+      `${totalUnverifiedRuns} (${kindParts.join(", ")})  in=${formatTokens(attrUnverifiedIn)}  out=${formatTokens(attrUnverifiedOut)}`]);
   }
   console.log(renderKV(totalsKv));
 

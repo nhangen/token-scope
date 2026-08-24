@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
 import { createReader } from "@/reader";
 import type { Reader } from "@/reader";
-import { renderSavingsReport, valueAtClaudePrices, DEFAULT_COUNTERFACTUAL_MODEL } from "@/reports/savings";
+import { renderSavingsReport, DEFAULT_COUNTERFACTUAL_MODEL } from "@/reports/savings";
 
 const SPEND_DIR = new URL("./fixtures/spend-projects", import.meta.url).pathname;
 const LEDGER = new URL("./fixtures/ledger/runs-unverified.jsonl", import.meta.url).pathname;
@@ -29,8 +29,6 @@ const base = {
 //   author:502          8000 /   1000  verified: false, completed: false  <- unverified
 //   review:500:p1of2   50000 /   2000  verified: null    <- review, NOT unverified authoring
 //   r-old               5000 /    500  verified absent   <- legacy, NOT unverified
-const AUTHORING_IN = 100000 + 30000 + 8000 + 5000;  // 143000
-const AUTHORING_OUT = 40000 + 6000 + 1000 + 500;    //  47500
 const UNVERIFIED_IN = 8000;                          //  8000 (only author:502)
 const UNVERIFIED_OUT = 1000;                         //  1000
 

@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
 import { createReader } from "@/reader";
 import type { Reader } from "@/reader";
-import { renderSavingsReport, valueAtClaudePrices, DEFAULT_COUNTERFACTUAL_MODEL } from "@/reports/savings";
+import { renderSavingsReport, DEFAULT_COUNTERFACTUAL_MODEL } from "@/reports/savings";
 
 const SPEND_DIR = new URL("./fixtures/spend-projects", import.meta.url).pathname;
 const LEDGER = new URL("./fixtures/ledger/runs-bench.jsonl", import.meta.url).pathname;
