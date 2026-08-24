@@ -77,13 +77,20 @@ describe("cost-alert-worker — one turn per API response (#19)", () => {
 describe("cost-alert-worker — thresholds are credits, not dollars", () => {
   const ladder = new URL("./fixtures/hook/sess-ladder.jsonl", import.meta.url).pathname;
   const context = new URL("./fixtures/hook/sess-context.jsonl", import.meta.url).pathname;
-  const CAP = "1000000"; // 1M credits; the ladder fixture spends 20k per turn
+  const CAP = "1500000"; // 1.5M credits; the ladder fixture spends 20k per turn
 
   it("announces a rung as a share of the weekly cap", () => {
-    // 3 turns x 20k = 60k = 6% of cap, crossing the 5% rung on the last turn.
+    // 3 turns x 20k = 60k = 4% of cap, crossing the 3.5% rung on the last turn.
     const msg = statusMessage(ladder, CAP);
-    expect(msg).toContain("Crossed 5% of the weekly cap");
+    expect(msg).toContain("Crossed 3.5% of the weekly cap");
     expect(msg).toContain("% of cap");
+  });
+
+  it("fires an upper rung when the session is heavy relative to the cap", () => {
+    // 60k credits with a 400k cap = 15%, crossing the 14% rung. This pins that
+    // the upper rungs are live, not just the bottom one (#51).
+    const msg = statusMessage(ladder, "400000");
+    expect(msg).toContain("Crossed 14% of the weekly cap");
   });
 
   it("stays silent once a rung is behind it", () => {
