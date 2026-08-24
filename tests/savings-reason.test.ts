@@ -53,8 +53,10 @@ const baseWithConflict = {
 //   bench:600   15000/1500  reason ok             -> bench, excluded
 //   author:608  12000/1200  reason ok, c:f v:null -> unverified, conflict (#64, #73)
 //   author:609  13000/1300  reason ok, c:t v:null -> SUCCESS (no verify configured, #73)
-const UNVERIFIED_IN = 20000 + 30000 + 40000 + 50000 + 80000 + 11000;  // 231000
+const UNVERIFIED_IN = 20000 + 30000 + 40000 + 50000 + 80000 + 11000;  // 231000 (runs-reason.jsonl)
 const UNVERIFIED_OUT = 2000 + 3000 + 4000 + 5000 + 8000 + 1100;      //  23100
+// Conflict fixture adds author:608 (12000/1200) as a conflict row
+const CONFLICT_UNVERIFIED_IN = UNVERIFIED_IN + 12000;  // 243000
 
 function sess(opts: Record<string, unknown> = {}): any {
   const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, ...opts })));
@@ -234,6 +236,9 @@ describe("renderSavingsReport — conflict kind (#64)", () => {
     expect(t.unverified_conflict_run_count).toBe(1);
     // author:609 must not be in the unverified count
     expect(t.unverified_run_count).toBe(7);
+    // And its tokens (13000/1300) must not appear in unverified totals.
+    // If the guard reverts to verified !== true, these would increase.
+    expect(t.unverified_input).toBe(CONFLICT_UNVERIFIED_IN);
   });
 
   it("does not count conflict rows as turn-cap or verify-failed", () => {
