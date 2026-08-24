@@ -500,8 +500,10 @@ Real-time in-session spend alerts for Claude Code. Fires after each response and
 they mean the same thing as `--credits` and as your plan.
 
 It warns when:
-- The session crosses **5%, 10%, 25%, 50%, or 100% of the weekly credit cap** —
-  each rung once, on the turn that crosses it
+- The session crosses **0.7%, 1.4%, 3.5%, 7%, or 14% of the weekly credit cap** —
+  each rung once, on the turn that crosses it. The percentages are cap-relative but
+  calibrated to restore the old absolute triggers (8.4M, 16.8M, 42M, 84M, 168M
+  credits) after the cap moved 166.7M → 1.2B
 - **One turn's context** alone costs more than 0.0056% of the cap (~670k tokens
   of context), reporting the context size and what each further turn costs just
   to re-send it. Calibrated against a real turn, not a round number: a 1.1M-token
@@ -509,7 +511,7 @@ It warns when:
 - The last 3 turns average **>3x the session's own average** (a bloat spike)
 - 50 turns is reached, then every 50 after
 
-It checkpoints (writes a resumable session summary) at **25% of the weekly cap** —
+It checkpoints (writes a resumable session summary) at **3.5% of the weekly cap** —
 and on credits alone. A long-but-cheap session gets no file: turn count was the
 other half of why 634 of them accumulated. A checkpoint always announces itself,
 because a file nobody is told about is a file nobody reads.
@@ -539,9 +541,9 @@ Replace the path with wherever you cloned token-scope. Requires `bun` in PATH (o
 ### Example output
 
 ```
-⚠ Crossed 10% of the weekly cap (16.7M credits) [16.7M credits, 10.0% of cap / 412 turns / $251.03]
-⚠ Context is 1.1M tokens — re-sending it costs ~110k credits per turn (0.07% of the week, every turn). /clear or a fresh session resets it [144k credits, 0.1% of cap / 6 turns / $2.16]
-⚠ Spending is spiking: 121k credits/turn vs 34k avg [30.6M credits, 18.4% of cap / 885 turns / $459.75]
+⚠ Crossed 1.4% of the weekly cap (16.8M credits) [16.8M credits, 1.4% of cap / 412 turns / $251.03]
+⚠ Context is 1.1M tokens — re-sending it costs ~110k credits per turn (0.0092% of the week, every turn). /clear or a fresh session resets it [144k credits, 0.012% of cap / 6 turns / $2.16]
+⚠ Spending is spiking: 121k credits/turn vs 34k avg [30.6M credits, 2.55% of cap / 885 turns / $459.75]
 ```
 
 The context line is real output from the shipped defaults, not an illustration.
