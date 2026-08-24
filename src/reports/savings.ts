@@ -135,12 +135,19 @@ function isBenchRow(r: LedgerRun): boolean {
  *
  *  `completed:true, verified:null` is NOT failed — it is the commonest shape in
  *  the ledger and means "finished, nothing asserted". */
-type UnverifiedKind = "turn-cap" | "verify-failed" | "other";
+type UnverifiedKind = "turn-cap" | "verify-failed" | "conflict" | "other";
 
 function unverifiedKindOf(r: LedgerRun): UnverifiedKind | null {
   if (isReviewRow(r) || isBenchRow(r)) return null;
   if (typeof r.reason === "string") {
-    if (r.reason === "ok") return null;
+    if (r.reason === "ok") {
+      // reason:"ok" contradicted by completed:false or verified:false is a
+      // bridge bug — the reason was set before the verify step ran and the
+      // result overwrote it. Count as a distinct kind so it doesn't silently
+      // migrate into "other" (#34).
+      if (r.completed === false || r.verified === false) return "conflict";
+      return null;
+    }
     if (r.reason === "turn-cap") return "turn-cap";
     if (r.reason === "verify-failed") return "verify-failed";
     return "other";
@@ -154,15 +161,27 @@ function isUnverifiedRow(r: LedgerRun): boolean {
   return unverifiedKindOf(r) !== null;
 }
 
-const KINDS: UnverifiedKind[] = ["turn-cap", "verify-failed", "other"];
-
-function tallyKinds(rows: LedgerRun[]): Record<UnverifiedKind, number> {
-  const out: Record<UnverifiedKind, number> = { "turn-cap": 0, "verify-failed": 0, other: 0 };
+function tallyKinds(rows: LedgerRun[]): { counts: Record<UnverifiedKind, number>; tokens: Record<UnverifiedKind, { input: number; output: number }>; otherReasons: Set<string> } {
+  const counts: Record<UnverifiedKind, number> = { "turn-cap": 0, "verify-failed": 0, conflict: 0, other: 0 };
+  const tokens: Record<UnverifiedKind, { input: number; output: number }> = {
+    "turn-cap": { input: 0, output: 0 },
+    "verify-failed": { input: 0, output: 0 },
+    conflict: { input: 0, output: 0 },
+    other: { input: 0, output: 0 },
+  };
+  const otherReasons = new Set<string>();
   for (const r of rows) {
     const k = unverifiedKindOf(r);
-    if (k !== null) out[k]++;
+    if (k !== null) {
+      counts[k]++;
+      tokens[k].input += r.ollamaInputTokens;
+      tokens[k].output += r.ollamaOutputTokens;
+      if (k === "other" && typeof r.reason === "string" && r.reason !== "ok" && r.reason !== "turn-cap" && r.reason !== "verify-failed") {
+        otherReasons.add(r.reason);
+      }
+    }
   }
-  return out;
+  return { counts, tokens, otherReasons };
 }
 
 /** A row's label: the second colon-separated segment of run_id, or null when
@@ -232,6 +251,8 @@ interface SessionGroup {
   unverifiedInput: number;
   unverifiedOutput: number;
   unverifiedByKind: Record<UnverifiedKind, number>;
+  unverifiedTokensByKind: Record<UnverifiedKind, { input: number; output: number }>;
+  unverifiedOtherReasons: Set<string>;
   unverifiedUncachedInput: number;
   unverifiedCachedInput: number;
   /** Authoring input split by what Claude would have paid for it: `uncachedInput`
@@ -336,7 +357,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       unverifiedUncachedInput += split.uncached; unverifiedCachedInput += split.cached;
     }
     const unverifiedRunCount = groupUnverified.length;
-    const unverifiedByKind = tallyKinds(groupUnverified);
+    const { counts: unverifiedByKind, tokens: unverifiedTokensByKind, otherReasons: unverifiedOtherReasons } = tallyKinds(groupUnverified);
     // The cache split is per-run — it depends on that run's turn count — so it
     // cannot be applied to a summed input figure. Take the authoring rows once and
     // derive BOTH the split and `authorInput` from them, rather than splitting rows
@@ -371,7 +392,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       runCount: groupRuns.length, ollamaInput, ollamaOutput,
       reviewRunCount, reviewInput, reviewOutput,
       benchRunCount, benchInput, benchOutput,
-      unverifiedRunCount, unverifiedInput, unverifiedOutput, unverifiedByKind, models,
+      unverifiedRunCount, unverifiedInput, unverifiedOutput, unverifiedByKind, unverifiedTokensByKind, unverifiedOtherReasons, models,
       unverifiedUncachedInput, unverifiedCachedInput,
       uncachedInput, cachedInput,
       counterfactual, pmOverhead, pmPartial, net, attributed, found,
@@ -409,9 +430,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   const totalUnverifiedRuns = groups.reduce((s, g) => s + g.unverifiedRunCount, 0);
   const totalUnverifiedIn = groups.reduce((s, g) => s + g.unverifiedInput, 0);
   const totalUnverifiedOut = groups.reduce((s, g) => s + g.unverifiedOutput, 0);
-  const totalByKind: Record<UnverifiedKind, number> = { "turn-cap": 0, "verify-failed": 0, other: 0 };
+  const totalByKind: Record<UnverifiedKind, number> = { "turn-cap": 0, "verify-failed": 0, conflict: 0, other: 0 };
   for (const g of groups) {
-    for (const k of KINDS) totalByKind[k] += g.unverifiedByKind[k];
+    for (const k of Object.keys(g.unverifiedByKind) as UnverifiedKind[]) totalByKind[k] += g.unverifiedByKind[k];
   }
   const attributedGroups = groups.filter((g) => g.attributed);
   const netTotal = attributedGroups.length > 0
@@ -513,6 +534,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
           unverified_run_count: g.unverifiedRunCount, unverified_input: g.unverifiedInput, unverified_output: g.unverifiedOutput,
           unverified_turn_cap_run_count: g.unverifiedByKind["turn-cap"],
           unverified_verify_failed_run_count: g.unverifiedByKind["verify-failed"],
+          unverified_conflict_run_count: g.unverifiedByKind.conflict,
           unverified_other_run_count: g.unverifiedByKind.other,
         } : {}),
       };
@@ -545,7 +567,13 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       totals.unverified_output = totalUnverifiedOut;
       totals.unverified_turn_cap_run_count = totalByKind["turn-cap"];
       totals.unverified_verify_failed_run_count = totalByKind["verify-failed"];
+      totals.unverified_conflict_run_count = totalByKind.conflict;
       totals.unverified_other_run_count = totalByKind.other;
+      // Collect distinct unknown reason strings so a classification regression
+      // (e.g. "verify_failed" with an underscore) is visible, not just a count (#34).
+      const allOtherReasons = new Set<string>();
+      for (const g of groups) for (const r of g.unverifiedOtherReasons) allOtherReasons.add(r);
+      if (allOtherReasons.size > 0) totals.unverified_other_reasons = [...allOtherReasons].slice(0, 5);
     }
     const payload: Record<string, unknown> = {
       meta: { generated_at: new Date().toISOString(), token_scope_version: VERSION },
@@ -682,10 +710,24 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     // Split rather than one number: a gate rejecting the work and a turn cap set
     // too low are different problems with different fixes, and the old single
     // count could not tell a reader which one they had.
+    // Compute per-kind token totals across all groups.
+    const totalTokensByKind: Record<UnverifiedKind, { input: number; output: number }> = {
+      "turn-cap": { input: 0, output: 0 },
+      "verify-failed": { input: 0, output: 0 },
+      conflict: { input: 0, output: 0 },
+      other: { input: 0, output: 0 },
+    };
+    for (const g of groups) {
+      for (const k of Object.keys(g.unverifiedTokensByKind) as UnverifiedKind[]) {
+        totalTokensByKind[k].input += g.unverifiedTokensByKind[k].input;
+        totalTokensByKind[k].output += g.unverifiedTokensByKind[k].output;
+      }
+    }
     const kindParts = [
-      totalByKind["turn-cap"] > 0 ? `turn cap ${totalByKind["turn-cap"]}` : null,
-      totalByKind["verify-failed"] > 0 ? `verify failed ${totalByKind["verify-failed"]}` : null,
-      totalByKind.other > 0 ? `unrecognized reason ${totalByKind.other}` : null,
+      totalByKind["turn-cap"] > 0 ? `turn cap ${totalByKind["turn-cap"]} (in=${formatTokens(totalTokensByKind["turn-cap"].input)})` : null,
+      totalByKind["verify-failed"] > 0 ? `verify failed ${totalByKind["verify-failed"]} (in=${formatTokens(totalTokensByKind["verify-failed"].input)})` : null,
+      totalByKind.conflict > 0 ? `conflict ${totalByKind.conflict} (in=${formatTokens(totalTokensByKind.conflict.input)})` : null,
+      totalByKind.other > 0 ? `unrecognized reason ${totalByKind.other} (in=${formatTokens(totalTokensByKind.other.input)})` : null,
     ].filter((x): x is string => x !== null);
     totalsKv.splice(1, 0, ["Authoring runs that did not succeed",
       `${totalUnverifiedRuns} (${kindParts.join(", ")})  in=${formatTokens(attrUnverifiedIn)}  out=${formatTokens(attrUnverifiedOut)}`]);
@@ -716,7 +758,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       opts.counterfactualModel,
     );
     const sharePct = failedShare !== null && counterfactualAttributed > 0
-      ? ` That is ${formatUsd(failedShare)} of the ${formatUsd(counterfactualAttributed)} counterfactual — ${Math.round(failedShare / counterfactualAttributed * 100)}% of the priced figure bought nothing.`
+      ? ` That is ${formatUsd(failedShare)} of the ${formatUsd(counterfactualAttributed)} counterfactual — ${Math.round(failedShare / counterfactualAttributed * 100)}% of the priced figure bought nothing (a floor, since crashed runs are in neither figure).`
       : "";
     console.log(renderFootnote(`Authoring runs that did not succeed (hit the turn cap, or failed their verify command) are INCLUDED in the counterfactual — the tokens were really spent, and Claude would have paid for a wrong first try too — but reported separately so failed work is not hidden in the total. A run that CRASHED is not counted here and is not in the ledger at all — the bridge writes its row after the failure path has already returned (nhangen/claude-ceo#328), so its tokens are missing from every figure on this report.${sharePct}`));
   }

@@ -44,6 +44,7 @@ const base = {
 //   author:606  80000/8000  reason "killed"       -> unverified, unrecognized
 //   review:601  90000/9000  reason turn-cap       -> review, excluded ANYWAY
 //   author:607  11000/1100  reason turn-cap       -> unverified, turn-cap
+//   bench:600   15000/1500  reason ok             -> bench, excluded
 const UNVERIFIED_IN = 20000 + 30000 + 40000 + 50000 + 80000 + 11000;  // 231000
 const UNVERIFIED_OUT = 2000 + 3000 + 4000 + 5000 + 8000 + 1100;      //  23100
 
