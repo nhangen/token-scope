@@ -1,6 +1,7 @@
 import type { Reader } from "@/reader";
 import { readLedger, resolveLedgerPath, type LedgerRun } from "@/ledger";
 import { getPricing } from "@/pricing";
+import { tsMs } from "@/providers/types";
 import {
   renderHeader, renderKV, renderTable, renderFootnote,
   formatTokens, formatUsd, truncate, bold,
@@ -272,9 +273,16 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   // --since acts as a ledger-time floor, but only when explicitly set (the 30d
   // default must not silently drop older runs from a lifetime total).
   const sinceFloorApplied = opts.sinceStr !== "30d";
+  let undatableRuns = 0;
   if (sinceFloorApplied) {
     const cutoffMs = opts.since * 1000;
-    runs = runs.filter((r) => r.ts !== null && Date.parse(r.ts) > cutoffMs);
+    // Runs with no timestamp or an unparseable one cannot be placed in the
+    // window — count them so the loss is visible, not silent (#50).
+    undatableRuns = runs.filter((r) => tsMs(r) === null).length;
+    runs = runs.filter((r) => {
+      const ms = tsMs(r);
+      return ms !== null && ms > cutoffMs;
+    });
   }
 
   const counterfactualPriced = getPricing(opts.counterfactualModel) !== null;
@@ -532,6 +540,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       counterfactual_model: opts.counterfactualModel,
       counterfactual_priced: counterfactualPriced,
       since_floor_applied: sinceFloorApplied,
+      undatable_excluded: undatableRuns,
       pm_scope: opts.pmCost !== undefined
         ? { mode: "measured", cost_usd: opts.pmCost }
         : opts.pmTurnRange
@@ -715,6 +724,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   const genuinelyUnattributed = unattributedRuns - emptySlice.reduce((s, g) => s + g.runCount, 0);
   if (genuinelyUnattributed > 0) {
     console.log(renderFootnote(`${genuinelyUnattributed} run(s) excluded from the net headline: no Claude session could be attributed (null session_id, or the session isn't in the local transcripts).`));
+  }
+  if (undatableRuns > 0) {
+    console.log(renderFootnote(`${undatableRuns} run(s) excluded from the --since window: timestamp absent or unparseable. The run's tokens are not in any figure on this report.`));
   }
   if (!counterfactualPriced) {
     console.log(renderFootnote(`Counterfactual model "${opts.counterfactualModel}" has no entry in the price table, so counterfactual + net are unavailable. Pass --counterfactual-model with a known Claude model.`));
