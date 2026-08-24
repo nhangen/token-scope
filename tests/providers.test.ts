@@ -54,24 +54,29 @@ describe("claude accounting (#37 post-merge audit)", () => {
   });
 
   it("prefilters by mtime under --since instead of parsing every file", async () => {
-    const { utimesSync } = await import("fs");
-    const root = join(FX, "claude-root");
-    const proj = join(root, "projects/-Users-x-proj");
-    // Pin deterministic mtimes: t.jsonl aged out of the window,
-    // dup-responses.jsonl touched now.
-    const stale = new Date(Date.now() - 86_400_000);
-    utimesSync(join(proj, "t.jsonl"), stale, stale);
-    const fresh = new Date();
-    utimesSync(join(proj, "dup-responses.jsonl"), fresh, fresh);
+    const { utimesSync, cpSync, mkdtempSync, rmSync } = await import("fs");
+    const { tmpdir } = await import("os");
+    // Copy the fixture so mtime writes never touch tracked files and never
+    // race the concurrent CLI test reading the same claude-root (#43).
+    // Pin every file's mtime: cpSync timestamp semantics differ across
+    // platforms, and CI checks the fixture out seconds before the test runs.
+    const tmp = mkdtempSync(join(tmpdir(), "ts-mtime-fixture-"));
     try {
+      const root = join(tmp, "claude-root");
+      cpSync(join(FX, "claude-root"), root, { recursive: true });
+      const proj = join(root, "projects/-Users-x-proj");
+      const fresh = new Date();
+      for (const f of ["dup-responses.jsonl", "resumed-ses-fix.jsonl", "subagents/agent-transcript.jsonl"]) {
+        utimesSync(join(proj, f), fresh, fresh);
+      }
+      const stale = new Date(Date.now() - 86_400_000);
+      utimesSync(join(proj, "t.jsonl"), stale, stale);
       const sinceMs = Date.now() - 60_000;
       const { events } = claudeEvents(root, sinceMs);
-      expect(events.some((e: any) => e.provenance.endsWith("t.jsonl"))).toBe(false);
+      expect(events.some((e: any) => e.provenance === join(proj, "t.jsonl"))).toBe(false);
       expect(events.some((e: any) => e.provenance.includes("dup-responses"))).toBe(true);
     } finally {
-      const restored = new Date();
-      utimesSync(join(proj, "t.jsonl"), restored, restored);
-      utimesSync(join(proj, "dup-responses.jsonl"), restored, restored);
+      rmSync(tmp, { recursive: true, force: true });
     }
   });
 });
