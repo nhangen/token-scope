@@ -11,3 +11,5 @@
 {"ts":"2026-08-18T10:40:00Z","run_id":"bench:600:sweep","session_id":"sess-spend","model":"qwen3.8:27b","task_name":null,"cwd":"/x","ollama_input_tokens":15000,"ollama_output_tokens":1500,"turns":1,"completed":true,"verified":null,"reason":"ok"}
 {"ts":"2026-08-18T10:50:00Z","run_id":"author:608","session_id":"sess-spend","model":"qwen3.8:27b","task_name":null,"cwd":"/x","ollama_input_tokens":12000,"ollama_output_tokens":1200,"turns":8,"completed":false,"verified":null,"reason":"ok"}
 {"ts":"2026-08-18T11:00:00Z","run_id":"author:609","session_id":"sess-spend","model":"qwen3.8:27b","task_name":null,"cwd":"/x","ollama_input_tokens":13000,"ollama_output_tokens":1300,"turns":8,"completed":true,"verified":null,"reason":"ok"}
+// author:609: completed:true, verified:null, reason:"ok" — NORMAL success shape
+// when verify_cmd is unset. NOT a conflict (#73).

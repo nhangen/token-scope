@@ -51,8 +51,8 @@ const baseWithConflict = {
 //   review:601  90000/9000  reason turn-cap       -> review, excluded ANYWAY
 //   author:607  11000/1100  reason turn-cap       -> unverified, turn-cap
 //   bench:600   15000/1500  reason ok             -> bench, excluded
-//   author:608  12000/1200  reason ok, c:f v:null -> unverified, conflict (#64)
-//   author:609  13000/1300  reason ok, c:t v:null -> unverified, conflict (#64)
+//   author:608  12000/1200  reason ok, c:f v:null -> unverified, conflict (#64, #73)
+//   author:609  13000/1300  reason ok, c:t v:null -> SUCCESS (no verify configured, #73)
 const UNVERIFIED_IN = 20000 + 30000 + 40000 + 50000 + 80000 + 11000;  // 231000
 const UNVERIFIED_OUT = 2000 + 3000 + 4000 + 5000 + 8000 + 1100;      //  23100
 
@@ -220,35 +220,41 @@ describe("renderSavingsReport — conflict kind (#64)", () => {
 
   it("classifies reason:ok with completed:false as conflict", () => {
     // author:608: reason:"ok", completed:false, verified:null — the bridge bug
-    // where reason was assigned before the verify block ran.
+    // where reason was assigned before the verify block ran. completed:false
+    // makes this a real contradiction regardless of verified state.
     const t = totalsConflict();
-    expect(t.unverified_conflict_run_count).toBe(2);
+    expect(t.unverified_conflict_run_count).toBe(1);
   });
 
-  it("classifies reason:ok with verified:null as conflict", () => {
-    // author:609: reason:"ok", completed:true, verified:null — the case #34
-    // warned about: reason assigned above the verify block, verify never ran.
+  it("does NOT classify completed:true, verified:null as conflict (#73)", () => {
+    // author:609: reason:"ok", completed:true, verified:null — this is the
+    // NORMAL success shape when verify_cmd is unset. The bridge never sets
+    // verified on such runs. Treating it as a conflict over-reports failures.
     const t = totalsConflict();
-    expect(t.unverified_conflict_run_count).toBe(2);
+    expect(t.unverified_conflict_run_count).toBe(1);
+    // author:609 must not be in the unverified count
+    expect(t.unverified_run_count).toBe(7);
   });
 
   it("does not count conflict rows as turn-cap or verify-failed", () => {
     const t = totalsConflict();
     expect(t.unverified_turn_cap_run_count).toBe(3);
     expect(t.unverified_verify_failed_run_count).toBe(2);
-    expect(t.unverified_conflict_run_count).toBe(2);
+    expect(t.unverified_conflict_run_count).toBe(1);
   });
 
   it("shows conflict in the text report", () => {
     const text = capture(() => renderSavingsReport(reader, { ...baseWithConflict, json: false }));
-    expect(text).toContain("conflict 2");
+    expect(text).toContain("conflict 1");
   });
 
-  it("conflict guard catches the case === false misses", () => {
-    // Regression: if the guard reverts to r.verified === false, author:609
-    // (verified:null) would not be caught. The unverified_run_count would drop.
+  it("conflict guard catches completed:false but not verified:null alone", () => {
+    // Regression for #73: the guard must NOT treat verified:null as a conflict
+    // when completed:true — that's the normal unverified success shape.
     const t = totalsConflict();
-    expect(t.unverified_run_count).toBe(8);
+    // 7 unverified: 601,602,603,604,606,607 (turn-cap/verify-failed/other) + 608 (conflict)
+    // author:609 (completed:true, verified:null) is NOT unverified
+    expect(t.unverified_run_count).toBe(7);
   });
 });
 

@@ -149,10 +149,12 @@ function unverifiedKindOf(r: LedgerRun): UnverifiedKind | null {
       // reason:"ok" contradicted by completed:false or verified !== true is a
       // bridge bug — the reason was set before the verify step ran and the
       // result overwrote it. Count as a distinct kind so it doesn't silently
-      // migrate into "other" (#34). Must check !== true, not === false: the
-      // case #34 warned about is verified:null (reason assigned above the
-      // verify block), which === false misses.
-      if (r.completed !== true || r.verified !== true) return "conflict";
+      // migrate into "other" (#34). Must check completed !== true (failed to
+      // complete) OR verified === false (verify ran and failed). NOT
+      // verified !== true: verified:null is the normal success shape when
+      // verify_cmd is unset — the bridge never sets verified on such runs
+      // (#73). The original #64 recommendation was wrong on this point.
+      if (r.completed !== true || r.verified === false) return "conflict";
       return null;
     }
     if (r.reason === "turn-cap") return "turn-cap";
