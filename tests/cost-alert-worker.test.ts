@@ -93,6 +93,38 @@ describe("cost-alert-worker — thresholds are credits, not dollars", () => {
     expect(msg).toContain("Crossed 14% of the weekly cap");
   });
 
+  it("fires the 7% rung", () => {
+    // 60k credits with an 857k cap = 7%, crossing the 7% rung on the last turn.
+    const msg = statusMessage(ladder, "857000");
+    expect(msg).toContain("Crossed 7% of the weekly cap");
+  });
+
+  it("fires the 1.4% rung", () => {
+    // 60k credits with a 4.28M cap = 1.4%, crossing the 1.4% rung on the last turn.
+    const msg = statusMessage(ladder, "4280000");
+    expect(msg).toContain("Crossed 1.4% of the weekly cap");
+  });
+
+  it("fires the 0.7% rung", () => {
+    // 60k credits with an 8.57M cap = 0.7%, crossing the 0.7% rung on the last turn.
+    // This is the bottom, most-frequently-fired rung (~37 of 963 sessions at the
+    // equivalent old trigger), so it is the one users actually see.
+    const msg = statusMessage(ladder, "8570000");
+    expect(msg).toContain("Crossed 0.7% of the weekly cap");
+  });
+
+  it("reports only the highest rung when multiple are crossed in one turn", () => {
+    // 60k credits with a 400k cap = 15%, crossing 14%, 7%, 3.5%, 1.4%, and 0.7%.
+    // The loop's descending-first-match behavior means only the highest rung
+    // (14%) should appear. This pins the 'break' that enforces it.
+    const msg = statusMessage(ladder, "400000");
+    expect(msg).toContain("Crossed 14% of the weekly cap");
+    expect(msg).not.toContain("Crossed 7%");
+    expect(msg).not.toContain("Crossed 3.5%");
+    expect(msg).not.toContain("Crossed 1.4%");
+    expect(msg).not.toContain("Crossed 0.7%");
+  });
+
   it("stays silent once a rung is behind it", () => {
     // The old hook warned on EVERY turn past 5x the threshold, so the alert
     // stopped meaning anything. With a cap the fixture clears on turn 1, the
