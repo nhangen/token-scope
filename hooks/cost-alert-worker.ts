@@ -185,6 +185,12 @@ let shouldCheckpoint = false;
 // it — `totalCredits - lastCredits` is where the session stood one turn ago — so
 // a rung announces itself once and then stays quiet. Descending, first match
 // wins, so crossing several rungs in one expensive turn reports the highest.
+//
+// Deliberately relative, not rescaled to typical session sizes (#28): the alert
+// reads "% of the weekly cap", which only means something as budget consumed.
+// A 7x larger cap therefore moves every trigger up 7x and the top rungs fire
+// only on genuine outliers — that is the signal working, since one-session
+// anomalies are separately covered by the spike detector below.
 const RUNG_PCTS = [100, 50, 25, 10, 5];
 for (const pct of RUNG_PCTS) {
   const rung = weeklyCap * (pct / 100);
