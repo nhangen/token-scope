@@ -44,12 +44,24 @@ function agg(vals: Array<number | null>): ClassAgg {
   };
 }
 
+/** Milliseconds for an event's timestamp, or null when it cannot be dated
+ * (absent or unparseable). Single source of truth for "cannot be placed in
+ * the window" — the --since filter and untimedExcluded() must not drift (#42). */
+function tsMs(e: ProviderEvent): number | null {
+  if (!e.ts) return null;
+  const ms = Date.parse(e.ts);
+  return Number.isNaN(ms) ? null : ms;
+}
+
 export function providerRows(collected: Collected, sinceMs?: number): ProviderRow[] {
   // No window: keep everything, including timestamp-less events. With a
   // window there is no honest place to put an undated event — count them
   // via untimedExcluded() so the loss is visible instead of silent.
   const filtered = sinceMs
-    ? collected.events.filter((e) => e.ts && Date.parse(e.ts) >= sinceMs)
+    ? collected.events.filter((e) => {
+        const ms = tsMs(e);
+        return ms !== null && ms >= sinceMs;
+      })
     : collected.events;
   const groups = new Map<string, ProviderEvent[]>();
   for (const e of filtered) {
@@ -96,11 +108,12 @@ export function providerRows(collected: Collected, sinceMs?: number): ProviderRo
   return rows;
 }
 
-/** Events dropped by the --since window purely for lacking a timestamp.
- * Without --since nothing is dropped — untimed volume still counts. */
+/** Events dropped by the --since window purely because they cannot be dated
+ * (timestamp absent or unparseable). Without --since nothing is dropped —
+ * untimed volume still counts. */
 export function untimedExcluded(collected: Collected, sinceMs?: number): number {
   if (!sinceMs) return 0;
-  return collected.events.filter((e) => !e.ts).length;
+  return collected.events.filter((e) => tsMs(e) === null).length;
 }
 
 export interface ProviderReportJson {

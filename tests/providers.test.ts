@@ -269,7 +269,7 @@ describe("dedup + report", () => {
     expect(out).toContain("unavailable sources (volume unknown, not zero): opencode");
   });
 
-  it("--since keeps in-window events and drops untimed ones countably (#38 panel)", () => {
+  it("--since keeps in-window events and drops undatable ones countably (#38 panel, #42)", () => {
     const mk = (id: string, ts: string | null): any => ({
       eventId: id, harness: "claude", billingRoute: "subscription",
       modelProvider: "anthropic", model: "m", ts, status: "ok", retryOf: null,
@@ -279,15 +279,21 @@ describe("dedup + report", () => {
     });
     const now = Date.now();
     const c = {
-      events: [mk("in", new Date(now - 1000).toISOString()), mk("untimed", null)],
+      events: [
+        mk("in", new Date(now - 1000).toISOString()),
+        mk("untimed", null),
+        mk("garbage", "not-a-date"),
+      ],
       unavailable: [] as string[], partial: {},
     };
     const rows = providerRows(c, now - 60000);
     expect(rows.length).toBe(1); // in-window survives
     expect(rows[0]!.input).toBe(10);
-    expect(untimedExcluded(c, now - 60000)).toBe(1); // untimed loss is counted, not silent
+    // Malformed timestamps are excluded alongside absent ones and counted,
+    // not silently dropped while the counter says 0 (#42).
+    expect(untimedExcluded(c, now - 60000)).toBe(2);
     const all = providerRows({ ...c, partial: {} }); // no window: nothing dropped
-    expect(all.reduce((a, r) => a + r.events, 0)).toBe(2); // both events grouped
+    expect(all.reduce((a, r) => a + r.events, 0)).toBe(3); // all events grouped
   });
 
   it("sum() treats genuine zero as measured and all-null as unknown (#38 panel)", () => {
