@@ -405,14 +405,16 @@ the cap must be re-derived rather than hand-adjusted.
 
 ```
   Weekly cap                   1200.0M credits
-  Avg full week                558.6M  (0.47x cap)   over 3 week(s)
-  Week in progress             252.6M so far → 623.2M projected  (0.52x cap)
+  Avg full week                570.9M  (0.48x cap)   over 4 week(s)
+  Week in progress             33.8M so far  (10% elapsed — too early to project)
 
 Week (Mon)   │ Turns   │ Credits    │ vs Cap   │ Cache Rd  │ Cache Wr  │ Output   │ Subagent  │
-2026-07-13   │   11552 │     453.7M │    0.38x │     53.9% │     35.2% │    10.0% │     26.0% │ partial (window)
+2026-07-20   │    1737 │      68.7M │    0.06x │     56.7% │     33.8% │     9.5% │     20.4% │ partial (window)
 2026-07-27   │   21790 │     789.5M │    0.66x │     64.9% │     26.3% │     8.8% │     17.7% │
 2026-08-03   │    8201 │     294.3M │    0.25x │     60.6% │     31.2% │     8.2% │     30.3% │
-2026-08-10   │    7308 │     252.6M │    0.21x │     63.1% │     28.5% │     8.4% │     23.3% │ → 623M
+2026-08-10   │   20118 │     722.4M │    0.60x │     64.9% │     26.8% │     8.3% │     21.3% │
+2026-08-17   │   12675 │     477.4M │    0.40x │     61.9% │     24.2% │     7.6% │     24.3% │
+2026-08-24   │     907 │      33.8M │    0.03x │     45.4% │     28.7% │     6.8% │     30.9% │ in progress
 ```
 
 Four things worth knowing:

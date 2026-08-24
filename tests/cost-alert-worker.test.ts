@@ -76,6 +76,7 @@ describe("cost-alert-worker — one turn per API response (#19)", () => {
 
 describe("cost-alert-worker — thresholds are credits, not dollars", () => {
   const ladder = new URL("./fixtures/hook/sess-ladder.jsonl", import.meta.url).pathname;
+  const oneturn = new URL("./fixtures/hook/sess-oneturn.jsonl", import.meta.url).pathname;
   const context = new URL("./fixtures/hook/sess-context.jsonl", import.meta.url).pathname;
   const CAP = "1500000"; // 1.5M credits; the ladder fixture spends 20k per turn
 
@@ -117,7 +118,11 @@ describe("cost-alert-worker — thresholds are credits, not dollars", () => {
     // 60k credits with a 400k cap = 15%, crossing 14%, 7%, 3.5%, 1.4%, and 0.7%.
     // The loop's descending-first-match behavior means only the highest rung
     // (14%) should appear. This pins the 'break' that enforces it.
-    const msg = statusMessage(ladder, "400000");
+    //
+    // Uses a single-turn fixture so lastCredits is 0: the turn increment equals
+    // totalCredits, making (totalCredits - lastCredits) < rung pass for every
+    // rung below the highest. With the break removed, all five messages fire.
+    const msg = statusMessage(oneturn, "400000");
     expect(msg).toContain("Crossed 14% of the weekly cap");
     expect(msg).not.toContain("Crossed 7%");
     expect(msg).not.toContain("Crossed 3.5%");
