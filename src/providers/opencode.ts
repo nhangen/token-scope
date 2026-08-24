@@ -26,7 +26,7 @@ export function opencodeEventsFromDb(
       session_id: string;
     }>;
   const out: ProviderEvent[] = [];
-  for (const [i, row] of rows.entries()) {
+  for (const row of rows) {
     let rec: any;
     try {
       rec = JSON.parse(row.data);
@@ -38,13 +38,10 @@ export function opencodeEventsFromDb(
       rec.error !== null && rec.error !== undefined && rec.error !== "";
     const cost = typeof rec.cost === "number" ? rec.cost : null;
     out.push({
-      // The database primary key is authoritative; JSON ids are a fallback,
-      // and only then creation time plus scan order (ORDER BY m.id keeps that
-      // order stable across scans).
-      eventId: stableId(
-        "opencode",
-        rec.id ?? `${row.session_id}:${rec.time?.created ?? ""}:${i}`,
-      ),
+      // The database primary key is authoritative (#41): two rows sharing a
+      // JSON-internal id must stay distinct events, exactly the hazard the
+      // Codex adapter fixed for inherited session_meta ids.
+      eventId: stableId("opencode", String(row.row_id)),
       harness: "opencode",
       billingRoute: cost !== null && cost > 0 ? "metered" : "unknown",
       modelProvider: rec.providerID ?? "unknown",
