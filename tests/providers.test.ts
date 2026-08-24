@@ -7,6 +7,7 @@ import { opencodeEventsFromDb } from "@/providers/opencode";
 import type { LedgerRun } from "@/ledger";
 import { codexEventsFromRollout } from "@/providers/codex";
 import { collectProviderEvents, dedupeEvents } from "@/providers";
+import { stableId } from "@/providers/types";
 import { providerRows, renderProviderReport, providerReportJson, untimedExcluded } from "@/reports/providers";
 
 const FX = join(import.meta.dir, "fixtures", "providers");
@@ -128,7 +129,27 @@ describe("opencode cost/error/id mapping (#37 post-merge audit)", () => {
     expect(ev[0]!.status).toBe("ok");
     expect(ev[1]!.status).toBe("error"); // aborted messages are not successes
     expect(ev.every((e) => e.cashChargeUsd !== null)).toBe(true);
-    expect(ev[0]!.eventId.startsWith("opencode:msg_") || ev[0]!.eventId.length > 0).toBe(true);
+    expect(ev[0]!.eventId).toBe(stableId("opencode", "row-1")); // db pk, not JSON id
+    db.close();
+  });
+
+  it("keeps two rows distinct when their JSON-internal ids collide (#41)", () => {
+    const Database = require("bun:sqlite").Database;
+    const { dedupeEvents } = require("@/providers");
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)");
+    const ins = db.prepare("INSERT INTO message (id, session_id, data) VALUES (?, ?, ?)");
+    // Same rec.id in the blob, different db primary keys: both rows' tokens
+    // must survive dedupe, mirroring the codex inherited-id hazard.
+    for (const rowId of ["row-a", "row-b"]) {
+      ins.run(rowId, "ses1", JSON.stringify({
+        id: "msg_dup", role: "assistant", modelID: "m", providerID: "opencode",
+        cost: 0.01, tokens: { input: 10, output: 5 }, time: { created: 1755000000000 },
+      }));
+    }
+    const ev = opencodeEventsFromDb(db);
+    expect(ev.length).toBe(2);
+    expect(dedupeEvents(ev).length).toBe(2); // no silent collapse onto the shared JSON id
     db.close();
   });
 
