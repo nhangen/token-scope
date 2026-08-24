@@ -186,12 +186,20 @@ let shouldCheckpoint = false;
 // a rung announces itself once and then stays quiet. Descending, first match
 // wins, so crossing several rungs in one expensive turn reports the highest.
 //
-// Deliberately relative, not rescaled to typical session sizes (#28): the alert
-// reads "% of the weekly cap", which only means something as budget consumed.
-// A 7x larger cap therefore moves every trigger up 7x and the top rungs fire
-// only on genuine outliers — that is the signal working, since one-session
-// anomalies are separately covered by the spike detector below.
-const RUNG_PCTS = [100, 50, 25, 10, 5];
+// Rescaled with the cap, like checkpointPct and turnWarnPct above, because all
+// three are shares and raising the cap 7.2x made each one that much harder to
+// trip. Measured across 963 real sessions (#28): the old [100, 50, 25, 10, 5]
+// rungs against a 166.7M cap fired on 5/13/18/~37 sessions respectively; the
+// same percentages against 1.2B fire on 1/1/1/14 sessions. A rung that never
+// fires is indistinguishable from "no session was heavy enough".
+//
+// The new percentages restore the old absolute triggers:
+//   14% of 1.2B = 168M ≈ old 100% (166.7M)
+//    7% of 1.2B =  84M ≈ old  50% (83.4M)
+//  3.5% of 1.2B =  42M ≈ old  25% (41.7M)
+//  1.4% of 1.2B = 16.8M ≈ old  10% (16.7M)
+//  0.7% of 1.2B = 8.4M  ≈ old   5% (8.34M)
+const RUNG_PCTS = [14, 7, 3.5, 1.4, 0.7];
 for (const pct of RUNG_PCTS) {
   const rung = weeklyCap * (pct / 100);
   if (totalCredits >= rung && (totalCredits - lastCredits) < rung) {
