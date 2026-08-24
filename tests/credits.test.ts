@@ -30,6 +30,16 @@ describe("credits — weighting", () => {
     expect(w!.components.output).toBeCloseTo(5_000, 6);
   });
 
+  it("uses 'open' not 'partial' in the emitted JSON key (#30, #72)", () => {
+    // The partial→open rename in #30 changed the WeekCredits type but the
+    // JSON output spreads the type directly. This test pins the key name so
+    // a future rename can't break consumers silently.
+    const [w] = computeWeeks([row()], MON_MS + 8 * 86_400_000);
+    // The key must be 'open', not 'partial'
+    expect(w).toHaveProperty("open");
+    expect(w).not.toHaveProperty("partial");
+  });
+
   it("prices a cache read at a fiftieth of an output token", () => {
     // The whole point of the report: cache reads dominate volume but not cost,
     // so the two must not be summed as if interchangeable.
