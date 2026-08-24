@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync } from "fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { DEFAULT_WEEKLY_CAP } from "@/credits";
+import { creditsOf, DEFAULT_WEEKLY_CAP } from "@/credits";
 
 const worker = new URL("../hooks/cost-alert-worker.ts", import.meta.url).pathname;
 const transcript = new URL("./fixtures/hook/sess-hook.jsonl", import.meta.url).pathname;
@@ -259,17 +259,17 @@ describe("cost-alert.sh — the wrapper's own config handling", () => {
   const wrapper = new URL("../hooks/cost-alert.sh", import.meta.url).pathname;
   const transcript = new URL("./fixtures/hook/sess-bigcontext.jsonl", import.meta.url).pathname;
 
-  function runWrapper(cap: string): { out: string; err: string } {
+  function runWrapper(cap: string, transcriptOverride?: string): { out: string; err: string } {
     const dir = mkdtempSync(join(tmpdir(), "ts-wrap-"));
     const p = Bun.spawnSync(["bash", wrapper], {
-      stdin: new TextEncoder().encode(JSON.stringify({ transcript_path: transcript })),
+      stdin: new TextEncoder().encode(JSON.stringify({ transcript_path: transcriptOverride ?? transcript })),
       env: { ...process.env, TOKEN_SCOPE_CREDIT_CAP: cap, TOKEN_SCOPE_CHECKPOINT_DIR: dir },
     });
     return { out: p.stdout.toString().trim(), err: p.stderr.toString() };
   }
 
-  function capPct(cap: string): number {
-    const { out } = runWrapper(cap);
+  function capPct(cap: string, transcriptOverride?: string): number {
+    const { out } = runWrapper(cap, transcriptOverride);
     const m = /([\d.]+)% of cap/.exec((JSON.parse(out) as { statusMessage?: string }).statusMessage ?? "");
     return m ? Number(m[1]) : NaN;
   }
@@ -306,7 +306,24 @@ describe("cost-alert.sh — the wrapper's own config handling", () => {
   });
 
   it("falls back to the default when the variable is unset or empty", () => {
-    expect(capPct("")).toBeCloseTo(capPct(String(DEFAULT_WEEKLY_CAP)), 1);
+    // The share must be a few WHOLE percent at the real cap, or this guard
+    // passes on a reverted hardcode within one rounding step: sess-bigcontext
+    // reads 0.0% at 1.2B and 0.1% under a 166.7M hardcode, inside the 0.05
+    // tolerance (#29). The expected percentage is computed HERE from the
+    // fixture's credits and the imported DEFAULT_WEEKLY_CAP — comparing the
+    // wrapper against itself cannot catch a revert, because both sides then
+    // flow through the same reverted constant.
+    const big = mkdtempSync(join(tmpdir(), "ts-cap-default-"));
+    const usage = { inputTokens: 30_000_000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 10 };
+    const turn = JSON.stringify({
+      uuid: "u-cap", type: "assistant",
+      message: { model: "claude-sonnet-4-5", usage: { input_tokens: 30_000_000, output_tokens: 10 } },
+    }) + "\n";
+    writeFileSync(join(big, "sess-cap.jsonl"), turn);
+    const expectedPct = (creditsOf(usage) / DEFAULT_WEEKLY_CAP) * 100;
+    expect(expectedPct).toBeGreaterThan(1); // one decimal of resolution must not swallow a wrong default
+    expect(capPct(String(DEFAULT_WEEKLY_CAP), join(big, "sess-cap.jsonl"))).toBeCloseTo(expectedPct, 1);
+    expect(capPct("", join(big, "sess-cap.jsonl"))).toBeCloseTo(expectedPct, 1);
   });
 
   it("warns about a big context THROUGH THE WRAPPER at shipped defaults", () => {
