@@ -25,38 +25,39 @@ const base = {
 
 // The fixture's five rows:
 //   author:500        100000 /  40000  verified: true
-//   author:501         30000 /   6000  verified: false   <- unverified authoring
+//   author:501         30000 /   6000  verified: null    <- completed, no verify cmd
 //   author:502          8000 /   1000  verified: false, completed: false  <- unverified
-//   review:500:p1of2   50000 /   2000  verified: false   <- review, NOT unverified authoring
+//   review:500:p1of2   50000 /   2000  verified: null    <- review, NOT unverified authoring
 //   r-old               5000 /    500  verified absent   <- legacy, NOT unverified
 const AUTHORING_IN = 100000 + 30000 + 8000 + 5000;  // 143000
 const AUTHORING_OUT = 40000 + 6000 + 1000 + 500;    //  47500
-const UNVERIFIED_IN = 30000 + 8000;                 //  38000
-const UNVERIFIED_OUT = 6000 + 1000;                 //   7000
+const UNVERIFIED_IN = 8000;                          //  8000 (only author:502)
+const UNVERIFIED_OUT = 1000;                         //  1000
 
 describe("renderSavingsReport — unverified authoring runs", () => {
   it("counts an authoring row with verified:false as unverified", () => {
     const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
     const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
-    expect(s.unverified_run_count).toBe(2);
+    expect(s.unverified_run_count).toBe(1);
     expect(s.unverified_input).toBe(UNVERIFIED_IN);
     expect(s.unverified_output).toBe(UNVERIFIED_OUT);
   });
 
   it("surfaces the same figures in totals", () => {
     const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
-    expect(p.totals.unverified_run_count).toBe(2);
+    expect(p.totals.unverified_run_count).toBe(1);
     expect(p.totals.unverified_input).toBe(UNVERIFIED_IN);
     expect(p.totals.unverified_output).toBe(UNVERIFIED_OUT);
   });
 
   it("does NOT count a review row as an unverified authoring run", () => {
-    // review:500:p1of2 carries verified:false, but review rows are already
+    // review:500:p1of2 carries verified:null, but review rows are already
     // excluded from the counterfactual — counting them here would double-report
     // the same volume under two different warnings.
     const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
     const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
-    expect(s.unverified_input).not.toBe(UNVERIFIED_IN + 50000);
+    expect(s.unverified_input).toBe(UNVERIFIED_IN);
+    expect(s.unverified_run_count).toBe(1);
     expect(s.review_run_count).toBe(1);
   });
 
@@ -65,8 +66,8 @@ describe("renderSavingsReport — unverified authoring runs", () => {
     // flag every pre-ledger-schema row.
     const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
     const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
-    expect(s.unverified_run_count).toBe(2);
-    expect(s.unverified_input).not.toBe(UNVERIFIED_IN + 5000);
+    expect(s.unverified_run_count).toBe(1);
+    expect(s.unverified_input).toBe(UNVERIFIED_IN);
   });
 
   it("leaves the counterfactual pricing unchanged — a failed attempt still cost money", () => {
@@ -85,9 +86,14 @@ describe("renderSavingsReport — unverified authoring runs", () => {
   it("breaks unverified volume down per label", () => {
     const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, byLabel: true })));
     const l501 = p.by_label.find((x: any) => x.label === "501");
-    expect(l501.unverified_run_count).toBe(1);
-    expect(l501.unverified_input).toBe(30000);
-    expect(l501.unverified_output).toBe(6000);
+    expect(l501.unverified_run_count).toBe(0);
+    expect(l501.unverified_input).toBe(0);
+    expect(l501.unverified_output).toBe(0);
+
+    const l502 = p.by_label.find((x: any) => x.label === "502");
+    expect(l502.unverified_run_count).toBe(1);
+    expect(l502.unverified_input).toBe(8000);
+    expect(l502.unverified_output).toBe(1000);
 
     const l500 = p.by_label.find((x: any) => x.label === "500");
     expect(l500.unverified_run_count).toBe(0);

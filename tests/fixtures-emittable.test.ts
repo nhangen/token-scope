@@ -63,10 +63,7 @@ function violation(reason: string, pair: string): string | null {
 // which is what makes it worth gating rather than fixing case by case. Tracked
 // as nhangen/token-scope#33; this list may shrink and must never grow.
 const GRANDFATHERED = new Set([
-  'runs-bench.jsonl:4', 'runs-failed.jsonl:3',
-  'runs-labelled.jsonl:2', 'runs-labelled.jsonl:3',
-  'runs-unverified.jsonl:2', 'runs-unverified.jsonl:4',
-  'runs.jsonl:2',
+  // formerly completed:true, verified:false — migrated to reachable shapes in #33
 ]);
 
 function shapesIn(file: string): { loc: string; shape: string }[] {

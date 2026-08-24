@@ -33,11 +33,11 @@ const base = {
 //
 //   author:700  100000 / 40000  (true, true)   -> succeeded
 //   author:701  300000 /  9000  (false, null)  -> crashed at the turn cap
-//   author:702   20000 /  3000  (true, false)  -> completed, verify failed
+//   author:702   20000 /  3000  (true, null)   -> completed, no verify cmd
 //   author:703   50000 /  5000  (true, null)   -> completed, no verify cmd
 //   review:700  ...             (false, null)  -> review, its own axis
-const FAILED_IN = 300000 + 20000;
-const FAILED_OUT = 9000 + 3000;
+const FAILED_IN = 300000;
+const FAILED_OUT = 9000;
 
 describe("renderSavingsReport — runs that did not succeed", () => {
   it("counts a crashed run (completed:false, verified:null) as unverified", () => {
@@ -45,7 +45,7 @@ describe("renderSavingsReport — runs that did not succeed", () => {
     // and a rule keyed only on verified===false misses all of it.
     const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
     const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
-    expect(s.unverified_run_count).toBe(2);
+    expect(s.unverified_run_count).toBe(1);
     expect(s.unverified_input).toBe(FAILED_IN);
     expect(s.unverified_output).toBe(FAILED_OUT);
   });
@@ -56,19 +56,20 @@ describe("renderSavingsReport — runs that did not succeed", () => {
     // flag nearly half of all real work as broken.
     const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
     const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
-    expect(s.unverified_input).not.toBe(FAILED_IN + 50000);
+    expect(s.unverified_input).toBe(FAILED_IN);
+    expect(s.unverified_run_count).toBe(1);
   });
 
   it("does not count a crashed review pass as a failed authoring run", () => {
     const p = JSON.parse(capture(() => renderSavingsReport(reader, base)));
     const s = p.sessions.find((x: any) => x.session_id === "sess-spend");
     expect(s.review_run_count).toBe(1);
-    expect(s.unverified_run_count).toBe(2);
+    expect(s.unverified_run_count).toBe(1);
   });
 
   it("surfaces failed volume in totals and per label", () => {
     const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, byLabel: true })));
-    expect(p.totals.unverified_run_count).toBe(2);
+    expect(p.totals.unverified_run_count).toBe(1);
     expect(p.totals.unverified_input).toBe(FAILED_IN);
     const l701 = p.by_label.find((x: any) => x.label === "701");
     expect(l701.unverified_run_count).toBe(1);
@@ -86,10 +87,10 @@ describe("renderSavingsReport — runs that did not succeed", () => {
     // The VALUE, not the shape. `/\d+%/` is why this shipped wrong: the footnote
     // priced failed rows at the pre-#465 full-input rate while dividing by a
     // cache-split counterfactual, and summed its numerator over all groups against an
-    // attributed-only denominator. It printed 93% here where 27% is honest, and on a
+    // attributed-only denominator. It printed 93% here where 22% is honest, and on a
     // ledger whose only row is an unattributed failure it printed 385%. A regex that
     // accepts any integer accepts all of those.
-    expect(text).toMatch(/27% of the priced figure/);
+    expect(text).toMatch(/22% of the priced figure/);
     // A share of the priced figure cannot exceed it.
     const pct = Number(text.match(/(\d+)% of the priced figure/)![1]);
     expect(pct).toBeLessThanOrEqual(100);
