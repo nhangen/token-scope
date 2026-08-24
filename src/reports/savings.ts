@@ -652,7 +652,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     // When no sessions are attributed, use ledger-wide values so the disclosure
     // shows actual token counts instead of zeros (#67).
     ...(ledgerWideCachedInput > 0
-      ? [["Input priced (attributed authoring)", `${formatTokens(attributedGroups.length > 0 ? totalUncachedInput : ledgerWideUncachedInput)} fresh + ${formatTokens(attributedGroups.length > 0 ? totalCachedInput : ledgerWideCachedInput)} re-read at cache-read rate`] as [string, string]]
+      ? [["Input priced (attributed authoring, est.)", `${formatTokens(attributedGroups.length > 0 ? totalUncachedInput : ledgerWideUncachedInput)} fresh + ${formatTokens(attributedGroups.length > 0 ? totalCachedInput : ledgerWideCachedInput)} re-read at cache-read rate`] as [string, string]]
       : []),
   ]));
 

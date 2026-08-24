@@ -39,6 +39,7 @@ const base = {
 //   author:700  100000 in  turns=1     -> 100% uncached
 //   author:701  300000 in  turns=3     -> 2/4 = 150000 uncached, 150000 cached
 //   author:702  100000 in  turns=null  -> 100% uncached (unknown, priced high)
+//   author:703  2000000 in turns=40    -> 2/41 ≈ 97561 uncached, 1902439 cached (#68 item 1)
 const P = getPricing(DEFAULT_COUNTERFACTUAL_MODEL)!;
 const payload = () => JSON.parse(capture(() => renderSavingsReport(reader, base)));
 const totals = () => payload().totals;
@@ -50,8 +51,9 @@ const sess = () => payload().sessions[0];
 describe("counterfactual prices re-read input at the cache-read rate (#465)", () => {
   it("splits a multi-turn run's input into uncached and cached", () => {
     const t = sess();
-    expect(t.counterfactual_uncached_input).toBe(100000 + 150000 + 100000);
-    expect(t.counterfactual_cached_input).toBe(150000);
+    // author:700 (100000) + author:701 (150000) + author:702 (100000) + author:703 (≈97561)
+    expect(t.counterfactual_uncached_input).toBeCloseTo(447561, 0);
+    expect(t.counterfactual_cached_input).toBeCloseTo(2052439, 0);
     // The share and the split are exported and pure, so pin them directly. Every gap
     // the panel found here existed because all coverage ran indirectly through
     // renderSavingsReport, where a wrong share is diluted by three other rows.
@@ -62,37 +64,42 @@ describe("counterfactual prices re-read input at the cache-read rate (#465)", ()
 
   it("prices the cached half at cache-read, not full input", () => {
     const t = totals();
+    // Total input: 100000 + 300000 + 100000 + 2000000 = 2500000
+    // Total output: 10000 + 10000 + 10000 + 200000 = 230000
+    // Uncached: ≈447561, Cached: ≈2052439
     const expected =
-      (350000 * P.inputPerMillion + 150000 * P.cacheReadPerMillion + 30000 * P.outputPerMillion) / 1e6;
-    expect(sess().counterfactual_usd).toBeCloseTo(expected, 6);
+      (447561 * P.inputPerMillion + 2052439 * P.cacheReadPerMillion + 230000 * P.outputPerMillion) / 1e6;
+    expect(sess().counterfactual_usd).toBeCloseTo(expected, 4);
   });
 
   it("is strictly cheaper than pricing every input token as fresh", () => {
     const cf = sess().counterfactual_usd;
-    const naive = (500000 * P.inputPerMillion + 30000 * P.outputPerMillion) / 1e6;
+    const naive = (2500000 * P.inputPerMillion + 230000 * P.outputPerMillion) / 1e6;
     expect(cf).toBeLessThan(naive);
     // Guard the direction AND the size: a split that rounded to nothing would
     // still pass `toBeLessThan`.
-    expect(naive - cf).toBeCloseTo(
-      150000 * (P.inputPerMillion - P.cacheReadPerMillion) / 1e6, 6);
+    const expectedSavings = 2052439 * (P.inputPerMillion - P.cacheReadPerMillion) / 1e6;
+    expect(naive - cf).toBeCloseTo(expectedSavings, 4);
   });
 
   it("treats turns=1 and turns=null as fully uncached", () => {
     // Exact, not a floor. `>= 200000` would also hold if turns:null were treated as
     // fully CACHED, since author:701 alone contributes 150,000 uncached — so the
     // loose form passes under the mutation it exists to catch.
-    // author:700 (turns=1) + author:702 (turns=null) = 200,000, and author:701
-    // contributes exactly half of 300,000. Anything else moves this number.
+    // author:700 (turns=1) + author:702 (turns=null) = 200,000 uncached,
+    // author:701 contributes exactly half of 300,000 = 150,000 uncached,
+    // author:703 (turns=40) contributes ≈97,561 uncached.
     const t = sess();
-    expect(t.counterfactual_uncached_input).toBe(350000);
-    expect(t.counterfactual_cached_input).toBe(150000);
+    expect(t.counterfactual_uncached_input).toBeCloseTo(447561, 0);
+    expect(t.counterfactual_cached_input).toBeCloseTo(2052439, 0);
   });
 
   it("does not apply the split to review rows", () => {
     // review:700 is 900000 input over 9 turns — nine times the authoring volume.
     // If it leaked in, both split keys would jump by six figures.
     const t = sess();
-    expect(t.counterfactual_uncached_input + t.counterfactual_cached_input).toBe(500000);
+    // Only authoring rows: 2500000 total input
+    expect(t.counterfactual_uncached_input + t.counterfactual_cached_input).toBeCloseTo(2500000, 0);
   });
 
   it("clamps a nonsensical turn count to fully uncached", () => {
