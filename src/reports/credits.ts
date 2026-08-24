@@ -35,7 +35,7 @@ interface WeekCredits {
   subagentCredits: number;
   components: { input: number; cacheWrite: number; cacheRead: number; output: number };
   /** True for the week still in progress — its total is not comparable to a full week. */
-  partial: boolean;
+  open: boolean;
   /**
    * True when the requested window started mid-week, so this row holds only part
    * of the week's spend. Calendar-complete but data-incomplete: the distinction
@@ -84,7 +84,7 @@ export function computeWeeks(rows: CreditWeekRow[], nowMs: number, sinceMs = 0):
       credits,
       subagentCredits,
       components,
-      partial,
+      open: partial,
       truncated,
       elapsed,
       // A truncated week's credits cover only part of the week, so dividing them
@@ -238,10 +238,10 @@ export function renderCreditsReport(reader: Reader, opts: Options): void {
 
   // Only weeks that are both calendar-complete AND fully inside the window are
   // comparable to each other or to the cap.
-  const whole = weeks.filter((w) => !w.partial && !w.truncated);
-  // The week containing `now` — not merely the first partial one, which a single
+  const whole = weeks.filter((w) => !w.open && !w.truncated);
+  // The week containing `now` — not merely the first open one, which a single
   // future-dated turn (clock skew on a synced host) would otherwise win.
-  const current = weeks.find((w) => w.partial && nowMs >= weekStartMs(w.weekStart));
+  const current = weeks.find((w) => w.open && nowMs >= weekStartMs(w.weekStart));
   const recent = whole.slice(-4);
   const avgWhole = recent.length > 0 ? recent.reduce((s, w) => s + w.credits, 0) / recent.length : null;
 
@@ -282,11 +282,11 @@ export function renderCreditsReport(reader: Reader, opts: Options): void {
       formatPct(share(w.components.cacheWrite, w.credits)),
       formatPct(share(w.components.output, w.credits)),
       subagentsIncluded ? formatPct(share(w.subagentCredits, w.credits)) : "n/a",
-      w.truncated && w.partial
+      w.truncated && w.open
         ? "in progress, partial"
         : w.truncated
           ? "partial (window)"
-          : w.partial
+          : w.open
             ? (w.projected === null ? "in progress" : `→ ${(w.projected / 1e6).toFixed(0)}M`)
             : "",
     ])

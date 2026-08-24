@@ -51,14 +51,14 @@ describe("credits — weighting", () => {
 describe("credits — partial weeks and projection", () => {
   it("marks a finished week complete and does not project it", () => {
     const [w] = computeWeeks([row({ outputTokens: 100 })], MON_MS + 7 * 86_400_000);
-    expect(w!.partial).toBe(false);
+    expect(w!.open).toBe(false);
     expect(w!.projected).toBeNull();
     expect(w!.elapsed).toBe(1);
   });
 
   it("projects a half-elapsed week to double its spend so far", () => {
     const [w] = computeWeeks([row({ outputTokens: 100 })], MON_MS + 3.5 * 86_400_000);
-    expect(w!.partial).toBe(true);
+    expect(w!.open).toBe(true);
     expect(w!.elapsed).toBeCloseTo(0.5, 6);
     expect(w!.projected).toBeCloseTo(1_000, 6); // 100*5 spent at half-time
   });
@@ -68,7 +68,7 @@ describe("credits — partial weeks and projection", () => {
     // first hours multiplies whatever landed there by 20x or more, so the report
     // must print no forecast rather than a confident wrong one.
     const [w] = computeWeeks([row({ outputTokens: 100 })], MON_MS + 3 * 3_600_000);
-    expect(w!.partial).toBe(true);
+    expect(w!.open).toBe(true);
     expect(w!.elapsed).toBeLessThan(MIN_ELAPSED_TO_PROJECT);
     expect(w!.projected).toBeNull();
   });
@@ -179,7 +179,7 @@ describe("credits — window truncation", () => {
     const midWeek = MON_MS + 3 * 86_400_000;
     const [w] = computeWeeks([row({ outputTokens: 100 })], afterWeek, midWeek);
     expect(w!.truncated).toBe(true);
-    expect(w!.partial).toBe(false);
+    expect(w!.open).toBe(false);
   });
 
   it("does not flag a week fully inside the window", () => {
@@ -205,7 +205,7 @@ describe("credits — window truncation", () => {
     const midWeek = MON_MS + 3 * 86_400_000;
     const now = MON_MS + 5 * 86_400_000;   // in-progress AND truncated
     const [w] = computeWeeks([row({ outputTokens: 100 })], now, midWeek);
-    expect(w!.partial).toBe(true);
+    expect(w!.open).toBe(true);
     expect(w!.truncated).toBe(true);
     expect(w!.elapsed).toBeGreaterThan(MIN_ELAPSED_TO_PROJECT);  // would have projected
     expect(w!.projected).toBeNull();
