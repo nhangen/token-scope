@@ -3,6 +3,7 @@ import { JsonlReader } from "../src/jsonl";
 import { join } from "path";
 
 const DIR = join(import.meta.dir, "fixtures/spend-projects");
+const DIR_HAIKU = join(import.meta.dir, "fixtures/spend-projects/-Users-alice-projects-haiku");
 
 function reader() {
   return new JsonlReader([DIR]);
@@ -32,6 +33,7 @@ describe("querySubagentSpendByAgent", () => {
     expect(multi.cacheWriteTokens).toBe(500); // 500 + 0
     expect(multi.agentCount).toBe(1);
 
+    // haiku: 1 record with 20 input, 200 output, 1000 cache-read
     const haiku = byAgent.get("agent-haiku")!;
     expect(haiku.outputTokens).toBe(200);
     expect(haiku.inputTokens).toBe(20);
@@ -62,5 +64,23 @@ describe("querySubagentSpendByAgent", () => {
     r.close();
 
     expect(byAgent.size).toBe(0);
+  });
+});
+
+describe("querySubagentSpendByAgent — Haiku batch (#69)", () => {
+  it("resolves 41-record Haiku batch to a cost in $0.63–1.10", () => {
+    // Acceptance criterion from #18: the 2026-07-09 lean-PM batch
+    // (Haiku agent, 41 assistant records) resolvable to a dollar figure
+    // in one command, matching the hand-computed $0.63–1.10 range.
+    const r = new JsonlReader([DIR_HAIKU]);
+    const byAgent = r.querySubagentSpendByAgent("sess-spend");
+    r.close();
+
+    const haiku = byAgent.get("agent-haiku")!;
+    expect(haiku).toBeDefined();
+    expect(haiku.agentCount).toBe(1);
+    expect(haiku.costPartial).toBe(false);
+    expect(haiku.costUsd).toBeGreaterThan(0.63);
+    expect(haiku.costUsd).toBeLessThan(1.10);
   });
 });
