@@ -35,3 +35,13 @@ export interface ProviderEvent {
 export function stableId(...parts: Array<string | number>): string {
   return parts.join(":");
 }
+
+/** Milliseconds for a record's timestamp, or null when it cannot be dated
+ * (absent or unparseable). Single source of truth for "cannot be placed in
+ * the window" — the --since filter and any excluded-run counter must call
+ * this, not re-derive the check (#42, #50). */
+export function tsMs(e: { ts?: string | null }): number | null {
+  if (!e.ts) return null;
+  const ms = Date.parse(e.ts);
+  return Number.isNaN(ms) ? null : ms;
+}

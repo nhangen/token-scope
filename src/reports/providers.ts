@@ -8,6 +8,7 @@
  * known values while hiding the gaps would overstate measurement (#37 audit).
  */
 import type { Collected, ProviderEvent } from "@/providers";
+import { tsMs } from "@/providers/types";
 
 export interface ProviderRow {
   harness: string;
@@ -42,15 +43,6 @@ function agg(vals: Array<number | null>): ClassAgg {
     value: known.reduce((a, v) => a + v, 0),
     complete: known.length === vals.length,
   };
-}
-
-/** Milliseconds for an event's timestamp, or null when it cannot be dated
- * (absent or unparseable). Single source of truth for "cannot be placed in
- * the window" — the --since filter and untimedExcluded() must not drift (#42). */
-function tsMs(e: ProviderEvent): number | null {
-  if (!e.ts) return null;
-  const ms = Date.parse(e.ts);
-  return Number.isNaN(ms) ? null : ms;
 }
 
 export function providerRows(collected: Collected, sinceMs?: number): ProviderRow[] {

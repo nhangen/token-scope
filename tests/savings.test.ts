@@ -237,3 +237,50 @@ describe("renderSavingsReport — the cache split is disclosed in the text repor
     expect(text).toContain("56,667");
   });
 });
+
+describe("renderSavingsReport — undatable runs (#50)", () => {
+  it("counts runs with absent or unparseable timestamps when --since is set", () => {
+    const fs = require("fs");
+    const os = require("os");
+    const path = require("path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ts-undatable-"));
+    const ledger = path.join(tmp, "runs.jsonl");
+    const now = Date.now();
+    const lines = [
+      JSON.stringify({ ts: new Date(now - 1000).toISOString(), sessionId: "s1", ollamaInputTokens: 100, ollamaOutputTokens: 50, model: "qwen", turns: 1, completed: true, verified: true, reason: "ok" }),
+      JSON.stringify({ ts: null, sessionId: "s2", ollamaInputTokens: 200, ollamaOutputTokens: 100, model: "qwen", turns: 1, completed: true, verified: true, reason: "ok" }),
+      JSON.stringify({ ts: "not-a-date", sessionId: "s3", ollamaInputTokens: 300, ollamaOutputTokens: 150, model: "qwen", turns: 1, completed: true, verified: true, reason: "ok" }),
+      JSON.stringify({ ts: new Date(now - 86400000 * 60).toISOString(), sessionId: "s4", ollamaInputTokens: 400, ollamaOutputTokens: 200, model: "qwen", turns: 1, completed: true, verified: true, reason: "ok" }),
+    ];
+    fs.writeFileSync(ledger, lines.join("\n") + "\n");
+    try {
+      const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, ledgerPath: ledger, since: Math.floor((now - 86400000 * 30) / 1000), sinceStr: "7d" })));
+      expect(p.since_floor_applied).toBe(true);
+      expect(p.undatable_excluded).toBe(2);
+      expect(p.totals.run_count).toBe(1);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("shows a footnote in text output when undatable runs are excluded", () => {
+    const fs = require("fs");
+    const os = require("os");
+    const path = require("path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ts-undatable-text-"));
+    const ledger = path.join(tmp, "runs.jsonl");
+    const now = Date.now();
+    const lines = [
+      JSON.stringify({ ts: new Date(now - 1000).toISOString(), sessionId: "s1", ollamaInputTokens: 100, ollamaOutputTokens: 50, model: "qwen", turns: 1, completed: true, verified: true, reason: "ok" }),
+      JSON.stringify({ ts: "garbage", sessionId: "s2", ollamaInputTokens: 200, ollamaOutputTokens: 100, model: "qwen", turns: 1, completed: true, verified: true, reason: "ok" }),
+    ];
+    fs.writeFileSync(ledger, lines.join("\n") + "\n");
+    try {
+      const text = capture(() => renderSavingsReport(reader, { ...base, ledgerPath: ledger, since: Math.floor((now - 86400000 * 30) / 1000), sinceStr: "7d", json: false }));
+      expect(text).toContain("1 run(s) excluded from the --since window");
+      expect(text).toContain("timestamp absent or unparseable");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
