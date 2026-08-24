@@ -845,6 +845,7 @@ interface SqliteReaderInterface {
   queryCacheGrowth(sessionId: string): CacheGrowthRow[];
   querySessionBudgets(since: number, limit: number): SessionBudgetRow[];
   querySubagentSpend(sessionId: string): SubagentSpend;
+  querySubagentSpendByAgent(sessionId: string): Map<string, SubagentSpend>;
   close(): void;
 }
 

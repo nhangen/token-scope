@@ -62,7 +62,7 @@ function violation(reason: string, pair: string): string | null {
 // one single unreachable shape, reached for by several fixtures independently,
 // which is what makes it worth gating rather than fixing case by case. Tracked
 // as nhangen/token-scope#33; this list may shrink and must never grow.
-const GRANDFATHERED = new Set([
+const GRANDFATHERED: Set<string> = new Set([
   // formerly completed:true, verified:false — migrated to reachable shapes in #33
 ]);
 
