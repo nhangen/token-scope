@@ -431,3 +431,30 @@ describe("JsonlReader — one row per API response (#19)", () => {
     expect(spend.cacheReadTokens).toBe(700);
   });
 });
+
+describe("JsonlReader — cross-file message.id dedup (#21)", () => {
+  // Two files in different project dirs carry the same message.id (a copied
+  // transcript under a worktree slug, or a fork/resume). The seen Set in
+  // loadTurns is global: first-file-wins, second is skipped. This test pins
+  // that behavior so a future refactor can't flip it silently.
+  const dir = new URL("./fixtures/cross-session-dedup", import.meta.url).pathname;
+  const r = new JsonlReader(dir);
+
+  it("deduplicates the same message.id across project dirs", () => {
+    const totals = r.querySummaryTotals(0);
+    // Only one turn should survive — the first file's (10k in, 5k out).
+    // The second file's 20k in / 8k out must be deduped away.
+    expect(totals.turnCount).toBe(1);
+    expect(totals.totalOutputTokens).toBe(5000);
+    expect(totals.totalInputTokens).toBe(10000);
+  });
+
+  it("attributes the surviving turn to the first file's session", () => {
+    const turns = r.querySessionTurns("sess-dup-a");
+    expect(turns.length).toBe(1);
+    expect(turns[0]!.outputTokens).toBe(5000);
+
+    const otherTurns = r.querySessionTurns("sess-dup-b");
+    expect(otherTurns.length).toBe(0);
+  });
+});

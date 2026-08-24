@@ -1,0 +1,1 @@
+{"uuid":"dup-file-a","type":"assistant","timestamp":"2026-08-20T10:00:00Z","sessionId":"sess-dup-a","cwd":"/Users/alice/projects/token-scope","message":{"id":"msg-shared-001","model":"claude-opus-4-8","usage":{"input_tokens":10000,"output_tokens":5000}}}
