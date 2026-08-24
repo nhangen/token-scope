@@ -204,3 +204,28 @@ describe("renderSavingsReport — conflict kind (#64)", () => {
     expect(t.unverified_run_count).toBe(8);
   });
 });
+
+describe("renderSavingsReport — Input priced with unattributed sessions (#67)", () => {
+  const LEDGER_UNATTRIBUTED = new URL("./fixtures/ledger-conflict/runs-unattributed.jsonl", import.meta.url).pathname;
+  const baseUnattributed = {
+    since: 0, sinceStr: "all", json: false,
+    ledgerPath: LEDGER_UNATTRIBUTED, counterfactualModel: DEFAULT_COUNTERFACTUAL_MODEL,
+  };
+
+  it("prints ledger-wide values when no sessions are attributed", () => {
+    // On a ledger with zero attributed sessions and non-zero cache-split input,
+    // the "Input priced" line must show the actual ledger-wide values, not zeros.
+    // Before #67, the values came from attributedGroups (empty), printing
+    // "0 fresh + 0 re-read" beside a non-zero counterfactual.
+    const text = capture(() => renderSavingsReport(reader, baseUnattributed));
+    expect(text).toContain("Input priced");
+    expect(text).not.toContain("0 fresh + 0 re-read");
+  });
+
+  it("shows non-zero token counts in the Input priced line", () => {
+    const text = capture(() => renderSavingsReport(reader, baseUnattributed));
+    // 100k input with 40 turns → most is cache-read. The line should show
+    // actual token counts, not zeros.
+    expect(text).toMatch(/Input priced.*\d.*fresh \+ \d.*re-read/);
+  });
+});

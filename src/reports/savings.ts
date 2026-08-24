@@ -474,6 +474,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   // not an arithmetic component — it should appear whenever the ledger has any
   // cache-split input at all, even if no session could be attributed (#36 finding 3).
   const ledgerWideCachedInput = groups.reduce((s, g) => s + g.cachedInput, 0);
+  // Ledger-wide uncached input: matching the ledger-wide gate above, the values
+  // printed beside the disclosure must cover the same set (#67).
+  const ledgerWideUncachedInput = groups.reduce((s, g) => s + g.uncachedInput, 0);
 
   // Per-label breakdown, across the whole (filtered) ledger — not nested inside
   // the per-session grouping. Label is the second colon-separated segment of a
@@ -646,8 +649,10 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     // ollama has no prompt cache, so the ledger's input total counts every re-read.
     // Naming the split here is what stops the counterfactual reading as if Claude
     // would have paid full price for all of it (#465).
+    // When no sessions are attributed, use ledger-wide values so the disclosure
+    // shows actual token counts instead of zeros (#67).
     ...(ledgerWideCachedInput > 0
-      ? [["Input priced (attributed authoring)", `${formatTokens(totalUncachedInput)} fresh + ${formatTokens(totalCachedInput)} re-read at cache-read rate`] as [string, string]]
+      ? [["Input priced (attributed authoring)", `${formatTokens(attributedGroups.length > 0 ? totalUncachedInput : ledgerWideUncachedInput)} fresh + ${formatTokens(attributedGroups.length > 0 ? totalCachedInput : ledgerWideCachedInput)} re-read at cache-read rate`] as [string, string]]
       : []),
   ]));
 

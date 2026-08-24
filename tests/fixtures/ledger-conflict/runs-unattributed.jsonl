@@ -1,0 +1,1 @@
+{"ts":"2026-08-18T09:00:00Z","run_id":"author:700","session_id":"sess-unattributed","model":"qwen3.8:27b","task_name":null,"cwd":"/x","ollama_input_tokens":100000,"ollama_output_tokens":10000,"turns":40,"completed":true,"verified":true,"reason":"ok"}
