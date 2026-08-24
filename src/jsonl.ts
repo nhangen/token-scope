@@ -193,6 +193,51 @@ function findSubagentFilesById(dirs: string[], sessionId: string): Map<string, s
   return map;
 }
 
+/**
+ * Processes subagent files and returns aggregated token counts and cost.
+ * Shared by querySubagentSpend and querySubagentSpendByAgent.
+ */
+function aggregateSubagentSpend(files: string[]): {
+  outputTokens: number; inputTokens: number; cacheReadTokens: number; cacheWriteTokens: number;
+  costUsd: number | null; costPartial: boolean; fileCount: number;
+} {
+  let outputTokens = 0, inputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0;
+  let knownCost = 0, anyKnownCost = false, anyUnknownModel = false;
+  const seen = new Set<string>();
+  for (const file of files) {
+    let raw: string;
+    try { raw = readFileSync(file, "utf8"); } catch { continue; }
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      let obj: Record<string, unknown>;
+      try { obj = JSON.parse(line); } catch { continue; }
+      if (obj["type"] !== "assistant") continue;
+      const msg = obj["message"] as Record<string, unknown> | undefined;
+      const usage = msg?.["usage"] as Record<string, unknown> | undefined;
+      if (!msg || !usage) continue;
+      const out = Number(usage["output_tokens"] ?? 0);
+      if (out <= 0) continue;
+      const key = turnKey(obj, msg);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const inp = Number(usage["input_tokens"] ?? 0);
+      const cr = Number(usage["cache_read_input_tokens"] ?? 0);
+      const cw = Number(usage["cache_creation_input_tokens"] ?? 0);
+      const model = String(msg["model"] ?? "");
+      outputTokens += out; inputTokens += inp; cacheReadTokens += cr; cacheWriteTokens += cw;
+      const c = computeTurnCost(model, out, inp, cr, cw);
+      if (c === null) anyUnknownModel = true;
+      else { knownCost += c; anyKnownCost = true; }
+    }
+  }
+  return {
+    outputTokens, inputTokens, cacheReadTokens, cacheWriteTokens,
+    costUsd: anyKnownCost ? knownCost : null,
+    costPartial: anyUnknownModel,
+    fileCount: files.length,
+  };
+}
+
 export class JsonlReader implements Reader {
   private readonly turns: JsonlTurn[];
   private readonly projectsDirs: string[];
@@ -210,40 +255,15 @@ export class JsonlReader implements Reader {
 
   querySubagentSpend(sessionId: string): SubagentSpend {
     const files = findSubagentFiles(this.projectsDirs, sessionId);
-    let outputTokens = 0, inputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0;
-    let knownCost = 0, anyKnownCost = false, anyUnknownModel = false;
-    const seen = new Set<string>();
-    for (const file of files) {
-      let raw: string;
-      try { raw = readFileSync(file, "utf8"); } catch { continue; }
-      for (const line of raw.split("\n")) {
-        if (!line.trim()) continue;
-        let obj: Record<string, unknown>;
-        try { obj = JSON.parse(line); } catch { continue; }
-        if (obj["type"] !== "assistant") continue;
-        const msg = obj["message"] as Record<string, unknown> | undefined;
-        const usage = msg?.["usage"] as Record<string, unknown> | undefined;
-        if (!msg || !usage) continue;
-        const out = Number(usage["output_tokens"] ?? 0);
-        if (out <= 0) continue;
-        const key = turnKey(obj, msg);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const inp = Number(usage["input_tokens"] ?? 0);
-        const cr = Number(usage["cache_read_input_tokens"] ?? 0);
-        const cw = Number(usage["cache_creation_input_tokens"] ?? 0);
-        const model = String(msg["model"] ?? "");
-        outputTokens += out; inputTokens += inp; cacheReadTokens += cr; cacheWriteTokens += cw;
-        const c = computeTurnCost(model, out, inp, cr, cw);
-        if (c === null) anyUnknownModel = true;
-        else { knownCost += c; anyKnownCost = true; }
-      }
-    }
+    const agg = aggregateSubagentSpend(files);
     return {
-      agentCount: files.length,
-      outputTokens, inputTokens, cacheReadTokens, cacheWriteTokens,
-      costUsd: anyKnownCost ? knownCost : null,
-      costPartial: anyUnknownModel,
+      agentCount: agg.fileCount,
+      outputTokens: agg.outputTokens,
+      inputTokens: agg.inputTokens,
+      cacheReadTokens: agg.cacheReadTokens,
+      cacheWriteTokens: agg.cacheWriteTokens,
+      costUsd: agg.costUsd,
+      costPartial: agg.costPartial,
       supported: true,
     };
   }
@@ -252,40 +272,15 @@ export class JsonlReader implements Reader {
     const agentFiles = findSubagentFilesById(this.projectsDirs, sessionId);
     const result = new Map<string, SubagentSpend>();
     for (const [agentId, files] of agentFiles) {
-      let outputTokens = 0, inputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0;
-      let knownCost = 0, anyKnownCost = false, anyUnknownModel = false;
-      const seen = new Set<string>();
-      for (const file of files) {
-        let raw: string;
-        try { raw = readFileSync(file, "utf8"); } catch { continue; }
-        for (const line of raw.split("\n")) {
-          if (!line.trim()) continue;
-          let obj: Record<string, unknown>;
-          try { obj = JSON.parse(line); } catch { continue; }
-          if (obj["type"] !== "assistant") continue;
-          const msg = obj["message"] as Record<string, unknown> | undefined;
-          const usage = msg?.["usage"] as Record<string, unknown> | undefined;
-          if (!msg || !usage) continue;
-          const out = Number(usage["output_tokens"] ?? 0);
-          if (out <= 0) continue;
-          const key = turnKey(obj, msg);
-          if (seen.has(key)) continue;
-          seen.add(key);
-          const inp = Number(usage["input_tokens"] ?? 0);
-          const cr = Number(usage["cache_read_input_tokens"] ?? 0);
-          const cw = Number(usage["cache_creation_input_tokens"] ?? 0);
-          const model = String(msg["model"] ?? "");
-          outputTokens += out; inputTokens += inp; cacheReadTokens += cr; cacheWriteTokens += cw;
-          const c = computeTurnCost(model, out, inp, cr, cw);
-          if (c === null) anyUnknownModel = true;
-          else { knownCost += c; anyKnownCost = true; }
-        }
-      }
+      const agg = aggregateSubagentSpend(files);
       result.set(agentId, {
-        agentCount: 1,
-        outputTokens, inputTokens, cacheReadTokens, cacheWriteTokens,
-        costUsd: anyKnownCost ? knownCost : null,
-        costPartial: anyUnknownModel,
+        agentCount: agg.fileCount,
+        outputTokens: agg.outputTokens,
+        inputTokens: agg.inputTokens,
+        cacheReadTokens: agg.cacheReadTokens,
+        cacheWriteTokens: agg.cacheWriteTokens,
+        costUsd: agg.costUsd,
+        costPartial: agg.costPartial,
         supported: true,
       });
     }
