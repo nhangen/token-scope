@@ -6,7 +6,8 @@
     "token-scope": "./src/cli.ts"
   },
   "scripts": {
-    "typecheck": "bun tsc --noEmit"
+    "typecheck": "bun tsc --noEmit",
+    "mutation-check": "bash scripts/mutation-check.sh"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

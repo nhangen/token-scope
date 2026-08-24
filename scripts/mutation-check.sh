@@ -30,6 +30,12 @@ if ! (cd "$WT" && bash -c "$MUTATION"); then
   exit 2
 fi
 
+if git -C "$WT" diff --quiet && git -C "$WT" diff --cached --quiet; then
+  echo "mutation-check: the mutation was a no-op — nothing changed in the worktree" >&2
+  echo "  Check your pattern. A sed command that matches nothing exits 0 silently." >&2
+  exit 2
+fi
+
 echo "mutation applied in $WT"
 if (cd "$WT" && "$@"); then
   echo "mutation-check FAILED: tests passed with the mutation applied — they do not guard the fix" >&2
