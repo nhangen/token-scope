@@ -92,6 +92,10 @@ function scanSubagentFiles(dir: string): string[] {
 
 function loadTurns(dirs: string[], sinceMs?: number, scan = scanJsonlFiles): JsonlTurn[] {
   const turns: JsonlTurn[] = [];
+  // Global dedup: first file wins when the same message.id appears across
+  // multiple project dirs (e.g., worktree slug splits). The alternative —
+  // per-file dedup — would double-count turns in the copied-transcript case
+  // that worktree sessions demonstrably produce. See #21 and its test.
   const seen = new Set<string>();
   for (const file of dirs.flatMap(scan)) {
     if (sinceMs !== undefined) {

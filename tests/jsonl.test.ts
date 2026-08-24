@@ -449,12 +449,20 @@ describe("JsonlReader — cross-file message.id dedup (#21)", () => {
     expect(totals.totalInputTokens).toBe(10000);
   });
 
-  it("attributes the surviving turn to the first file's session", () => {
-    const turns = r.querySessionTurns("sess-dup-a");
-    expect(turns.length).toBe(1);
-    expect(turns[0]!.outputTokens).toBe(5000);
-
-    const otherTurns = r.querySessionTurns("sess-dup-b");
-    expect(otherTurns.length).toBe(0);
+  it("attributes the surviving turn to exactly one session (order-independent)", () => {
+    // Exactly one of the two sessions should have the turn; the other should
+    // be empty. We don't assert which one wins — that depends on filesystem
+    // traversal order, which is not guaranteed across platforms.
+    const turnsA = r.querySessionTurns("sess-dup-a");
+    const turnsB = r.querySessionTurns("sess-dup-b");
+    expect(turnsA.length + turnsB.length).toBe(1);
+    if (turnsA.length === 1) {
+      expect(turnsA[0]!.outputTokens).toBe(5000);
+      expect(turnsB.length).toBe(0);
+    } else {
+      expect(turnsB.length).toBe(1);
+      expect(turnsB[0]!.outputTokens).toBe(5000);
+      expect(turnsA.length).toBe(0);
+    }
   });
 });
