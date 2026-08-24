@@ -881,6 +881,7 @@ export function createSqliteReader(db: Database): SqliteReaderInterface {
     queryCacheGrowth: (sessionId) => queryCacheGrowth(db, sessionId),
     querySessionBudgets: (since, limit) => querySessionBudgets(db, since, limit),
     querySubagentSpend: () => querySubagentSpendSqlite(),
+    querySubagentSpendByAgent: () => new Map(),
     close: () => db.close(),
   };
 }

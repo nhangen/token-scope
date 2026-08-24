@@ -69,6 +69,9 @@ SPEND FLAGS (with --spend)
   --turns <N..M>          Isolate a task: 1-indexed inclusive turn slice within the
                           session (N, N.., ..M, or N..M). --session picks the session
                           (default: most recent); --since acts as a turn timestamp floor.
+  --agent <id>            Show only one subagent's cost (the agent id is the
+                          .jsonl filename without extension, e.g. agent-abc123).
+                          Without a value, lists available agent IDs.
 
 SAVINGS FLAGS (with --savings)
   --ledger <path>         Ledger file to read (default: OLLAMA_AGENT_LEDGER env, else
@@ -88,6 +91,9 @@ SAVINGS FLAGS (with --savings)
                           the honest denominator when the PM was a subagent
                           (whose cost neither whole-session nor --pm-turns can
                           isolate). Requires --session; excludes --pm-turns.
+  --pm-agent <id>         Use a specific subagent's cost as PM overhead.
+                          Requires --session; excludes --pm-turns and --pm-cost.
+                          The agent id is the .jsonl filename without extension.
 
 SHARED FLAGS
   --source <jsonl|sqlite> Data source (default: auto-detect)
@@ -138,6 +144,8 @@ interface CliArgs {
   pmTurnRange?: { from?: number; to?: number };
   pmCost?: number;
   byLabel?: boolean;
+  agentId?: string;
+  pmAgentId?: string;
 }
 
 /** Parses a --turns value: "N", "N..M", "N..", "..M" (1-indexed, inclusive). */
@@ -220,6 +228,18 @@ export function parseArgs(argv: string[]): CliArgs {
         const n = Number(v);
         if (!Number.isFinite(n) || n < 0) { process.stderr.write(`Error: --pm-cost must be a non-negative dollar amount (got "${v}").\n`); process.exit(1); }
         args.pmCost = n;
+        break;
+      }
+      case "--agent": {
+        const v = argv[++i];
+        if (!v) { process.stderr.write("Error: --agent requires an agent id (e.g. agent-abc123).\n"); process.exit(1); }
+        args.agentId = v;
+        break;
+      }
+      case "--pm-agent": {
+        const v = argv[++i];
+        if (!v) { process.stderr.write("Error: --pm-agent requires an agent id (e.g. agent-abc123).\n"); process.exit(1); }
+        args.pmAgentId = v;
         break;
       }
       case "--turns": {
@@ -480,7 +500,7 @@ async function main() {
     const { renderSpendReport } = await import("@/reports/spend");
     renderSpendReport(reader, {
       sessionId: args.sessionId, turnRange: args.turnRange,
-      since, sinceStr: args.since, json: args.json,
+      since, sinceStr: args.since, json: args.json, agentId: args.agentId,
     });
     reader.close();
     return;
@@ -494,6 +514,7 @@ async function main() {
       counterfactualModel: args.counterfactualModel ?? DEFAULT_COUNTERFACTUAL_MODEL,
       pmTurnRange: args.pmTurnRange,
       pmCost: args.pmCost,
+      pmAgentId: args.pmAgentId,
       byLabel: args.byLabel,
     });
     reader.close();

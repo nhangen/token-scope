@@ -167,6 +167,32 @@ function findSubagentFiles(dirs: string[], sessionId: string): string[] {
   return files;
 }
 
+function findSubagentFilesById(dirs: string[], sessionId: string): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const dir of dirs) {
+    let slugs: string[];
+    try {
+      slugs = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+    } catch { continue; }
+    for (const slug of slugs) {
+      const subDir = join(dir, slug, sessionId, "subagents");
+      if (!existsSync(subDir)) continue;
+      try {
+        for (const e of readdirSync(subDir, { withFileTypes: true })) {
+          if (e.isFile() && e.name.endsWith(".jsonl")) {
+            // Agent ID is the filename without .jsonl extension
+            const agentId = e.name.replace(/\.jsonl$/, "");
+            const files = map.get(agentId) ?? [];
+            files.push(join(subDir, e.name));
+            map.set(agentId, files);
+          }
+        }
+      } catch { continue; }
+    }
+  }
+  return map;
+}
+
 export class JsonlReader implements Reader {
   private readonly turns: JsonlTurn[];
   private readonly projectsDirs: string[];
@@ -220,6 +246,50 @@ export class JsonlReader implements Reader {
       costPartial: anyUnknownModel,
       supported: true,
     };
+  }
+
+  querySubagentSpendByAgent(sessionId: string): Map<string, SubagentSpend> {
+    const agentFiles = findSubagentFilesById(this.projectsDirs, sessionId);
+    const result = new Map<string, SubagentSpend>();
+    for (const [agentId, files] of agentFiles) {
+      let outputTokens = 0, inputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0;
+      let knownCost = 0, anyKnownCost = false, anyUnknownModel = false;
+      const seen = new Set<string>();
+      for (const file of files) {
+        let raw: string;
+        try { raw = readFileSync(file, "utf8"); } catch { continue; }
+        for (const line of raw.split("\n")) {
+          if (!line.trim()) continue;
+          let obj: Record<string, unknown>;
+          try { obj = JSON.parse(line); } catch { continue; }
+          if (obj["type"] !== "assistant") continue;
+          const msg = obj["message"] as Record<string, unknown> | undefined;
+          const usage = msg?.["usage"] as Record<string, unknown> | undefined;
+          if (!msg || !usage) continue;
+          const out = Number(usage["output_tokens"] ?? 0);
+          if (out <= 0) continue;
+          const key = turnKey(obj, msg);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const inp = Number(usage["input_tokens"] ?? 0);
+          const cr = Number(usage["cache_read_input_tokens"] ?? 0);
+          const cw = Number(usage["cache_creation_input_tokens"] ?? 0);
+          const model = String(msg["model"] ?? "");
+          outputTokens += out; inputTokens += inp; cacheReadTokens += cr; cacheWriteTokens += cw;
+          const c = computeTurnCost(model, out, inp, cr, cw);
+          if (c === null) anyUnknownModel = true;
+          else { knownCost += c; anyKnownCost = true; }
+        }
+      }
+      result.set(agentId, {
+        agentCount: 1,
+        outputTokens, inputTokens, cacheReadTokens, cacheWriteTokens,
+        costUsd: anyKnownCost ? knownCost : null,
+        costPartial: anyUnknownModel,
+        supported: true,
+      });
+    }
+    return result;
   }
 
   private filter(since: number): JsonlTurn[] {

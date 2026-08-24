@@ -11,6 +11,7 @@ interface SpendOptions {
   since: number;
   sinceStr: string;
   json: boolean;
+  agentId?: string;
 }
 
 interface Bucket {
@@ -77,7 +78,28 @@ export function renderSpendReport(reader: Reader, opts: SpendOptions): void {
 
   const directTurns = selected.map((x) => x.t);
   const direct = sumTurns(directTurns);
-  const sub: SubagentSpend = reader.querySubagentSpend(session.sessionId);
+
+  let sub: SubagentSpend;
+  let subByAgent: Map<string, SubagentSpend> | null = null;
+  if (opts.agentId) {
+    subByAgent = reader.querySubagentSpendByAgent(session.sessionId);
+    const match = subByAgent.get(opts.agentId);
+    if (match) {
+      sub = match;
+    } else {
+      // Agent ID not found — list available agents and bail
+      const available = [...subByAgent.keys()];
+      console.log(`No subagent found with ID "${opts.agentId}".`);
+      if (available.length > 0) {
+        console.log(`Available agents: ${available.join(", ")}`);
+      } else {
+        console.log("No subagent transcripts found for this session.");
+      }
+      return;
+    }
+  } else {
+    sub = reader.querySubagentSpend(session.sessionId);
+  }
 
   const combined: Bucket = {
     output: direct.output + (sub.supported ? sub.outputTokens : 0),
@@ -99,6 +121,7 @@ export function renderSpendReport(reader: Reader, opts: SpendOptions): void {
       session: { session_id: session.sessionId, cwd: session.cwd, turn_count_total: allTurns.length },
       turn_range: opts.turnRange ? { from, to: opts.turnRange.to ?? allTurns.length } : null,
       since_floor_applied: sinceFloorApplied,
+      agent_filter: opts.agentId ?? null,
       turns: selected.map((x) => ({
         turn: x.turnNo, timestamp: x.t.timestamp, model: x.t.model,
         output: x.t.outputTokens, input: x.t.inputTokens,
@@ -112,7 +135,8 @@ export function renderSpendReport(reader: Reader, opts: SpendOptions): void {
           cost_usd: direct.cost, cost_partial: direct.costPartial,
         },
         subagent: {
-          supported: sub.supported, session_wide: true, agent_count: sub.agentCount,
+          supported: sub.supported, session_wide: !opts.agentId,
+          agent_id: opts.agentId ?? null, agent_count: sub.agentCount,
           output: sub.outputTokens, input: sub.inputTokens,
           cache_read: sub.cacheReadTokens, cache_write: sub.cacheWriteTokens,
           cost_usd: sub.costUsd, cost_partial: sub.costPartial,
@@ -156,7 +180,9 @@ export function renderSpendReport(reader: Reader, opts: SpendOptions): void {
   ));
 
   const subLabel = sub.supported
-    ? `Subagent (session-wide, ${sub.agentCount} agent${sub.agentCount === 1 ? "" : "s"})`
+    ? opts.agentId
+      ? `Subagent (${opts.agentId})`
+      : `Subagent (session-wide, ${sub.agentCount} agent${sub.agentCount === 1 ? "" : "s"})`
     : "Subagent";
   console.log(`\n${bold("  Totals (Claude, billed)")}`);
   console.log(renderTable(
@@ -179,6 +205,8 @@ export function renderSpendReport(reader: Reader, opts: SpendOptions): void {
 
   if (!sub.supported) {
     console.log(renderFootnote("Subagent attribution needs the JSONL source (run with --source jsonl); unavailable on sqlite."));
+  } else if (opts.agentId) {
+    console.log(renderFootnote(`Showing subagent ${opts.agentId} only. Use --agent without a value to list available agents.`));
   } else {
     console.log(renderFootnote("Subagent total is session-wide (v1), not scoped to the turn range."));
   }

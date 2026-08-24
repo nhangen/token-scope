@@ -35,6 +35,11 @@ interface SavingsOptions {
   /** When set, emit a per-label breakdown (`by_label`) of the ledger's runs.
    *  Label is the second colon-separated segment of a run's run_id. */
   byLabel?: boolean;
+  /** When set (requires --session), PM overhead is derived from a specific
+   *  subagent's transcript rather than the whole session. The agent ID is the
+   *  subagent file name without the .jsonl extension (e.g. "agent-abc123").
+   *  Supersedes --pm-cost for local agents. */
+  pmAgentId?: string;
 }
 
 /**
@@ -199,13 +204,25 @@ function labelOf(r: LedgerRun): string | null {
  * inclusive slice — the delegation's orchestration turns. Subagent cost is
  * session-wide (not turn-scoped in v1), so it's EXCLUDED when scoping; callers
  * surface `scoped` so the report can footnote that.
+ * Agent-scoped (`pmAgentId` set): only the named subagent's cost — the lean
+ * PM cost is the agent itself, not the whole session.
  * `found` is false when the session isn't present in the transcripts.
  */
 function sessionBilledSpend(
-  reader: Reader, sessionId: string, pmTurnRange?: { from?: number; to?: number },
+  reader: Reader, sessionId: string,
+  pmTurnRange?: { from?: number; to?: number },
+  pmAgentId?: string,
 ): { cost: number | null; partial: boolean; found: boolean; scoped: boolean } {
   const turns = reader.querySessionTurns(sessionId);
-  if (turns.length === 0) return { cost: null, partial: false, found: false, scoped: !!pmTurnRange };
+  if (turns.length === 0) return { cost: null, partial: false, found: false, scoped: !!pmTurnRange || !!pmAgentId };
+
+  // Agent-scoped: PM cost is the named subagent's spend only
+  if (pmAgentId) {
+    const byAgent = reader.querySubagentSpendByAgent(sessionId);
+    const match = byAgent.get(pmAgentId);
+    if (!match || !match.supported) return { cost: null, partial: false, found: true, scoped: true };
+    return { cost: match.costUsd, partial: match.costPartial, found: true, scoped: true };
+  }
 
   let selected = turns;
   const scoped = !!pmTurnRange;
@@ -380,7 +397,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       // measured it out-of-band, so absence from local transcripts is fine.
       pmOverhead = opts.pmCost; found = true;
     } else if (sessionId !== null) {
-      const billed = sessionBilledSpend(reader, sessionId, opts.pmTurnRange);
+      const billed = sessionBilledSpend(reader, sessionId, opts.pmTurnRange, opts.pmAgentId);
       pmOverhead = billed.cost; pmPartial = billed.partial; found = billed.found;
     }
     // A group is attributed only when we have BOTH sides of the subtraction.

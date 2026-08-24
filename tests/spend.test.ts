@@ -24,13 +24,13 @@ describe("querySubagentSpend (jsonl)", () => {
   it("rolls up a multi-turn subagent transcript for the session", () => {
     const s = reader.querySubagentSpend("sess-spend");
     expect(s.supported).toBe(true);
-    expect(s.agentCount).toBe(1);          // one transcript file
-    expect(s.outputTokens).toBe(450);      // 300 + 150 across both agent turns
-    expect(s.inputTokens).toBe(45);        // 30 + 15
-    expect(s.cacheReadTokens).toBe(5000);  // 2000 + 3000
+    expect(s.agentCount).toBe(2);          // two transcript files (agent-multi, agent-haiku)
+    expect(s.outputTokens).toBe(650);      // 450 + 200 across both agents
+    expect(s.inputTokens).toBe(65);        // 45 + 20
+    expect(s.cacheReadTokens).toBe(6000);  // 5000 + 1000
     expect(s.cacheWriteTokens).toBe(500);  // 500 + 0
-    expect(s.costPartial).toBe(false);
-    expect(s.costUsd).toBeCloseTo(0.01026, 5);
+    expect(s.costPartial).toBe(true);      // haiku has no pricing
+    expect(s.costUsd).toBeCloseTo(0.01026, 5); // only multi has cost
   });
 
   it("returns zeros for a session with no subagents", () => {
@@ -59,10 +59,10 @@ describe("renderSpendReport — whole session", () => {
     expect(p.totals.direct.cost_usd).toBeCloseTo(0.01278, 5);
 
     expect(p.totals.subagent.supported).toBe(true);
-    expect(p.totals.subagent.agent_count).toBe(1);
-    expect(p.totals.subagent.output).toBe(450);
+    expect(p.totals.subagent.agent_count).toBe(2);
+    expect(p.totals.subagent.output).toBe(650);
 
-    expect(p.totals.combined.output).toBe(800);     // 350 + 450
+    expect(p.totals.combined.output).toBe(1000);     // 350 + 650
     expect(p.totals.combined.cost_usd).toBeCloseTo(0.02304, 5);
   });
 
@@ -82,9 +82,9 @@ describe("renderSpendReport — turn slice", () => {
     expect(p.turns.map((t: { turn: number }) => t.turn)).toEqual([2]);
     expect(p.totals.direct.output).toBe(200);
     expect(p.totals.direct.cost_usd).toBeCloseTo(0.004935, 6);
-    // subagent is session-wide, so combined still adds the full 450
-    expect(p.totals.subagent.output).toBe(450);
-    expect(p.totals.combined.output).toBe(650);
+    // subagent is session-wide, so combined still adds the full 650
+    expect(p.totals.subagent.output).toBe(650);
+    expect(p.totals.combined.output).toBe(850);
   });
 
   it("clamps an out-of-range upper bound", () => {
