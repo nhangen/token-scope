@@ -146,11 +146,13 @@ function unverifiedKindOf(r: LedgerRun): UnverifiedKind | null {
   if (isReviewRow(r) || isBenchRow(r)) return null;
   if (typeof r.reason === "string") {
     if (r.reason === "ok") {
-      // reason:"ok" contradicted by completed:false or verified:false is a
+      // reason:"ok" contradicted by completed:false or verified !== true is a
       // bridge bug — the reason was set before the verify step ran and the
       // result overwrote it. Count as a distinct kind so it doesn't silently
-      // migrate into "other" (#34).
-      if (r.completed === false || r.verified === false) return "conflict";
+      // migrate into "other" (#34). Must check !== true, not === false: the
+      // case #34 warned about is verified:null (reason assigned above the
+      // verify block), which === false misses.
+      if (r.completed !== true || r.verified !== true) return "conflict";
       return null;
     }
     if (r.reason === "turn-cap") return "turn-cap";
