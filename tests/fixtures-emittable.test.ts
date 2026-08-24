@@ -113,4 +113,11 @@ describe("ledger fixtures encode only rows the bridge can emit", () => {
       expect(violation(reason!, rest.join("|")), `${loc} is emittable now — remove it from GRANDFATHERED`).not.toBeNull();
     }
   });
+
+  it("GRANDFATHERED is empty — additions are not acceptable (#66)", () => {
+    // #33 emptied the allowlist; #66 pins it there. A new unemittable fixture
+    // is a fixture bug, not an allowlist entry. If this fails, fix the fixture
+    // rather than adding to GRANDFATHERED.
+    expect(GRANDFATHERED.size).toBe(0);
+  });
 });
