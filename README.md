@@ -588,6 +588,26 @@ the cap is denominated in.
 - **Cache savings** — estimated from cache read vs full input pricing differential
 - **Tool attribution** — `--tools` report counts ALL tool_use blocks per turn and splits cost proportionally by input payload size. Other reports use per-turn dominant tool (largest input).
 
+## Development
+
+**Mutation checking.** When adding or modifying a test that guards a fix, verify the test actually fails when the fix is reverted. Use `scripts/mutation-check.sh` — it is the only sanctioned method. Do not use `git checkout`, `git restore`, or `sed -i` against `src/` in the working tree; those can wipe unstaged work and have done so in this repo (#49).
+
+The script detaches a temporary worktree, applies the mutation there, runs the test suite, and requires failure. The working tree is never touched.
+
+```bash
+# Verify a fix is actually guarded by its test
+scripts/mutation-check.sh \
+  'sed -i "" "s/return collected.events.filter((e) => tsMs(e) === null).length;/return 0;/" src/reports/providers.ts' \
+  bun test tests/providers.test.ts
+
+# Or via bun run
+bun run mutation-check \
+  'sed -i "" "s/return collected.events.filter((e) => tsMs(e) === null).length;/return 0;/" src/reports/providers.ts' \
+  bun test tests/providers.test.ts
+```
+
+The script exits 0 when tests fail under mutation (correct), exits 1 when tests pass (the test does not guard the fix), and exits 2 when the mutation command itself fails or is a no-op.
+
 ## Roadmap
 
 - **Phase 1:** Core terminal reports (summary, tool, project, session, thinking) — shipped
