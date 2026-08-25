@@ -1,0 +1,1 @@
+{"type":"assistant","uuid":"pm-t1","sessionId":"sess-spend","isSidechain":false,"cwd":"/Users/alice/wt-haiku","timestamp":"2026-08-01T10:00:00.000Z","message":{"model":"claude-haiku-4-5","usage":{"input_tokens":1000,"output_tokens":500,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"stop_reason":"end_turn","content":[{"type":"text","text":"done"}]}}

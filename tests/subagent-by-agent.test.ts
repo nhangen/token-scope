@@ -5,6 +5,27 @@ import { join } from "path";
 const DIR = join(import.meta.dir, "fixtures/spend-projects");
 const DIR_HAIKU = join(import.meta.dir, "fixtures/spend-projects/-Users-alice-projects-haiku");
 
+// Production entry point for #18's acceptance criterion ("one command"):
+// drives real arg parsing, reader selection, and report rendering, with the
+// projects tree injected through TOKEN_SCOPE_PROJECTS_DIR.
+const TEST_DIR = new URL(".", import.meta.url).pathname;
+const ROOT = join(TEST_DIR, "..");
+const CLI = join(ROOT, "src", "cli.ts");
+const DIR_SPEND_CLI = join(TEST_DIR, "fixtures", "spend-cli");
+
+function runSpendCli(extraArgs: string[] = []) {
+  const proc = Bun.spawnSync(
+    ["bun", CLI, "--spend", "--session", "sess-spend", ...extraArgs],
+    {
+      cwd: ROOT,
+      env: { ...process.env, TOKEN_SCOPE_PROJECTS_DIR: DIR_SPEND_CLI },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  return { code: proc.exitCode, out: proc.stdout.toString() };
+}
+
 function reader() {
   return new JsonlReader([DIR]);
 }
@@ -127,5 +148,22 @@ describe("querySubagentSpendByAgent — one agent id across two project slugs (#
 
     expect(spend.agentCount).toBe(2);
     expect(spend.outputTokens).toBe(550);
+  });
+});
+
+describe("--spend --agent production CLI path (#77)", () => {
+  // #18's acceptance criterion was "resolvable to a dollar figure in one command" — the
+  // wiring (arg parsing, reader selection, report rendering), not the query
+  // method. The unit test above verifies the arithmetic; this one verifies the
+  // command. The 41-record Haiku batch is the same fixture #69 derived
+  // $0.63–1.10 from.
+  it("renders the Haiku batch cost through --spend --agent haiku (JSON)", () => {
+    const { code, out } = runSpendCli(["--agent", "haiku", "--json"]);
+    expect(code).toBe(0);
+    const payload = JSON.parse(out);
+    expect(payload.agent_filter).toBe("haiku");
+    expect(payload.totals.subagent.cost_usd).toBeGreaterThan(0.63);
+    expect(payload.totals.subagent.cost_usd).toBeLessThan(1.10);
+    expect(payload.totals.subagent.cost_partial).toBe(false);
   });
 });
