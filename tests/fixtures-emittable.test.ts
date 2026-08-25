@@ -121,3 +121,61 @@ describe("ledger fixtures encode only rows the bridge can emit", () => {
     expect(GRANDFATHERED.size).toBe(0);
   });
 });
+
+// JSONL has no comment syntax. A `//` line in a fixture survives only because
+// readLedger swallows parse failures (src/ledger.ts), which means the annotation
+// silently exercises the malformed-line path on every run — and when a
+// malformedRows counter lands (#34 item 9, #50), the file reports rows that are
+// not data. Annotations belong in the test that reads the fixture.
+const PARSE_EXEMPT = new Set([
+  // ledger.test.ts:7 asserts this file's malformed line is skipped — it IS the
+  // malformed-line fixture. Nothing else may appear here without a test that
+  // exists because of it.
+  "ledger/runs.jsonl",
+  // providers.test.ts:16 ("skips torn lines") — same role for transcript files.
+  "providers/claude-sample.jsonl",
+]);
+
+function walkJsonl(dir: string): string[] {
+  const out: string[] = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) out.push(...walkJsonl(p));
+    else if (e.name.endsWith(".jsonl")) out.push(p);
+  }
+  return out;
+}
+
+describe("every committed ledger fixture line parses (#79)", () => {
+  const FIXTURES = new URL("./fixtures", import.meta.url);
+  const files = walkJsonl(FIXTURES.pathname);
+
+  it("finds fixture files to check", () => {
+    expect(files.length).toBeGreaterThan(10);
+  });
+
+  it("no line outside the exemption set fails JSON.parse", () => {
+    const bad: string[] = [];
+    for (const f of files) {
+      const rel = f.slice(FIXTURES.pathname.length + 1);
+      if (PARSE_EXEMPT.has(rel)) continue;
+      readFileSync(f, "utf8").split("\n").forEach((line, i) => {
+        if (line.trim() === "") return;
+        try {
+          JSON.parse(line);
+          if (!line.trim().startsWith("{")) bad.push(`${rel}:${i + 1} parses but is not an object`);
+        } catch {
+          bad.push(`${rel}:${i + 1} does not parse`);
+        }
+      });
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("exempted files still exist (a rename must update the set, not orphan it)", () => {
+    const rels = new Set(files.map((f) => f.slice(FIXTURES.pathname.length + 1)));
+    for (const exempt of PARSE_EXEMPT) {
+      expect(rels.has(exempt), `${exempt} is exempt but missing`).toBe(true);
+    }
+  });
+});
