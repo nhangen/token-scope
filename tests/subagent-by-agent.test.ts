@@ -84,3 +84,48 @@ describe("querySubagentSpendByAgent — Haiku batch (#69)", () => {
     expect(haiku.costUsd).toBeLessThan(1.10);
   });
 });
+
+describe("querySubagentSpendByAgent — one agent id across two project slugs (#75)", () => {
+  // The worktree-slug-split case findSubagentFilesById's own doc comment
+  // describes: the same agent filename under two project slugs must group into
+  // ONE Map entry whose tokens sum and whose fileCount counts both files. The
+  // #69 fixture has two files under two DIFFERENT agent ids — a different path.
+  const DIR_SPLIT = join(import.meta.dir, "fixtures/split-projects");
+
+  it("merges both files under one agent id with summed tokens and agentCount 2", () => {
+    const r = new JsonlReader([DIR_SPLIT]);
+    const byAgent = r.querySubagentSpendByAgent("sess-split");
+    r.close();
+
+    expect(byAgent.size).toBe(1);
+    const split = byAgent.get("agent-split")!;
+    expect(split).toBeDefined();
+    // wt-a: out 300+150, in 30+15, cache-rd 2000+3000, cache-wr 500+0
+    // wt-b: out 100,     in 10,    cache-rd 4000,      cache-wr 200
+    expect(split.outputTokens).toBe(550);
+    expect(split.inputTokens).toBe(55);
+    expect(split.cacheReadTokens).toBe(9000);
+    expect(split.cacheWriteTokens).toBe(700);
+    // agentCount carries the file count (#70): two files grouped under one id
+    expect(split.agentCount).toBe(2);
+  });
+
+  it("fails if agentCount is hardcoded back to 1", () => {
+    // Mutation check for #75's item-3 residual: the original code hardcoded
+    // agentCount: 1 regardless of how many files grouped.
+    const r = new JsonlReader([DIR_SPLIT]);
+    const byAgent = r.querySubagentSpendByAgent("sess-split");
+    r.close();
+
+    expect(byAgent.get("agent-split")!.agentCount).not.toBe(1);
+  });
+
+  it("querySubagentSpend sees the merged total for the same session", () => {
+    const r = new JsonlReader([DIR_SPLIT]);
+    const spend = r.querySubagentSpend("sess-split");
+    r.close();
+
+    expect(spend.agentCount).toBe(2);
+    expect(spend.outputTokens).toBe(550);
+  });
+});

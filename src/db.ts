@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "fs";
 import { join } from "path";
+import type { Reader } from "./reader";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -825,29 +826,12 @@ export function querySessionBudgets(db: Database, since: number, limit: number):
 
 // ─── SQLite Reader Adapter ────────────────────────────────────────────────────
 
-interface SqliteReaderInterface {
-  querySummaryTotals(since: number): SummaryTotals;
-  queryRawTurnsForTool(since: number): RawTurnForTool[];
-  queryRawTurnsForArtifact(since: number): RawTurnForArtifact[];
-  queryByTool(since: number, limit: number): ToolRow[];
-  queryByProject(since: number, limit: number): ProjectRow[];
-  queryWeeklyTrend(since: number): WeekRow[];
-  queryCreditWeeks(since: number): CreditWeeks;
-  querySessions(since: number, limit: number): SessionRow[];
-  querySessionTurns(sessionId: string): TurnRow[];
-  queryThinkingTurns(since: number): ThinkingTurnRow[];
-  queryBashTurns(since: number): BashCommandRow[];
-  queryProjectMatches(fragment: string): ProjectMatch[];
-  queryContextStats(since: number, limit: number): ContextStatRow[];
-  queryCacheStats(since: number, limit: number): CacheStatRow[];
-  queryContextContributors(since: number, limit: number, projectFragment?: string): ContributorRow[];
-  queryBaseLoad(since: number, limit: number): BaseLoadRow[];
-  queryCacheGrowth(sessionId: string): CacheGrowthRow[];
-  querySessionBudgets(since: number, limit: number): SessionBudgetRow[];
-  querySubagentSpend(sessionId: string): SubagentSpend;
-  querySubagentSpendByAgent(sessionId: string): Map<string, SubagentSpend>;
-  close(): void;
-}
+// The SQLite adapter implements the same surface as the JSONL reader. This is
+// a derivation, not a second copy: a method added to `Reader` is required here
+// immediately, instead of surfacing only when a downstream assignment fails
+// (#63 ran four red commits on exactly that). Type-only import — erased at
+// compile time, so no runtime cycle with reader.ts, which imports this module.
+type SqliteReaderInterface = Reader;
 
 // Subagent transcripts live only in the JSONL projects tree
 // (`<session>/subagents/*.jsonl`), not in __store.db. v1 attributes them from
