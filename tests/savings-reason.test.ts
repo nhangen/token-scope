@@ -297,4 +297,21 @@ describe("renderSavingsReport — Input priced with unattributed sessions (#67)"
     // actual token counts, not zeros.
     expect(text).toMatch(/Input priced.*\d.*fresh \+ \d.*re-read/);
   });
+
+  it("labels the unattributed branch as whole ledger (#76)", () => {
+    // The label must track the branch that supplied the numbers. Ledger-wide
+    // values under "(attributed authoring)" send the reader hunting for
+    // attributed sessions that do not exist — plausible numbers under a false
+    // description. Reverting the label to the hardcoded attributed variant
+    // fails this test.
+    const text = capture(() => renderSavingsReport(reader, baseUnattributed));
+    expect(text).toContain("Input priced (whole ledger, est.)");
+    expect(text).not.toContain("(attributed authoring");
+  });
+
+  it("labels the attributed branch as attributed authoring (#76)", () => {
+    const text = capture(() => renderSavingsReport(reader, { ...base, json: false }));
+    expect(text).toContain("Input priced (attributed authoring, est.)");
+    expect(text).not.toContain("(whole ledger");
+  });
 });

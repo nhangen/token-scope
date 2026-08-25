@@ -638,6 +638,13 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   }
 
   console.log(renderHeader("token-scope — Ollama Delegation Savings"));
+  // ollama has no prompt cache, so the ledger's input total counts every re-read.
+  // Naming the split here is what stops the counterfactual reading as if Claude
+  // would have paid full price for all of it (#465).
+  // When no sessions are attributed, use ledger-wide values so the disclosure
+  // shows actual token counts instead of zeros (#67) — and say so in the label,
+  // or ledger-wide numbers print under a description of attributed authoring (#76).
+  const attributed = attributedGroups.length > 0;
   console.log(renderKV([
     ["Ledger", ledgerPath],
     ["Runs", `${totalRuns} across ${groups.length} session${groups.length === 1 ? "" : "s"}`],
@@ -648,13 +655,8 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
         ? `turns ${opts.pmTurnRange.from ?? 1}..${opts.pmTurnRange.to ?? "end"} (delegation only)`
         : "whole session"],
     ["Since floor", sinceFloorApplied ? `> ${opts.sinceStr}` : "none (all runs)"],
-    // ollama has no prompt cache, so the ledger's input total counts every re-read.
-    // Naming the split here is what stops the counterfactual reading as if Claude
-    // would have paid full price for all of it (#465).
-    // When no sessions are attributed, use ledger-wide values so the disclosure
-    // shows actual token counts instead of zeros (#67).
     ...(ledgerWideCachedInput > 0
-      ? [["Input priced (attributed authoring, est.)", `${formatTokens(attributedGroups.length > 0 ? totalUncachedInput : ledgerWideUncachedInput)} fresh + ${formatTokens(attributedGroups.length > 0 ? totalCachedInput : ledgerWideCachedInput)} re-read at cache-read rate`] as [string, string]]
+      ? [[attributed ? "Input priced (attributed authoring, est.)" : "Input priced (whole ledger, est.)", `${formatTokens(attributed ? totalUncachedInput : ledgerWideUncachedInput)} fresh + ${formatTokens(attributed ? totalCachedInput : ledgerWideCachedInput)} re-read at cache-read rate`] as [string, string]]
       : []),
   ]));
 
