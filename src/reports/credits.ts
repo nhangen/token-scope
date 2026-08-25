@@ -26,7 +26,7 @@ interface Options {
   nowMs?: number;
 }
 
-interface WeekCredits {
+export interface WeekCredits {
   weekStart: string;
   turns: number;
   subagentTurns: number;
@@ -49,7 +49,7 @@ interface WeekCredits {
   projected: number | null;
 }
 
-const WEEK_MS = 7 * 86_400_000;
+export const WEEK_MS = 7 * 86_400_000;
 
 function weekStartMs(weekStart: string): number {
   return Date.parse(`${weekStart}T00:00:00.000Z`);
