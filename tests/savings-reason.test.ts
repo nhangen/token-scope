@@ -53,10 +53,11 @@ const baseWithConflict = {
 //   bench:600   15000/1500  reason ok             -> bench, excluded
 //   author:608  12000/1200  reason ok, c:f v:null -> unverified, conflict (#64, #73)
 //   author:609  13000/1300  reason ok, c:t v:null -> SUCCESS (no verify configured, #73)
+//   author:610  14000/1400  reason ok, completed omitted → null -> conflict (pins !== true, #74)
 const UNVERIFIED_IN = 20000 + 30000 + 40000 + 50000 + 80000 + 11000;  // 231000 (runs-reason.jsonl)
 const UNVERIFIED_OUT = 2000 + 3000 + 4000 + 5000 + 8000 + 1100;      //  23100
-// Conflict fixture adds author:608 (12000/1200) as a conflict row
-const CONFLICT_UNVERIFIED_IN = UNVERIFIED_IN + 12000;  // 243000
+// Conflict fixture adds author:608 (12000/1200) + author:610 (14000/1400) as conflict rows
+const CONFLICT_UNVERIFIED_IN = UNVERIFIED_IN + 12000 + 14000;  // 257000
 
 function sess(opts: Record<string, unknown> = {}): any {
   const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, ...opts })));
@@ -225,7 +226,7 @@ describe("renderSavingsReport — conflict kind (#64)", () => {
     // where reason was assigned before the verify block ran. completed:false
     // makes this a real contradiction regardless of verified state.
     const t = totalsConflict();
-    expect(t.unverified_conflict_run_count).toBe(1);
+    expect(t.unverified_conflict_run_count).toBe(2);
   });
 
   it("does NOT classify completed:true, verified:null as conflict (#73)", () => {
@@ -233,33 +234,43 @@ describe("renderSavingsReport — conflict kind (#64)", () => {
     // NORMAL success shape when verify_cmd is unset. The bridge never sets
     // verified on such runs. Treating it as a conflict over-reports failures.
     const t = totalsConflict();
-    expect(t.unverified_conflict_run_count).toBe(1);
+    expect(t.unverified_conflict_run_count).toBe(2);
     // author:609 must not be in the unverified count
-    expect(t.unverified_run_count).toBe(7);
+    expect(t.unverified_run_count).toBe(8);
     // And its tokens (13000/1300) must not appear in unverified totals.
     // If the guard reverts to verified !== true, these would increase.
     expect(t.unverified_input).toBe(CONFLICT_UNVERIFIED_IN);
+  });
+
+  it("classifies completed omitted (null) as conflict — pins !== true (#74)", () => {
+    // author:610: reason:"ok", completed omitted → null via boolOrNull,
+    // verified:null. completed !== true catches this; completed === false misses it.
+    // If the guard reverts to === false, this row passes as success.
+    const t = totalsConflict();
+    expect(t.unverified_conflict_run_count).toBe(2);
+    expect(t.unverified_run_count).toBe(8);
   });
 
   it("does not count conflict rows as turn-cap or verify-failed", () => {
     const t = totalsConflict();
     expect(t.unverified_turn_cap_run_count).toBe(3);
     expect(t.unverified_verify_failed_run_count).toBe(2);
-    expect(t.unverified_conflict_run_count).toBe(1);
+    expect(t.unverified_conflict_run_count).toBe(2);
   });
 
   it("shows conflict in the text report", () => {
     const text = capture(() => renderSavingsReport(reader, { ...baseWithConflict, json: false }));
-    expect(text).toContain("conflict 1");
+    expect(text).toContain("conflict 2");
   });
 
-  it("conflict guard catches completed:false but not verified:null alone", () => {
-    // Regression for #73: the guard must NOT treat verified:null as a conflict
-    // when completed:true — that's the normal unverified success shape.
+  it("conflict guard catches completed:false and completed:null but not completed:true (#73, #74)", () => {
+    // Regression for #73 and #74: the guard must NOT treat verified:null as a conflict
+    // when completed:true — that's the normal unverified success shape. But it MUST
+    // treat completed:null (omitted) as a conflict — completed !== true catches it.
     const t = totalsConflict();
-    // 7 unverified: 601,602,603,604,606,607 (turn-cap/verify-failed/other) + 608 (conflict)
+    // 8 unverified: 601,602,603,604,606,607 (turn-cap/verify-failed/other) + 608,610 (conflict)
     // author:609 (completed:true, verified:null) is NOT unverified
-    expect(t.unverified_run_count).toBe(7);
+    expect(t.unverified_run_count).toBe(8);
   });
 });
 
