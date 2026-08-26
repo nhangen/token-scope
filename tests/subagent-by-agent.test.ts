@@ -156,7 +156,8 @@ describe("--spend --agent production CLI path (#77)", () => {
   // wiring (arg parsing, reader selection, report rendering), not the query
   // method. The unit test above verifies the arithmetic; this one verifies the
   // command. The 41-record Haiku batch is the same fixture #69 derived
-  // $0.63–1.10 from.
+  // $0.63–1.10 from. Fixture now has TWO agents (haiku + opus) with different
+  // costs, so --agent must scope correctly to the requested one.
   it("renders the Haiku batch cost through --spend --agent haiku (JSON)", () => {
     const { code, out } = runSpendCli(["--agent", "haiku", "--json"]);
     expect(code).toBe(0);
@@ -165,5 +166,22 @@ describe("--spend --agent production CLI path (#77)", () => {
     expect(payload.totals.subagent.cost_usd).toBeGreaterThan(0.63);
     expect(payload.totals.subagent.cost_usd).toBeLessThan(1.10);
     expect(payload.totals.subagent.cost_partial).toBe(false);
+  });
+
+  it("renders the Opus batch cost through --spend --agent opus (JSON)", () => {
+    const { code, out } = runSpendCli(["--agent", "opus", "--json"]);
+    expect(code).toBe(0);
+    const payload = JSON.parse(out);
+    expect(payload.agent_filter).toBe("opus");
+    // opus: 50k in, 5k out, 10k cache-read → much higher cost
+    expect(payload.totals.subagent.cost_usd).toBeGreaterThan(2.5);
+    expect(payload.totals.subagent.cost_partial).toBe(false);
+  });
+
+
+  it("text mode reports 'No subagent found' for nonexistent agent (#77)", () => {
+    const { code, out } = runSpendCli(["--agent", "no-such-agent"]);
+    expect(code).toBe(0);
+    expect(out).toContain('No subagent found with ID "no-such-agent"');
   });
 });
