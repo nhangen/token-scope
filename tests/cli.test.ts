@@ -120,6 +120,26 @@ describe("parseArgs --savings", () => {
     expect(stderrBuf).toContain("--ledger requires a path");
   });
 
+  // Every flag taking a required value, not just the two the review named. The
+  // reflex fix covered --ledger and --escalations; --session was the worse one,
+  // because its own length check made it look validated ("--json" is 6 chars).
+  for (const [flag, needle] of [
+    ["--session", "--session requires a session ID"],
+    ["--db", "--db requires a path"],
+    ["--projects-dir", "--projects-dir requires a path"],
+    ["--agent", "--agent requires an agent id"],
+    ["--pm-agent", "--pm-agent requires an agent id"],
+    ["--counterfactual-model", "--counterfactual-model requires a model id"],
+    ["--artifact-path", "--artifact-path requires a fragment"],
+    ["--artifact-show", "--artifact-show requires a file path"],
+    ["--artifact-compare", "--artifact-compare requires an .md file path"],
+  ] as const) {
+    it(`rejects a flag where ${flag} wants a value`, () => {
+      expect(() => parseArgs([flag, "--json"])).toThrow("__exit_1");
+      expect(stderrBuf).toContain(needle);
+    });
+  }
+
   it("rejects --ledger without --savings", () => {
     expect(() => parseArgs(["--ledger", "/l.jsonl"])).toThrow("__exit_1");
     expect(stderrBuf).toContain("only valid with --savings");

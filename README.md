@@ -235,9 +235,18 @@ again. So `--json` always carries `escalations_path`, `escalations_status`
 An unreadable file warns on stderr; so does a missing file whose path you named yourself,
 since a path you typed is an assertion that it is there.
 
-Records that matched no run are footnoted rather than dropped. Matching keys on `cwd` as
-well as `run_id`, so a worktree that moved after the escalation breaks every record naming
-it — silently restoring the double-count if nothing counts the misses.
+Records that name a run the ledger does not contain are footnoted rather than dropped.
+Matching keys on `cwd` as well as `run_id`, so a worktree that moved after the escalation
+breaks every record naming it — silently restoring the double-count if nothing counts the
+misses. A record whose run is present but ineligible (it succeeded, or it cannot be dated)
+is doing its job by not firing and is not counted, and the footnote is suppressed on a
+`--session`/`--since` report, where scoping leaves most records naming nothing by
+construction.
+
+The same disclosure covers the ledger itself: `ledger_status` and `ledger_skipped_lines`
+sit beside `ledger_path`, and an unreadable ledger warns on stderr. It is the primary
+source of every figure in the report, so disclosing the sidecar's load status and not the
+ledger's would advertise an integrity the report does not have.
 
 A **positive net means delegation saved money.** Note the economics: for a *small* task the
 counterfactual is tiny, so a single expensive PM turn can exceed it (net negative) — delegation

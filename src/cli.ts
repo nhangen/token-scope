@@ -180,18 +180,22 @@ export function parseTurnRange(raw: string): { from?: number; to?: number } {
 
 
 /**
- * Reads a path-valued flag's argument.
+ * Reads a flag's required value, rejecting one that looks like another flag.
  *
- * Rejects a value that looks like another flag. `--escalations --json` used to
- * take the literal string "--json" as the path, swallow the flag, and then find
- * no sidecar there — so you got a human-readable report with nothing excluded and
- * no indication either thing had happened. A path beginning with "--" is not a
- * real path anyone means.
+ * `--escalations --json` used to take the literal string "--json" as the path,
+ * swallow the flag, and then find no sidecar there — a human-readable report with
+ * nothing excluded and no indication either thing had happened. Every flag here
+ * takes a required value, and none of those values is a real string beginning
+ * "--": a path that does starts `./--x`, and a session id or agent id never does.
+ *
+ * This covers every such flag rather than only the one the review found.
+ * `--session --json` was the same defect and the worse one, because its
+ * length check made it look validated: "--json" is six characters, so it passed.
  */
-function pathValue(argv: string[], i: number, flag: string): string {
+function flagValue(argv: string[], i: number, flag: string, what = "a path"): string {
   const v = argv[i];
   if (!v || v.startsWith("--")) {
-    process.stderr.write(`Error: ${flag} requires a path argument.\n`);
+    process.stderr.write(`Error: ${flag} requires ${what} argument.\n`);
     process.exit(1);
   }
   return v;
@@ -230,16 +234,15 @@ export function parseArgs(argv: string[]): CliArgs {
         else setMode("savings");
         break;
       case "--ledger": {
-        args.ledgerPath = pathValue(argv, ++i, "--ledger");
+        args.ledgerPath = flagValue(argv, ++i, "--ledger");
         break;
       }
       case "--escalations": {
-        args.escalationsPath = pathValue(argv, ++i, "--escalations");
+        args.escalationsPath = flagValue(argv, ++i, "--escalations");
         break;
       }
       case "--counterfactual-model": {
-        const v = argv[++i];
-        if (!v) { process.stderr.write("Error: --counterfactual-model requires a model id.\n"); process.exit(1); }
+        const v = flagValue(argv, ++i, "--counterfactual-model", "a model id");
         args.counterfactualModel = v;
         break;
       }
@@ -262,14 +265,12 @@ export function parseArgs(argv: string[]): CliArgs {
         break;
       }
       case "--agent": {
-        const v = argv[++i];
-        if (!v) { process.stderr.write("Error: --agent requires an agent id (e.g. agent-abc123).\n"); process.exit(1); }
+        const v = flagValue(argv, ++i, "--agent", "an agent id (e.g. agent-abc123)");
         args.agentId = v;
         break;
       }
       case "--pm-agent": {
-        const v = argv[++i];
-        if (!v) { process.stderr.write("Error: --pm-agent requires an agent id (e.g. agent-abc123).\n"); process.exit(1); }
+        const v = flagValue(argv, ++i, "--pm-agent", "an agent id (e.g. agent-abc123)");
         args.pmAgentId = v;
         break;
       }
@@ -312,22 +313,19 @@ export function parseArgs(argv: string[]): CliArgs {
         break;
       }
       case "--artifact-path": {
-        const v = argv[++i];
-        if (!v) { process.stderr.write("Error: --artifact-path requires a fragment.\n"); process.exit(1); }
+        const v = flagValue(argv, ++i, "--artifact-path", "a fragment");
         args.artifactPathFragment = v;
         if (!modeSet) setMode("artifacts");
         break;
       }
       case "--artifact-show": {
         setMode("artifact-show");
-        args.artifactPath = argv[++i];
-        if (!args.artifactPath) { process.stderr.write("Error: --artifact-show requires a file path.\n"); process.exit(1); }
+        args.artifactPath = flagValue(argv, ++i, "--artifact-show", "a file path");
         break;
       }
       case "--artifact-compare": {
         setMode("artifact-compare");
-        args.artifactPath = argv[++i];
-        if (!args.artifactPath) { process.stderr.write("Error: --artifact-compare requires an .md file path.\n"); process.exit(1); }
+        args.artifactPath = flagValue(argv, ++i, "--artifact-compare", "an .md file path");
         break;
       }
       case "--tuning":
@@ -362,8 +360,7 @@ export function parseArgs(argv: string[]): CliArgs {
         break;
       }
       case "--session": {
-        const id = argv[++i];
-        if (!id) { process.stderr.write("Error: --session requires a session ID argument.\n"); process.exit(1); }
+        const id = flagValue(argv, ++i, "--session", "a session ID");
         if (id!.length < 6) { process.stderr.write("Error: --session ID must be at least 6 characters.\n"); process.exit(1); }
         // When --spend/--savings is the active mode, --session scopes it rather
         // than claiming its own (mutually-exclusive) mode.
@@ -386,12 +383,10 @@ export function parseArgs(argv: string[]): CliArgs {
         break;
       }
       case "--db":
-        args.dbPath = argv[++i];
-        if (!args.dbPath) { process.stderr.write("Error: --db requires a path argument.\n"); process.exit(1); }
+        args.dbPath = flagValue(argv, ++i, "--db");
         break;
       case "--projects-dir": {
-        const d = argv[++i];
-        if (!d) { process.stderr.write("Error: --projects-dir requires a path argument.\n"); process.exit(1); }
+        const d = flagValue(argv, ++i, "--projects-dir");
         args.projectsDirs.push(...d.split(":").filter(Boolean));
         break;
       }

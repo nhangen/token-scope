@@ -232,17 +232,39 @@ describe("renderSavingsReport — superseded (escalated) runs", () => {
     expect(out).not.toContain("Excluding them removed");
   });
 
-  it("counts escalation records that matched nothing", () => {
+  it("counts escalation records that name no run in the ledger", () => {
     // cwd equality is the strictest of the four conditions and the likeliest to
     // drift — a renamed worktree breaks every record naming it, forever and
     // invisibly, and the double-count comes back with no footnote. Counting is
     // what `undatableRuns` already does for the same reason.
+    //
+    // 703 (no cwd), 704 (empty cwd) and 705 (no such run) name nothing. 700
+    // matched. 701 names a real run that is merely undatable, so it found its
+    // run and is NOT counted — see the next arm.
     const p = JSON.parse(capture(() => renderSavingsReport(reader, edge)));
     expect(p.escalations_records).toBe(5);
     expect(p.escalations_skipped_lines).toBe(1);
-    expect(p.escalations_unmatched).toBe(4);
+    expect(p.escalations_unmatched).toBe(3);
     const out = capture(() => renderSavingsReport(reader, { ...edge, json: false }));
-    expect(out).toMatch(/4 of 5 escalation record\(s\) matched no run/);
+    expect(out).toMatch(/3 of 5 escalation record\(s\) name a run that is not in this ledger/);
+  });
+
+  it("does not count a record whose run is present but ineligible", () => {
+    // The counter exists to catch cwd drift. A record naming a run that SUCCEEDED
+    // is doing its job by not firing, and one naming an undatable run is the
+    // documented conservative case — counting either fires the drift warning on
+    // the design working as intended. On the canonical fixture that was 2 of 3.
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, withEsc)));
+    // 601 matched; 603 names a run that succeeded; only 602 (worktree drift) is
+    // genuinely naming nothing.
+    expect(p.escalations_unmatched).toBe(1);
+  });
+
+  it("does not warn about unmatched records on a scoped report", () => {
+    // --session and --since filter the runs before the matcher sees them, so a
+    // scoped report leaves most records naming nothing by construction.
+    const out = capture(() => renderSavingsReport(reader, { ...edge, json: false, sessionId: "sess-spend" }));
+    expect(out).not.toMatch(/name a run that is not in this ledger/);
   });
 
   it("includes both window boundaries and excludes one second past", () => {
@@ -279,9 +301,30 @@ describe("renderSavingsReport — superseded (escalated) runs", () => {
     expect(err).toContain("does-not-exist.jsonl");
   });
 
+  it("discloses the ledger's own load status, not just the sidecar's", () => {
+    // Five fields about the sidecar and none about the ledger reads as an
+    // integrity claim about the whole report, while the PRIMARY source can fail
+    // to load and render a confident zero.
+    if (typeof process.getuid === "function" && process.getuid() === 0) return;
+    const dir = mkdtempSync(join(tmpdir(), "ts-savings-badledger-"));
+    const lp = join(dir, "runs.jsonl");
+    writeFileSync(lp, '{"run_id":"author:1","ollama_input_tokens":1}\n');
+    chmodSync(lp, 0o000);
+    try {
+      let out = "";
+      const err = capErr(() => { out = capture(() => renderSavingsReport(reader, { ...base, ledgerPath: lp })); });
+      expect(err).toContain("could not read");
+      expect(JSON.parse(out).ledger_status).toBe("unreadable");
+    } finally { chmodSync(lp, 0o600); }
+    const ok = JSON.parse(capture(() => renderSavingsReport(reader, withEsc)));
+    expect(ok.ledger_status).toBe("ok");
+  });
+
   it("warns when the sidecar is there and cannot be read", () => {
     // The loudest case, and the one with no benign reading: the file exists, so
     // this is not "you never delegated" — it is a subtraction that did not happen.
+    // chmod 000 does not stop root, so this would false-pass in a root container.
+    if (typeof process.getuid === "function" && process.getuid() === 0) return;
     const dir = mkdtempSync(join(tmpdir(), "ts-savings-unreadable-"));
     const p = join(dir, "escalations.jsonl");
     writeFileSync(p, '{"epoch":1783508400,"superseded_run_id":"author:601","cwd":"/w/601"}\n');
@@ -290,8 +333,11 @@ describe("renderSavingsReport — superseded (escalated) runs", () => {
       const err = capErr(() => renderSavingsReport(reader, { ...base, escalationsPath: p, json: false }));
       expect(err).toContain("could not read");
       expect(err).toContain(p);
-      const out = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, escalationsPath: p })));
-      expect(out.escalations_status).toBe("unreadable");
+      // Both renders warn; capturing only the first leaks the second into the
+      // suite's own output.
+      let out = "";
+      capErr(() => { out = capture(() => renderSavingsReport(reader, { ...base, escalationsPath: p })); });
+      expect(JSON.parse(out).escalations_status).toBe("unreadable");
     } finally { chmodSync(p, 0o600); }
   });
 

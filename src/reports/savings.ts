@@ -1,5 +1,5 @@
 import type { Reader } from "@/reader";
-import { readLedger, resolveLedgerPath, type LedgerRun } from "@/ledger";
+import { readLedgerWithStatus, type LedgerRun } from "@/ledger";
 import { readEscalations, resolveAttemptGapSeconds, type Escalation } from "@/escalations";
 import { getPricing } from "@/pricing";
 import { tsMs } from "@/providers/types";
@@ -203,9 +203,13 @@ function isUnverifiedRow(r: LedgerRun): boolean {
  */
 function makeIsSuperseded(escalations: Escalation[], gapSeconds: number): {
   test: (r: LedgerRun) => boolean;
+  /** Records that named no run in this ledger at all — NOT records that merely
+   *  excluded nothing. A record naming a run that succeeded is doing its job by
+   *  not firing, and counting it as unmatched fired the drift warning on the
+   *  happy path. */
   unmatched: () => number;
 } {
-  const matched = new Set<number>();
+  const seen = new Set<number>();
   if (escalations.length === 0) return { test: () => false, unmatched: () => 0 };
   const byRunId = new Map<string, { e: Escalation; i: number }[]>();
   escalations.forEach((e, i) => {
@@ -224,21 +228,28 @@ function makeIsSuperseded(escalations: Escalation[], gapSeconds: number): {
     if (r.runId === null || r.cwd === null) return false;
     const matches = byRunId.get(r.runId);
     if (matches === undefined) return false;
-    if (unverifiedKindOf(r) === null) return false;
+    // A record whose run is present but ineligible — it succeeded, or it cannot
+    // be dated — has still found its run. Mark it seen before returning, or the
+    // drift footnote fires on the design working as intended.
+    const eligible = unverifiedKindOf(r) !== null;
     const ms = tsMs(r);
-    if (ms === null) return false;
+    if (!eligible || ms === null) {
+      for (const { e, i } of matches) if (e.cwd !== null && e.cwd === r.cwd) seen.add(i);
+      return false;
+    }
     let hit = false;
     for (const { e, i } of matches) {
       if (e.cwd === null || e.cwd !== r.cwd) continue;
       const at = e.epoch * 1000;
-      // Every matching record is marked, not just the first: the unmatched count
-      // below is "records that excluded nothing", and stopping at the first hit
-      // would report a record as unmatched because a sibling got there first.
-      if (ms <= at && ms >= at - gapMs) { matched.add(i); hit = true; }
+      // Every matching record is marked, not just the first: a record must not be
+      // reported as naming no run because a sibling record got there first.
+      if (ms <= at && ms >= at - gapMs) { seen.add(i); hit = true; }
     }
     return hit;
   };
-  return { test, unmatched: () => escalations.length - matched.size };
+  // `unmatched` is read after every surviving run has been tested. Reading it
+  // earlier would report every record as naming nothing.
+  return { test, unmatched: () => escalations.length - seen.size };
 }
 
 function tallyKinds(rows: LedgerRun[]): { counts: Record<UnverifiedKind, number>; tokens: Record<UnverifiedKind, { input: number; output: number }>; otherReasons: Set<string> } {
@@ -390,8 +401,13 @@ interface LabelAgg {
 const UNATTRIBUTED = "(unattributed)";
 
 export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void {
-  const ledgerPath = resolveLedgerPath(opts.ledgerPath);
-  let runs = readLedger(opts.ledgerPath);
+  const ledgerRead = readLedgerWithStatus(opts.ledgerPath);
+  const ledgerPath = ledgerRead.path;
+  const ledgerStatus = ledgerRead.readError !== null ? "unreadable" : ledgerRead.exists ? "ok" : "absent";
+  if (ledgerRead.readError !== null) {
+    process.stderr.write(`warn: could not read ${ledgerPath} (${ledgerRead.readError}) — every figure below is computed from zero runs\n`);
+  }
+  let runs = ledgerRead.runs;
 
   // --session scopes to one delegation session (prefix match).
   if (opts.sessionId) runs = runs.filter((r) => r.sessionId !== null && r.sessionId.startsWith(opts.sessionId!));
@@ -760,6 +776,12 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       meta: { generated_at: new Date().toISOString(), token_scope_version: VERSION },
       report: "savings",
       ledger_path: ledgerPath,
+      // The ledger's own load status, for the same reason the sidecar's is here.
+      // Disclosing one and not the other is the worse asymmetry: this is the
+      // PRIMARY source, so an unreadable ledger renders a confident zero under
+      // five fields that read as an integrity claim about the whole report.
+      ledger_status: ledgerStatus,
+      ledger_skipped_lines: ledgerRead.skippedLines,
       // Unconditional, like ledger_path. These are the only fields that separate
       // "the sidecar said nothing was superseded" from "the sidecar was missing,
       // unreadable, or read with the wrong window" — gating them on a non-zero
@@ -966,8 +988,12 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       : "";
     console.log(renderFootnote(`Authoring runs that did not succeed (hit the turn cap, or failed their verify command) are INCLUDED in the counterfactual — the tokens were really spent, and Claude would have paid for a wrong first try too — but reported separately so failed work is not hidden in the total. A run that CRASHED is not counted here and is not in the ledger at all — the bridge writes its row after the failure path has already returned (nhangen/claude-ceo#328), so its tokens are missing from every figure on this report.${sharePct}`));
   }
-  if (escalationsUnmatched > 0) {
-    console.log(renderFootnote(`${escalationsUnmatched} of ${escRead.records.length} escalation record(s) matched no run in this ledger, so nothing was excluded for them. A record matches on superseded_run_id AND cwd, so the usual cause is a worktree that moved or was renamed after the escalation — which restores the double-count silently. Read ${escalationsPath} against the run_id and cwd values in the ledger.`));
+  // Only on an unscoped report. --session and --since filter the runs BEFORE the
+  // matcher sees them, so a scoped report leaves most records naming nothing by
+  // construction and the warning would fire on every one of them.
+  const scoped = opts.sessionId !== undefined || sinceFloorApplied;
+  if (escalationsUnmatched > 0 && !scoped) {
+    console.log(renderFootnote(`${escalationsUnmatched} of ${escRead.records.length} escalation record(s) name a run that is not in this ledger, so nothing was excluded for them. Matching keys on superseded_run_id AND cwd; a worktree moved or renamed after the escalation breaks every record naming it, which restores the double-count silently. Read ${escalationsPath} against the run_id and cwd values in the ledger.`));
   }
   if (escRead.skippedLines > 0) {
     console.log(renderFootnote(`${escRead.skippedLines} line(s) in ${escalationsPath} yielded no record — unparseable, or missing superseded_run_id or epoch. Neither field can be guessed, so those escalations excluded nothing.`));
