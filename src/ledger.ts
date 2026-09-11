@@ -43,7 +43,9 @@ function num(v: unknown): number {
 function numOrNull(v: unknown): number | null {
   return typeof v === "number" && isFinite(v) ? v : null;
 }
-function strOrNull(v: unknown): string | null {
+/** Exported so the escalations reader shares one definition rather than inlining
+ *  the same `typeof` narrowing at each field. */
+export function strOrNull(v: unknown): string | null {
   return typeof v === "string" ? v : null;
 }
 function boolOrNull(v: unknown): boolean | null {

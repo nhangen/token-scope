@@ -134,10 +134,12 @@ const PARSE_EXEMPT = new Set([
   "ledger/runs.jsonl",
   // providers.test.ts:16 ("skips torn lines") — same role for transcript files.
   "providers/claude-sample.jsonl",
-  // savings-superseded.test.ts ("skips a malformed escalation line and one with
-  // no superseded_run_id") — the escalations reader has the same never-fail
-  // contract as the ledger's, and this file is what proves one bad append does
-  // not cost the records around it.
+  // escalations.test.ts ("a bad first line does not cost the records after it")
+  // asserts readEscalations(this file).records.length === 3 and skippedLines === 2
+  // — the escalations reader has the same never-fail contract as the ledger's,
+  // and that arm is what proves one bad append does not cost the records around
+  // it. The arm this entry used to cite asserted a downstream report total, which
+  // held whether or not the malformed line was even present.
   "escalations/escalations.jsonl",
 ]);
 

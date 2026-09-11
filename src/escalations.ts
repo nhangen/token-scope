@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { strOrNull } from "@/ledger";
 
 /**
  * One escalation record, as written by llm-tools'
@@ -27,8 +28,36 @@ export interface Escalation {
   spec: string | null;
   /** The author the spec went to (e.g. "claude-sonnet-5", "gpt-5.6-terra"). */
   to: string | null;
+  /** The worktree the escalated run edits. An empty string is read as null: the
+   *  recorder refuses to write one and its README calls such a record not
+   *  discountable at all, and read as a real value it matches a legacy ledger row
+   *  whose own `cwd` is "", excluding spend nothing replaced. */
   cwd: string | null;
   supersededRunId: string;
+}
+
+/**
+ * What one read of the sidecar found.
+ *
+ * The records alone are not enough, and that is the whole reason this type
+ * exists. `[]` from a missing file and `[]` from a permission error are the same
+ * value, and both make the report say "nothing was superseded" — silently
+ * restoring the double-count #81 removed, in the direction that over-states
+ * savings. `readLedger` has the same never-throw contract and its consumer
+ * (`providers/index.ts`) adds exactly this back; this is that half, at the source.
+ */
+export interface EscalationRead {
+  records: Escalation[];
+  /** The path actually read, so the report never names a path it did not consult. */
+  path: string;
+  /** false when there is no file at `path` at all. */
+  exists: boolean;
+  /** Non-null when the file is there and could not be read — permission, a
+   *  directory at the path, a decoding failure. */
+  readError: string | null;
+  /** Non-empty lines that yielded no record. Counted rather than dropped, so a
+   *  format change upstream is visible instead of quietly halving the exclusions. */
+  skippedLines: number;
 }
 
 /** The recorder's default look-back for "this label already burned two
@@ -43,9 +72,12 @@ export const DEFAULT_ATTEMPT_GAP_SECONDS = 14400;
 export function resolveAttemptGapSeconds(): number {
   const raw = process.env["OLLAMA_ATTEMPT_GAP"];
   if (raw === undefined) return DEFAULT_ATTEMPT_GAP_SECONDS;
-  if (!/^[0-9]+$/.test(raw)) return DEFAULT_ATTEMPT_GAP_SECONDS;
-  const n = Number(raw);
-  return n > 0 ? n : DEFAULT_ATTEMPT_GAP_SECONDS;
+  const n = /^[0-9]+$/.test(raw) ? Number(raw) : NaN;
+  if (Number.isFinite(n) && n > 0) return n;
+  process.stderr.write(
+    `warn: OLLAMA_ATTEMPT_GAP=${JSON.stringify(raw)} is not a positive integer — using ${DEFAULT_ATTEMPT_GAP_SECONDS}\n`,
+  );
+  return DEFAULT_ATTEMPT_GAP_SECONDS;
 }
 
 /**
@@ -71,36 +103,47 @@ export function resolveEscalationsPath(override?: string): string {
  * are skipped, matching the ledger reader so one bad append cannot blind the
  * report.
  */
-export function readEscalations(path?: string): Escalation[] {
+export function readEscalations(path?: string): EscalationRead {
   const p = resolveEscalationsPath(path);
-  if (!existsSync(p)) return [];
+  if (!existsSync(p)) {
+    return { records: [], path: p, exists: false, readError: null, skippedLines: 0 };
+  }
   let raw: string;
-  try { raw = readFileSync(p, "utf8"); } catch { return []; }
+  try {
+    raw = readFileSync(p, "utf8");
+  } catch (e) {
+    return {
+      records: [], path: p, exists: true, skippedLines: 0,
+      readError: e instanceof Error ? e.message : String(e),
+    };
+  }
 
   const out: Escalation[] = [];
+  let skipped = 0;
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     let o: unknown;
-    try { o = JSON.parse(trimmed); } catch { continue; }
-    if (o === null || typeof o !== "object" || Array.isArray(o)) continue;
+    try { o = JSON.parse(trimmed); } catch { skipped++; continue; }
+    if (o === null || typeof o !== "object" || Array.isArray(o)) { skipped++; continue; }
     const r = o as Record<string, unknown>;
     const runId = r["superseded_run_id"];
     const epoch = r["epoch"];
     // Both are required to exclude anything. A record missing either names no
     // run or sits at no point in time, so it can only be skipped — never
     // widened into "supersedes every run with this label".
-    if (typeof runId !== "string" || runId === "") continue;
-    if (typeof epoch !== "number" || !isFinite(epoch)) continue;
+    if (typeof runId !== "string" || runId === "") { skipped++; continue; }
+    if (typeof epoch !== "number" || !isFinite(epoch)) { skipped++; continue; }
+    const cwd = strOrNull(r["cwd"]);
     out.push({
-      ts: typeof r["ts"] === "string" ? (r["ts"] as string) : null,
+      ts: strOrNull(r["ts"]),
       epoch,
-      label: typeof r["label"] === "string" ? (r["label"] as string) : null,
-      spec: typeof r["spec"] === "string" ? (r["spec"] as string) : null,
-      to: typeof r["to"] === "string" ? (r["to"] as string) : null,
-      cwd: typeof r["cwd"] === "string" ? (r["cwd"] as string) : null,
+      label: strOrNull(r["label"]),
+      spec: strOrNull(r["spec"]),
+      to: strOrNull(r["to"]),
+      cwd: cwd === "" ? null : cwd,
       supersededRunId: runId,
     });
   }
-  return out;
+  return { records: out, path: p, exists: true, readError: null, skippedLines: skipped };
 }

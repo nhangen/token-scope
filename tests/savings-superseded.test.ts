@@ -2,7 +2,7 @@ import { describe, expect, it, beforeAll, afterAll } from "bun:test";
 import { createReader } from "@/reader";
 import type { Reader } from "@/reader";
 import { renderSavingsReport, DEFAULT_COUNTERFACTUAL_MODEL } from "@/reports/savings";
-import { mkdtempSync } from "fs";
+import { mkdtempSync, writeFileSync, chmodSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -12,10 +12,33 @@ const ESCALATIONS = new URL("./fixtures/escalations/escalations.jsonl", import.m
 const NO_ESCALATIONS = new URL("./fixtures/escalations/does-not-exist.jsonl", import.meta.url).pathname;
 
 const EMPTY_DIR = mkdtempSync(join(tmpdir(), "ts-savings-empty-"));
+const EDGE_LEDGER = new URL("./fixtures/ledger/runs-superseded-edges.jsonl", import.meta.url).pathname;
+const EDGE_ESC = new URL("./fixtures/escalations/escalations-edges.jsonl", import.meta.url).pathname;
+const UNATTR_LEDGER = new URL("./fixtures/ledger/runs-superseded-unattr.jsonl", import.meta.url).pathname;
 
 let reader: Reader;
-beforeAll(() => { reader = createReader({ source: "jsonl", projectsDirs: [SPEND_DIR] }); });
-afterAll(() => { reader.close(); });
+// resolveAttemptGapSeconds reads live process.env at render time, so the window
+// these fixtures are built against is a third input the fixtures do not pin.
+// Exporting OLLAMA_ATTEMPT_GAP=200000 turned 9 of 13 of these red on correct code.
+let savedGap: string | undefined;
+beforeAll(() => {
+  savedGap = process.env["OLLAMA_ATTEMPT_GAP"];
+  delete process.env["OLLAMA_ATTEMPT_GAP"];
+  reader = createReader({ source: "jsonl", projectsDirs: [SPEND_DIR] });
+});
+afterAll(() => {
+  reader.close();
+  if (savedGap === undefined) delete process.env["OLLAMA_ATTEMPT_GAP"];
+  else process.env["OLLAMA_ATTEMPT_GAP"] = savedGap;
+});
+
+function capErr(fn: () => void): string {
+  const lines: string[] = [];
+  const orig = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: unknown) => { lines.push(String(chunk)); return true; }) as typeof process.stderr.write;
+  try { fn(); } finally { process.stderr.write = orig; }
+  return lines.join("");
+}
 
 function capture(fn: () => void): string {
   const lines: string[] = [];
@@ -30,6 +53,12 @@ const base = {
   ledgerPath: LEDGER, counterfactualModel: DEFAULT_COUNTERFACTUAL_MODEL,
 };
 const withEsc = { ...base, escalationsPath: ESCALATIONS };
+// sinceStr "30d" means no floor is applied, which this fixture needs: a --since
+// floor drops undatable rows from the report entirely (#50), and one of these
+// rows exists to prove an undatable run STAYS in the counterfactual.
+const edge = {
+  ...base, sinceStr: "30d", ledgerPath: EDGE_LEDGER, escalationsPath: EDGE_ESC, byLabel: true,
+};
 const withoutEsc = { ...base, escalationsPath: NO_ESCALATIONS };
 
 // The ledger fixture's seven rows, against three escalation records all stamped
@@ -56,6 +85,9 @@ describe("renderSavingsReport — superseded (escalated) runs", () => {
     expect(s.superseded_run_count).toBe(2);
     expect(s.superseded_input).toBe(SUPERSEDED_IN);
     expect(s.superseded_output).toBe(SUPERSEDED_OUT);
+    expect(p.escalations_path).toBe(ESCALATIONS);
+    expect(p.escalations_status).toBe("ok");
+    expect(p.attempt_gap_seconds).toBe(14400);
     expect(p.totals.superseded_run_count).toBe(2);
     expect(p.totals.superseded_input).toBe(SUPERSEDED_IN);
     expect(p.totals.superseded_output).toBe(SUPERSEDED_OUT);
@@ -82,8 +114,13 @@ describe("renderSavingsReport — superseded (escalated) runs", () => {
     // author:603 has an escalation in window with a matching cwd, but the run
     // itself completed and verified. An escalation names the failed attempts it
     // replaced; excluding a successful run would delete real saved work.
-    const p = JSON.parse(capture(() => renderSavingsReport(reader, withEsc)));
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...withEsc, byLabel: true })));
     expect(p.totals.superseded_run_count).toBe(2);
+    // Name the row, or the arm is a copy of the previous assertion and deleting
+    // author:603 from the fixture costs it nothing.
+    const l603 = p.by_label.find((x: any) => x.label === "603");
+    expect(l603.superseded_run_count).toBe(0);
+    expect(l603.author_input).toBe(5000);
   });
 
   it("keeps superseded volume in the totals so no spend is hidden", () => {
@@ -117,17 +154,30 @@ describe("renderSavingsReport — superseded (escalated) runs", () => {
     // none, so a ledger nothing superseded reports byte-identically to before.
     const p = JSON.parse(capture(() => renderSavingsReport(reader, withoutEsc)));
     expect(p.totals.superseded_run_count).toBeUndefined();
-    expect(p.totals.escalations_path).toBeUndefined();
     expect(p.totals.unverified_run_count).toBe(5);
+    // escalations_path is top-level beside ledger_path, NOT inside totals, and it
+    // is emitted even here — naming the sidecar that was consulted and came back
+    // empty is the only thing separating "nothing was superseded" from "the file
+    // was not there". An earlier version of this arm read p.totals.escalations_path,
+    // a key that is undefined in both branches, so it passed with the whole spread
+    // deleted.
+    expect(p.escalations_path).toBe(NO_ESCALATIONS);
+    expect(p.escalations_status).toBe("absent");
+    expect(p.attempt_gap_seconds).toBe(14400);
     expect(p.totals.ollama_input).toBe(TOTAL_IN);
   });
 
   it("skips a malformed escalation line and one with no superseded_run_id", () => {
     // The fixture leads with an unparseable line and ends with a record naming no
-    // run. Neither may match anything, and the bad first line may not cost the
-    // three good records that follow it.
+    // run. The parse itself is asserted in escalations.test.ts, where deleting
+    // either line actually fails; here the point is that the report SAYS so
+    // rather than absorbing the loss into a smaller exclusion.
     const p = JSON.parse(capture(() => renderSavingsReport(reader, withEsc)));
     expect(p.totals.superseded_run_count).toBe(2);
+    expect(p.escalations_records).toBe(3);
+    expect(p.escalations_skipped_lines).toBe(2);
+    const out = capture(() => renderSavingsReport(reader, { ...withEsc, json: false }));
+    expect(out).toMatch(/2 line\(s\) in .* yielded no record/);
   });
 
   it("footnotes the exclusion in text mode", () => {
@@ -165,6 +215,86 @@ describe("renderSavingsReport — superseded (escalated) runs", () => {
     } finally { empty.close(); }
   });
 
+  it("nulls the removed figure when superseded runs are all unattributed", () => {
+    // The guard used to ask whether ANY group was attributed, not whether any
+    // SUPERSEDED volume was. With one attributed session that superseded nothing
+    // and the superseded runs sitting in the unattributed bucket, the sum over
+    // attributed groups is an empty 0 and the footnote printed the confident
+    // "Excluding them removed $0.0000" the comment one line above forbids.
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, withEsc)));
+    expect(p.totals.counterfactual_usd).not.toBeNull();
+    const unattributed = { ...withEsc, ledgerPath: UNATTR_LEDGER };
+    const q = JSON.parse(capture(() => renderSavingsReport(reader, unattributed)));
+    expect(q.totals.superseded_run_count).toBe(2);
+    expect(q.totals.superseded_excluded_usd).toBeNull();
+    const out = capture(() => renderSavingsReport(reader, { ...unattributed, json: false }));
+    expect(out).toContain("Superseded by an escalation");
+    expect(out).not.toContain("Excluding them removed");
+  });
+
+  it("counts escalation records that matched nothing", () => {
+    // cwd equality is the strictest of the four conditions and the likeliest to
+    // drift — a renamed worktree breaks every record naming it, forever and
+    // invisibly, and the double-count comes back with no footnote. Counting is
+    // what `undatableRuns` already does for the same reason.
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, edge)));
+    expect(p.escalations_records).toBe(5);
+    expect(p.escalations_skipped_lines).toBe(1);
+    expect(p.escalations_unmatched).toBe(4);
+    const out = capture(() => renderSavingsReport(reader, { ...edge, json: false }));
+    expect(out).toMatch(/4 of 5 escalation record\(s\) matched no run/);
+  });
+
+  it("includes both window boundaries and excludes one second past", () => {
+    // 07:00:00 is exactly epoch-gap and 11:00:00 is exactly epoch; 06:59:59 is one
+    // second outside. Without a row on each edge the window SIZE is unpinned —
+    // 14400 could be anything in [7200, 180000) and the suite stays green.
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, edge)));
+    expect(p.totals.superseded_run_count).toBe(2);
+    expect(p.totals.superseded_input).toBe(1000 + 2000);
+  });
+
+  it("leaves an undatable run in the counterfactual", () => {
+    // README ships this as a guarantee. A run with no timestamp cannot be placed
+    // in the window, and over-stating the saving beats inventing an exclusion.
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, edge)));
+    const l701 = p.by_label.find((x: any) => x.label === "701");
+    expect(l701.superseded_run_count).toBe(0);
+    expect(l701.author_input).toBe(8000);
+  });
+
+  it("never supersedes on a record with no epoch, no cwd, or an empty cwd", () => {
+    // 702 has no epoch, 703 no cwd, 704 an empty cwd matching a legacy ledger row
+    // whose own cwd is "". Each guard's absence widens a record into "supersedes
+    // every run with this label".
+    const p = JSON.parse(capture(() => renderSavingsReport(reader, edge)));
+    for (const label of ["702", "703", "704"]) {
+      const row = p.by_label.find((x: any) => x.label === label);
+      expect(row.superseded_run_count).toBe(0);
+    }
+  });
+
+  it("warns when an explicitly-named sidecar is not there", () => {
+    const err = capErr(() => renderSavingsReport(reader, { ...withoutEsc, json: false }));
+    expect(err).toContain("does-not-exist.jsonl");
+  });
+
+  it("warns when the sidecar is there and cannot be read", () => {
+    // The loudest case, and the one with no benign reading: the file exists, so
+    // this is not "you never delegated" — it is a subtraction that did not happen.
+    const dir = mkdtempSync(join(tmpdir(), "ts-savings-unreadable-"));
+    const p = join(dir, "escalations.jsonl");
+    writeFileSync(p, '{"epoch":1783508400,"superseded_run_id":"author:601","cwd":"/w/601"}\n');
+    chmodSync(p, 0o000);
+    try {
+      const err = capErr(() => renderSavingsReport(reader, { ...base, escalationsPath: p, json: false }));
+      expect(err).toContain("could not read");
+      expect(err).toContain(p);
+      const out = JSON.parse(capture(() => renderSavingsReport(reader, { ...base, escalationsPath: p })));
+      expect(out.escalations_status).toBe("unreadable");
+    } finally { chmodSync(p, 0o600); }
+  });
+
   it("breaks superseded runs out by label", () => {
     const p = JSON.parse(capture(() => renderSavingsReport(reader, { ...withEsc, byLabel: true })));
     const l601 = p.by_label.find((x: any) => x.label === "601");
@@ -176,5 +306,39 @@ describe("renderSavingsReport — superseded (escalated) runs", () => {
     expect(l601.author_output).toBe(900 + 600);
     const l600 = p.by_label.find((x: any) => x.label === "600");
     expect(l600.superseded_run_count).toBe(0);
+  });
+});
+
+// Production entry point: parseArgs tests prove the flag is read into args, not
+// that main() ever hands it to the report. A dropped assignment between the two
+// typechecks clean, and the whole feature would be inert.
+describe("--escalations end to end", () => {
+  const ROOT = join(new URL(".", import.meta.url).pathname, "..");
+  const CLI = join(ROOT, "src", "cli.ts");
+
+  function run(extra: string[]) {
+    const proc = Bun.spawnSync(["bun", CLI, "--savings", "--ledger", LEDGER, ...extra], {
+      cwd: ROOT,
+      env: { ...process.env, OLLAMA_ATTEMPT_GAP: "", OLLAMA_AGENT_ESCALATIONS: "" },
+      stdout: "pipe", stderr: "pipe",
+    });
+    return { code: proc.exitCode, out: proc.stdout.toString(), err: proc.stderr.toString() };
+  }
+
+  it("excludes superseded runs when run as a command", () => {
+    const r = run(["--escalations", ESCALATIONS, "--json"]);
+    expect(r.code).toBe(0);
+    const p = JSON.parse(r.out);
+    expect(p.escalations_path).toBe(ESCALATIONS);
+    expect(p.totals.superseded_run_count).toBe(2);
+    expect(p.totals.superseded_input).toBe(SUPERSEDED_IN);
+  });
+
+  it("excludes nothing, and says why, without the flag", () => {
+    const r = run(["--json"]);
+    expect(r.code).toBe(0);
+    const p = JSON.parse(r.out);
+    expect(p.totals.superseded_run_count).toBeUndefined();
+    expect(p.escalations_status).toBe("absent");
   });
 });

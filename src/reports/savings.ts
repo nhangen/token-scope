@@ -1,6 +1,6 @@
 import type { Reader } from "@/reader";
 import { readLedger, resolveLedgerPath, type LedgerRun } from "@/ledger";
-import { readEscalations, resolveEscalationsPath, resolveAttemptGapSeconds, type Escalation } from "@/escalations";
+import { readEscalations, resolveAttemptGapSeconds, type Escalation } from "@/escalations";
 import { getPricing } from "@/pricing";
 import { tsMs } from "@/providers/types";
 import {
@@ -201,28 +201,44 @@ function isUnverifiedRow(r: LedgerRun): boolean {
  * counterfactual. That over-states the saving, which is the direction that does
  * not invent an exclusion out of a field that is not there.
  */
-function makeIsSuperseded(escalations: Escalation[], gapSeconds: number): (r: LedgerRun) => boolean {
-  if (escalations.length === 0) return () => false;
-  const byRunId = new Map<string, Escalation[]>();
-  for (const e of escalations) {
+function makeIsSuperseded(escalations: Escalation[], gapSeconds: number): {
+  test: (r: LedgerRun) => boolean;
+  unmatched: () => number;
+} {
+  const matched = new Set<number>();
+  if (escalations.length === 0) return { test: () => false, unmatched: () => 0 };
+  const byRunId = new Map<string, { e: Escalation; i: number }[]>();
+  escalations.forEach((e, i) => {
     const arr = byRunId.get(e.supersededRunId);
-    if (arr) arr.push(e); else byRunId.set(e.supersededRunId, [e]);
-  }
+    if (arr) arr.push({ e, i }); else byRunId.set(e.supersededRunId, [{ e, i }]);
+  });
   const gapMs = gapSeconds * 1000;
-  return (r: LedgerRun): boolean => {
+  const test = (r: LedgerRun): boolean => {
+    // Three of the four early exits keep the run in the counterfactual, and all
+    // three over-state the saving rather than inventing an exclusion — the
+    // deliberate direction. Two are worth naming because they are not obvious:
+    //   - `r.cwd === null` — a legacy row with no worktree can never be matched.
+    //   - `unverifiedKindOf(r) === null` on a row whose reason/completed/verified
+    //     are all unrecorded. The ledger defines that as "not recorded — never a
+    //     claim about the run", and this reads it as "succeeded".
     if (r.runId === null || r.cwd === null) return false;
     const matches = byRunId.get(r.runId);
     if (matches === undefined) return false;
     if (unverifiedKindOf(r) === null) return false;
     const ms = tsMs(r);
     if (ms === null) return false;
-    for (const e of matches) {
+    let hit = false;
+    for (const { e, i } of matches) {
       if (e.cwd === null || e.cwd !== r.cwd) continue;
       const at = e.epoch * 1000;
-      if (ms <= at && ms >= at - gapMs) return true;
+      // Every matching record is marked, not just the first: the unmatched count
+      // below is "records that excluded nothing", and stopping at the first hit
+      // would report a record as unmatched because a sibling got there first.
+      if (ms <= at && ms >= at - gapMs) { matched.add(i); hit = true; }
     }
-    return false;
+    return hit;
   };
+  return { test, unmatched: () => escalations.length - matched.size };
 }
 
 function tallyKinds(rows: LedgerRun[]): { counts: Record<UnverifiedKind, number>; tokens: Record<UnverifiedKind, { input: number; output: number }>; otherReasons: Set<string> } {
@@ -395,9 +411,24 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     });
   }
 
-  const escalationsPath = resolveEscalationsPath(opts.escalationsPath);
   const attemptGapSeconds = resolveAttemptGapSeconds();
-  const isSuperseded = makeIsSuperseded(readEscalations(opts.escalationsPath), attemptGapSeconds);
+  const escRead = readEscalations(opts.escalationsPath);
+  // One resolution, used for both the read and the reported path — computing them
+  // independently lets the report name a file it did not consult.
+  const escalationsPath = escRead.path;
+  const escalationsStatus = escRead.readError !== null ? "unreadable" : escRead.exists ? "ok" : "absent";
+  // Silence is defensible only for the DEFAULT path being absent. A path someone
+  // typed is an assertion that the file is there, and a file that is there and
+  // unreadable is never routine.
+  const escalationsNamed = opts.escalationsPath !== undefined
+    || (process.env["OLLAMA_AGENT_ESCALATIONS"] ?? "") !== "";
+  if (escRead.readError !== null) {
+    process.stderr.write(`warn: could not read ${escalationsPath} (${escRead.readError}) — escalated runs are still priced as savings\n`);
+  } else if (!escRead.exists && escalationsNamed) {
+    process.stderr.write(`warn: no escalation sidecar at ${escalationsPath} — nothing will be excluded from the counterfactual\n`);
+  }
+  const supersededMatcher = makeIsSuperseded(escRead.records, attemptGapSeconds);
+  const isSuperseded = supersededMatcher.test;
 
   const counterfactualPriced = getPricing(opts.counterfactualModel) !== null;
 
@@ -567,12 +598,20 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   // Null, not 0, when nothing is attributed: the figure this was removed FROM is
   // unavailable there, and summing an empty set gives a confident $0.0000 that
   // reads as "the exclusion changed nothing" when it changed everything.
-  const supersededExcluded = attributedGroups.length === 0 ? null : valueAtClaudePricesCached(
+  const attrSupersededRuns = attributedGroups.reduce((s, g) => s + g.supersededRunCount, 0);
+  // Keyed on the superseded volume that is actually IN the counterfactual's own
+  // set, not on whether any group is attributed at all. `totalSupersededRuns`
+  // spans every group including the unattributed bucket, so one attributed
+  // session that superseded nothing used to make this an empty-sum 0 rather than
+  // null — and the footnote then printed the confident "$0.0000 removed" the
+  // comment above forbids.
+  const supersededExcluded = attrSupersededRuns === 0 ? null : valueAtClaudePricesCached(
     attributedGroups.reduce((s, g) => s + g.supersededUncachedInput, 0),
     attributedGroups.reduce((s, g) => s + g.supersededCachedInput, 0),
     attributedGroups.reduce((s, g) => s + g.supersededOutput, 0),
     opts.counterfactualModel,
   );
+  const escalationsUnmatched = supersededMatcher.unmatched();
   const unattributedRuns = groups.filter((g) => !g.attributed).reduce((s, g) => s + g.runCount, 0);
   // Ledger-wide cached input: the "Input priced" disclosure line is a disclosure,
   // not an arithmetic component — it should appear whenever the ledger has any
@@ -721,7 +760,16 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       meta: { generated_at: new Date().toISOString(), token_scope_version: VERSION },
       report: "savings",
       ledger_path: ledgerPath,
-      ...(totalSupersededRuns > 0 ? { escalations_path: escalationsPath, attempt_gap_seconds: attemptGapSeconds } : {}),
+      // Unconditional, like ledger_path. These are the only fields that separate
+      // "the sidecar said nothing was superseded" from "the sidecar was missing,
+      // unreadable, or read with the wrong window" — gating them on a non-zero
+      // result suppressed them in exactly the case they exist for.
+      escalations_path: escalationsPath,
+      escalations_status: escalationsStatus,
+      escalations_records: escRead.records.length,
+      escalations_skipped_lines: escRead.skippedLines,
+      escalations_unmatched: escalationsUnmatched,
+      attempt_gap_seconds: attemptGapSeconds,
       counterfactual_model: opts.counterfactualModel,
       counterfactual_priced: counterfactualPriced,
       since_floor_applied: sinceFloorApplied,
@@ -917,6 +965,12 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       ? ` That is ${formatUsd(failedShare)} of the ${formatUsd(counterfactualAttributed)} counterfactual — ${Math.round(failedShare / counterfactualAttributed * 100)}% of the priced figure bought nothing (a floor, since crashed runs are in neither figure).`
       : "";
     console.log(renderFootnote(`Authoring runs that did not succeed (hit the turn cap, or failed their verify command) are INCLUDED in the counterfactual — the tokens were really spent, and Claude would have paid for a wrong first try too — but reported separately so failed work is not hidden in the total. A run that CRASHED is not counted here and is not in the ledger at all — the bridge writes its row after the failure path has already returned (nhangen/claude-ceo#328), so its tokens are missing from every figure on this report.${sharePct}`));
+  }
+  if (escalationsUnmatched > 0) {
+    console.log(renderFootnote(`${escalationsUnmatched} of ${escRead.records.length} escalation record(s) matched no run in this ledger, so nothing was excluded for them. A record matches on superseded_run_id AND cwd, so the usual cause is a worktree that moved or was renamed after the escalation — which restores the double-count silently. Read ${escalationsPath} against the run_id and cwd values in the ledger.`));
+  }
+  if (escRead.skippedLines > 0) {
+    console.log(renderFootnote(`${escRead.skippedLines} line(s) in ${escalationsPath} yielded no record — unparseable, or missing superseded_run_id or epoch. Neither field can be guessed, so those escalations excluded nothing.`));
   }
   if (totalSupersededRuns > 0) {
     const removed = supersededExcluded !== null

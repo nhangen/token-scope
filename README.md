@@ -213,14 +213,31 @@ A ledger run is **superseded** when a record names its `run_id`, ran in the same
 run itself failed, and it falls in the `OLLAMA_ATTEMPT_GAP` window (default 4h) before the
 record. All four matter: a label is a ticket number and gets reused, a later run on the same
 ticket that *succeeded* saved real work, and a run outside the window belongs to an earlier
-cycle. A run with no timestamp cannot be placed in the window and stays in the counterfactual
-— over-stating the saving rather than inventing an exclusion.
+cycle. Three shapes cannot be decided and all three stay in the counterfactual, over-stating the
+saving rather than inventing an exclusion: a run with no timestamp, a legacy run with no
+`cwd`, and a run whose `reason`/`completed`/`verified` are all unrecorded (the ledger
+defines that as "not recorded — never a claim about the run", and the matcher reads it as
+"succeeded"). A record with an empty `cwd` is read as having none, so it matches nothing —
+the recorder refuses to write one and calls such a record not discountable at all.
 
 Superseded runs are **excluded from the counterfactual** — unlike runs that merely failed,
 which stay in it and are footnoted — but their tokens remain in the ledger totals, so no
 spend is hidden. `--json` adds `superseded_run_count`, `superseded_input`,
 `superseded_output`, and `superseded_excluded_usd` (the dollar figure the exclusion removed)
-whenever the report found any. With no sidecar, output is unchanged.
+whenever the report found any.
+
+**A sidecar that fails to load is never reported as one that legitimately held nothing.**
+That distinction is the whole point of the feature: both produce zero exclusions, and zero
+exclusions is a full, confident, wrong counterfactual — the double-count #81 removed, back
+again. So `--json` always carries `escalations_path`, `escalations_status`
+(`ok`/`absent`/`unreadable`), `escalations_records`, `escalations_skipped_lines`,
+`escalations_unmatched`, and `attempt_gap_seconds`, whether or not anything was superseded.
+An unreadable file warns on stderr; so does a missing file whose path you named yourself,
+since a path you typed is an assertion that it is there.
+
+Records that matched no run are footnoted rather than dropped. Matching keys on `cwd` as
+well as `run_id`, so a worktree that moved after the escalation breaks every record naming
+it — silently restoring the double-count if nothing counts the misses.
 
 A **positive net means delegation saved money.** Note the economics: for a *small* task the
 counterfactual is tiny, so a single expensive PM turn can exceed it (net negative) — delegation
