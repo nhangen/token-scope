@@ -107,6 +107,19 @@ describe("parseArgs --savings", () => {
     expect(stderrBuf).toContain("--escalations requires a path");
   });
 
+  it("rejects a flag where --escalations wants a path", () => {
+    // It used to take "--json" as the path, swallow the flag, find no sidecar
+    // there, and print a human-readable report with nothing excluded — three
+    // wrong things, none of them announced.
+    expect(() => parseArgs(["--savings", "--escalations", "--json"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("--escalations requires a path");
+  });
+
+  it("rejects a flag where --ledger wants a path", () => {
+    expect(() => parseArgs(["--savings", "--ledger", "--json"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("--ledger requires a path");
+  });
+
   it("rejects --ledger without --savings", () => {
     expect(() => parseArgs(["--ledger", "/l.jsonl"])).toThrow("__exit_1");
     expect(stderrBuf).toContain("only valid with --savings");

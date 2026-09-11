@@ -81,6 +81,10 @@ SAVINGS FLAGS (with --savings)
                           $XDG_STATE_HOME/ollama-agent/escalations.jsonl). Runs
                           it names are excluded from the counterfactual: a
                           higher-tier author was billed for the same job.
+                          OLLAMA_ATTEMPT_GAP (seconds, default 14400) sets how
+                          far back of a record each escalation reaches; it must
+                          match the recorder or the two disagree about which
+                          runs a record covers.
   --counterfactual-model <id>  Claude model to price the counterfactual against
                           (default: claude-opus-4-8). --session scopes to one
                           delegation session; --since floors by ledger timestamp.
@@ -174,6 +178,25 @@ export function parseTurnRange(raw: string): { from?: number; to?: number } {
   return { from, to };
 }
 
+
+/**
+ * Reads a path-valued flag's argument.
+ *
+ * Rejects a value that looks like another flag. `--escalations --json` used to
+ * take the literal string "--json" as the path, swallow the flag, and then find
+ * no sidecar there — so you got a human-readable report with nothing excluded and
+ * no indication either thing had happened. A path beginning with "--" is not a
+ * real path anyone means.
+ */
+function pathValue(argv: string[], i: number, flag: string): string {
+  const v = argv[i];
+  if (!v || v.startsWith("--")) {
+    process.stderr.write(`Error: ${flag} requires a path argument.\n`);
+    process.exit(1);
+  }
+  return v;
+}
+
 export function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = { mode: "summary", since: "30d", limit: 20, json: false, projectsDirs: [], contextLoopSections: [] };
   let modeSet = false;
@@ -207,15 +230,11 @@ export function parseArgs(argv: string[]): CliArgs {
         else setMode("savings");
         break;
       case "--ledger": {
-        const v = argv[++i];
-        if (!v) { process.stderr.write("Error: --ledger requires a path argument.\n"); process.exit(1); }
-        args.ledgerPath = v;
+        args.ledgerPath = pathValue(argv, ++i, "--ledger");
         break;
       }
       case "--escalations": {
-        const v = argv[++i];
-        if (!v) { process.stderr.write("Error: --escalations requires a path argument.\n"); process.exit(1); }
-        args.escalationsPath = v;
+        args.escalationsPath = pathValue(argv, ++i, "--escalations");
         break;
       }
       case "--counterfactual-model": {
