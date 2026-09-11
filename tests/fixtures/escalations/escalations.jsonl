@@ -1,0 +1,5 @@
+not json at all
+{"ts": "2026-07-08T11:00:00Z", "epoch": 1783508400, "label": "601", "spec": "abc123", "to": "claude-sonnet-5", "cwd": "/w/601", "superseded_run_id": "author:601"}
+{"ts": "2026-07-08T11:00:00Z", "epoch": 1783508400, "label": "602", "spec": "def456", "to": "claude-sonnet-5", "cwd": "/w/602", "superseded_run_id": "author:602"}
+{"ts": "2026-07-08T11:00:00Z", "epoch": 1783508400, "label": "603", "spec": "ghi789", "to": "claude-sonnet-5", "cwd": "/w/603", "superseded_run_id": "author:603"}
+{"ts": "2026-07-08T11:00:00Z", "epoch": 1783508400, "label": "604", "spec": "jkl012", "to": "claude-sonnet-5", "cwd": "/w/604"}

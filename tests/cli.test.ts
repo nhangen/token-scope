@@ -92,6 +92,21 @@ describe("parseArgs --savings", () => {
     expect(a.counterfactualModel).toBe("claude-sonnet-5");
   });
 
+  it("accepts --escalations with --savings", () => {
+    const a = parseArgs(["--savings", "--escalations", "/e.jsonl"]);
+    expect(a.escalationsPath).toBe("/e.jsonl");
+  });
+
+  it("rejects --escalations without --savings", () => {
+    expect(() => parseArgs(["--escalations", "/e.jsonl"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("only valid with --savings");
+  });
+
+  it("rejects --escalations with no path argument", () => {
+    expect(() => parseArgs(["--savings", "--escalations"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("--escalations requires a path");
+  });
+
   it("rejects --ledger without --savings", () => {
     expect(() => parseArgs(["--ledger", "/l.jsonl"])).toThrow("__exit_1");
     expect(stderrBuf).toContain("only valid with --savings");

@@ -134,6 +134,11 @@ const PARSE_EXEMPT = new Set([
   "ledger/runs.jsonl",
   // providers.test.ts:16 ("skips torn lines") — same role for transcript files.
   "providers/claude-sample.jsonl",
+  // savings-superseded.test.ts ("skips a malformed escalation line and one with
+  // no superseded_run_id") — the escalations reader has the same never-fail
+  // contract as the ledger's, and this file is what proves one bad append does
+  // not cost the records around it.
+  "escalations/escalations.jsonl",
 ]);
 
 function walkJsonl(dir: string): string[] {

@@ -157,6 +157,7 @@ token-scope --savings --counterfactual-model claude-sonnet-5   # value against a
 token-scope --savings --session be299042 --pm-turns 4..9   # net vs. just the delegation's PM turns
 token-scope --savings --session be299042 --pm-cost 0.87    # net vs. a measured PM figure (subagent PM)
 token-scope --savings --ledger /path/to/runs.jsonl     # explicit ledger location
+token-scope --savings --escalations /path/to/escalations.jsonl  # explicit escalation sidecar
 ```
 
 Answers the "did delegating authorship to a local ollama model actually save money?"
@@ -190,6 +191,36 @@ Net = Counterfactual − PM overhead
   **`--pm-cost <usd>`** (requires `--session`, mutually exclusive with `--pm-turns`). The
   report takes the figure on trust and labels the scope `measured (caller)`. Because no
   transcript lookup happens, this also attributes sessions that ran on another machine.
+
+#### Escalated runs are not savings
+
+When a spec hits the turn cap twice, `ollama-delegate` no longer stops — it hands the same
+spec to a higher-tier author (a Sonnet subagent in Claude Code, `gpt-5.6-terra`/`-luna` in
+Codex). That author is billed for the job. Pricing the local attempts as "what Claude would
+have cost" then counts one job twice: once as a counterfactual saving and once as real spend.
+
+So token-scope reads a sidecar written by llm-tools'
+`~/.claude/scripts/ollama-record-escalation.sh`:
+
+```
+$XDG_STATE_HOME/ollama-agent/escalations.jsonl   (or $OLLAMA_AGENT_ESCALATIONS, or --escalations)
+```
+
+It is a sibling of `runs.jsonl` rather than a field on it — that file is written by
+claude-ceo's bridge, and a new field there risks the parsing this report depends on.
+
+A ledger run is **superseded** when a record names its `run_id`, ran in the same `cwd`, the
+run itself failed, and it falls in the `OLLAMA_ATTEMPT_GAP` window (default 4h) before the
+record. All four matter: a label is a ticket number and gets reused, a later run on the same
+ticket that *succeeded* saved real work, and a run outside the window belongs to an earlier
+cycle. A run with no timestamp cannot be placed in the window and stays in the counterfactual
+— over-stating the saving rather than inventing an exclusion.
+
+Superseded runs are **excluded from the counterfactual** — unlike runs that merely failed,
+which stay in it and are footnoted — but their tokens remain in the ledger totals, so no
+spend is hidden. `--json` adds `superseded_run_count`, `superseded_input`,
+`superseded_output`, and `superseded_excluded_usd` (the dollar figure the exclusion removed)
+whenever the report found any. With no sidecar, output is unchanged.
 
 A **positive net means delegation saved money.** Note the economics: for a *small* task the
 counterfactual is tiny, so a single expensive PM turn can exceed it (net negative) — delegation

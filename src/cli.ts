@@ -76,6 +76,11 @@ SPEND FLAGS (with --spend)
 SAVINGS FLAGS (with --savings)
   --ledger <path>         Ledger file to read (default: OLLAMA_AGENT_LEDGER env, else
                           $XDG_STATE_HOME/ollama-agent/runs.jsonl).
+  --escalations <path>    Escalation sidecar to read (default:
+                          OLLAMA_AGENT_ESCALATIONS env, else
+                          $XDG_STATE_HOME/ollama-agent/escalations.jsonl). Runs
+                          it names are excluded from the counterfactual: a
+                          higher-tier author was billed for the same job.
   --counterfactual-model <id>  Claude model to price the counterfactual against
                           (default: claude-opus-4-8). --session scopes to one
                           delegation session; --since floors by ledger timestamp.
@@ -140,6 +145,7 @@ interface CliArgs {
   artifactPath?: string;
   turnRange?: { from?: number; to?: number };
   ledgerPath?: string;
+  escalationsPath?: string;
   counterfactualModel?: string;
   pmTurnRange?: { from?: number; to?: number };
   pmCost?: number;
@@ -204,6 +210,12 @@ export function parseArgs(argv: string[]): CliArgs {
         const v = argv[++i];
         if (!v) { process.stderr.write("Error: --ledger requires a path argument.\n"); process.exit(1); }
         args.ledgerPath = v;
+        break;
+      }
+      case "--escalations": {
+        const v = argv[++i];
+        if (!v) { process.stderr.write("Error: --escalations requires a path argument.\n"); process.exit(1); }
+        args.escalationsPath = v;
         break;
       }
       case "--counterfactual-model": {
@@ -391,8 +403,8 @@ export function parseArgs(argv: string[]): CliArgs {
     process.exit(1);
   }
 
-  if ((args.ledgerPath || args.counterfactualModel) && args.mode !== "savings") {
-    process.stderr.write("Error: --ledger/--counterfactual-model are only valid with --savings.\n");
+  if ((args.ledgerPath || args.escalationsPath || args.counterfactualModel) && args.mode !== "savings") {
+    process.stderr.write("Error: --ledger/--escalations/--counterfactual-model are only valid with --savings.\n");
     process.exit(1);
   }
 
@@ -511,6 +523,7 @@ async function main() {
     renderSavingsReport(reader, {
       sessionId: args.sessionId, since, sinceStr: args.since, json: args.json,
       ledgerPath: args.ledgerPath,
+      escalationsPath: args.escalationsPath,
       counterfactualModel: args.counterfactualModel ?? DEFAULT_COUNTERFACTUAL_MODEL,
       pmTurnRange: args.pmTurnRange,
       pmCost: args.pmCost,
