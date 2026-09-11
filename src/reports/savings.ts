@@ -1,5 +1,6 @@
 import type { Reader } from "@/reader";
-import { readLedger, resolveLedgerPath, type LedgerRun } from "@/ledger";
+import { readLedgerWithStatus, type LedgerRun } from "@/ledger";
+import { readEscalations, resolveAttemptGapSeconds, type Escalation } from "@/escalations";
 import { getPricing } from "@/pricing";
 import { tsMs } from "@/providers/types";
 import {
@@ -18,6 +19,9 @@ interface SavingsOptions {
   sinceStr: string;
   json: boolean;
   ledgerPath?: string;
+  /** Path to the escalation sidecar (`escalations.jsonl`). Default resolution
+   *  mirrors the recorder's — see `resolveEscalationsPath`. */
+  escalationsPath?: string;
   counterfactualModel: string;
   /** When set (requires --session), PM overhead is scoped to this 1-indexed
    *  inclusive turn slice — the delegation's orchestration turns — instead of
@@ -170,6 +174,84 @@ function isUnverifiedRow(r: LedgerRun): boolean {
   return unverifiedKindOf(r) !== null;
 }
 
+/**
+ * Builds the "was this run superseded by an escalation?" predicate.
+ *
+ * `ollama-delegate` used to stop when the wrapper refused a third attempt on a
+ * spec that had hit the turn cap twice. It now hands the same spec to a
+ * higher-tier author. The local attempts it replaced are work Claude (or Codex)
+ * then actually did, so pricing them as "what Claude would have cost" counts
+ * one job twice — once as a counterfactual saving and once as real spend.
+ *
+ * Four conditions, and each one is load-bearing:
+ *
+ *  - **The record names the run.** `superseded_run_id` is `author:<label>`.
+ *  - **Same worktree.** A label is a ticket number and is reused, so the id
+ *    alone is not an identity; `cwd` is what pins a record to the attempts it
+ *    replaced.
+ *  - **The run failed.** An escalation names the attempts that did not land. A
+ *    later run on the same ticket that succeeded saved real work, and excluding
+ *    it would trade the double-count for an under-count.
+ *  - **Inside the window the escalation closed** — `[epoch - gap, epoch]`. The
+ *    wrapper's cap only looks back that far, so an older run belongs to an
+ *    earlier cycle that was resolved some other way, and a newer one is a fresh
+ *    attempt this escalation did not replace.
+ *
+ * A run with no timestamp cannot be placed in the window and is left in the
+ * counterfactual. That over-states the saving, which is the direction that does
+ * not invent an exclusion out of a field that is not there.
+ */
+function makeIsSuperseded(escalations: Escalation[], gapSeconds: number): {
+  test: (r: LedgerRun) => boolean;
+  /** Records that named no run in this ledger at all — NOT records that merely
+   *  excluded nothing. A record naming a run that succeeded is doing its job by
+   *  not firing, and counting it as unmatched fired the drift warning on the
+   *  happy path. */
+  unmatched: () => number;
+} {
+  const seen = new Set<number>();
+  if (escalations.length === 0) return { test: () => false, unmatched: () => 0 };
+  const byRunId = new Map<string, { e: Escalation; i: number }[]>();
+  escalations.forEach((e, i) => {
+    const arr = byRunId.get(e.supersededRunId);
+    if (arr) arr.push({ e, i }); else byRunId.set(e.supersededRunId, [{ e, i }]);
+  });
+  const gapMs = gapSeconds * 1000;
+  const test = (r: LedgerRun): boolean => {
+    // Three of the four early exits keep the run in the counterfactual, and all
+    // three over-state the saving rather than inventing an exclusion — the
+    // deliberate direction. Two are worth naming because they are not obvious:
+    //   - `r.cwd === null` — a legacy row with no worktree can never be matched.
+    //   - `unverifiedKindOf(r) === null` on a row whose reason/completed/verified
+    //     are all unrecorded. The ledger defines that as "not recorded — never a
+    //     claim about the run", and this reads it as "succeeded".
+    if (r.runId === null || r.cwd === null) return false;
+    const matches = byRunId.get(r.runId);
+    if (matches === undefined) return false;
+    // A record whose run is present but ineligible — it succeeded, or it cannot
+    // be dated — has still found its run. Mark it seen before returning, or the
+    // drift footnote fires on the design working as intended.
+    const eligible = unverifiedKindOf(r) !== null;
+    const ms = tsMs(r);
+    if (!eligible || ms === null) {
+      for (const { e, i } of matches) if (e.cwd !== null && e.cwd === r.cwd) seen.add(i);
+      return false;
+    }
+    let hit = false;
+    for (const { e, i } of matches) {
+      if (e.cwd === null || e.cwd !== r.cwd) continue;
+      const at = e.epoch * 1000;
+      // Every matching record is marked, not just the first: a record must not be
+      // reported as naming no run because a sibling record got there first.
+      if (ms <= at && ms >= at - gapMs) { seen.add(i); hit = true; }
+    }
+    return hit;
+  };
+  // `unmatched` is read after every surviving run has been tested. Reading it
+  // earlier would report every record as naming nothing.
+  return { test, unmatched: () => escalations.length - seen.size };
+}
+
 function tallyKinds(rows: LedgerRun[]): { counts: Record<UnverifiedKind, number>; tokens: Record<UnverifiedKind, { input: number; output: number }>; otherReasons: Set<string> } {
   const counts: Record<UnverifiedKind, number> = { "turn-cap": 0, "verify-failed": 0, conflict: 0, other: 0 };
   const tokens: Record<UnverifiedKind, { input: number; output: number }> = {
@@ -276,6 +358,11 @@ interface SessionGroup {
   unverifiedOtherReasons: Set<string>;
   unverifiedUncachedInput: number;
   unverifiedCachedInput: number;
+  supersededRunCount: number;
+  supersededInput: number;
+  supersededOutput: number;
+  supersededUncachedInput: number;
+  supersededCachedInput: number;
   /** Authoring input split by what Claude would have paid for it: `uncachedInput`
    *  at full input price, `cachedInput` at cache-read. They sum to authoring
    *  input. See `uncachedInputShare`. */
@@ -306,13 +393,21 @@ interface LabelAgg {
   unverifiedRunCount: number;
   unverifiedInput: number;
   unverifiedOutput: number;
+  supersededRunCount: number;
+  supersededInput: number;
+  supersededOutput: number;
 }
 
 const UNATTRIBUTED = "(unattributed)";
 
 export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void {
-  const ledgerPath = resolveLedgerPath(opts.ledgerPath);
-  let runs = readLedger(opts.ledgerPath);
+  const ledgerRead = readLedgerWithStatus(opts.ledgerPath);
+  const ledgerPath = ledgerRead.path;
+  const ledgerStatus = ledgerRead.readError !== null ? "unreadable" : ledgerRead.exists ? "ok" : "absent";
+  if (ledgerRead.readError !== null) {
+    process.stderr.write(`warn: could not read ${ledgerPath} (${ledgerRead.readError}) — every figure below is computed from zero runs\n`);
+  }
+  let runs = ledgerRead.runs;
 
   // --session scopes to one delegation session (prefix match).
   if (opts.sessionId) runs = runs.filter((r) => r.sessionId !== null && r.sessionId.startsWith(opts.sessionId!));
@@ -331,6 +426,25 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       return ms !== null && ms > cutoffMs;
     });
   }
+
+  const attemptGapSeconds = resolveAttemptGapSeconds();
+  const escRead = readEscalations(opts.escalationsPath);
+  // One resolution, used for both the read and the reported path — computing them
+  // independently lets the report name a file it did not consult.
+  const escalationsPath = escRead.path;
+  const escalationsStatus = escRead.readError !== null ? "unreadable" : escRead.exists ? "ok" : "absent";
+  // Silence is defensible only for the DEFAULT path being absent. A path someone
+  // typed is an assertion that the file is there, and a file that is there and
+  // unreadable is never routine.
+  const escalationsNamed = opts.escalationsPath !== undefined
+    || (process.env["OLLAMA_AGENT_ESCALATIONS"] ?? "") !== "";
+  if (escRead.readError !== null) {
+    process.stderr.write(`warn: could not read ${escalationsPath} (${escRead.readError}) — escalated runs are still priced as savings\n`);
+  } else if (!escRead.exists && escalationsNamed) {
+    process.stderr.write(`warn: no escalation sidecar at ${escalationsPath} — nothing will be excluded from the counterfactual\n`);
+  }
+  const supersededMatcher = makeIsSuperseded(escRead.records, attemptGapSeconds);
+  const isSuperseded = supersededMatcher.test;
 
   const counterfactualPriced = getPricing(opts.counterfactualModel) !== null;
 
@@ -367,7 +481,25 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     // Unverified authoring runs (verify never passed) are a separate
     // reporting axis only: they are authoring, so they stay in the
     // counterfactual exactly as today.
-    const groupUnverified = groupRuns.filter(isUnverifiedRow);
+    // Runs an escalation replaced. Excluded from the counterfactual entirely —
+    // unlike an unverified run, which stays in it — because the higher-tier
+    // author was then billed for the same job. Still in the ledger totals, the
+    // same way review and bench volume is, so no spend is hidden.
+    const groupSuperseded = groupRuns.filter(isSuperseded);
+    const supersededInput = groupSuperseded.reduce((s, r) => s + r.ollamaInputTokens, 0);
+    const supersededOutput = groupSuperseded.reduce((s, r) => s + r.ollamaOutputTokens, 0);
+    const supersededRunCount = groupSuperseded.length;
+    let supersededUncachedInput = 0, supersededCachedInput = 0;
+    for (const r of groupSuperseded) {
+      const split = splitCachedInput(r.ollamaInputTokens, r.turns);
+      supersededUncachedInput += split.uncached; supersededCachedInput += split.cached;
+    }
+
+    // A superseded run is by construction an unverified one, but it is no longer
+    // part of the counterfactual — and the unverified footnote prints a share OF
+    // that figure. Counting it in both makes the numerator price rows the
+    // denominator does not contain, the same defect #36 finding 2 fixed.
+    const groupUnverified = groupRuns.filter((r) => isUnverifiedRow(r) && !isSuperseded(r));
     const unverifiedInput = groupUnverified.reduce((s, r) => s + r.ollamaInputTokens, 0);
     const unverifiedOutput = groupUnverified.reduce((s, r) => s + r.ollamaOutputTokens, 0);
     // Unverified rows are authoring rows, so the failed-work footnote has to price
@@ -386,7 +518,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     // disagree (a new excluded row class added to one and not the other), and the
     // disagreement would surface only as a quietly mispriced dollar figure. One
     // source of truth means there is no divergence to guard against.
-    const groupAuthor = groupRuns.filter((r) => !isReviewRow(r) && !isBenchRow(r));
+    const groupAuthor = groupRuns.filter((r) => !isReviewRow(r) && !isBenchRow(r) && !isSuperseded(r));
     let uncachedInput = 0, cachedInput = 0, authorInput = 0, authorOutput = 0;
     for (const r of groupAuthor) {
       const split = splitCachedInput(r.ollamaInputTokens, r.turns);
@@ -415,6 +547,8 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       benchRunCount, benchInput, benchOutput,
       unverifiedRunCount, unverifiedInput, unverifiedOutput, unverifiedByKind, unverifiedTokensByKind, unverifiedOtherReasons, models,
       unverifiedUncachedInput, unverifiedCachedInput,
+      supersededRunCount, supersededInput, supersededOutput,
+      supersededUncachedInput, supersededCachedInput,
       uncachedInput, cachedInput,
       counterfactual, pmOverhead, pmPartial, net, attributed, found,
     });
@@ -448,6 +582,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   const totalBenchRuns = groups.reduce((s, g) => s + g.benchRunCount, 0);
   const totalBenchIn = groups.reduce((s, g) => s + g.benchInput, 0);
   const totalBenchOut = groups.reduce((s, g) => s + g.benchOutput, 0);
+  const totalSupersededRuns = groups.reduce((s, g) => s + g.supersededRunCount, 0);
+  const totalSupersededIn = groups.reduce((s, g) => s + g.supersededInput, 0);
+  const totalSupersededOut = groups.reduce((s, g) => s + g.supersededOutput, 0);
   const totalUnverifiedRuns = groups.reduce((s, g) => s + g.unverifiedRunCount, 0);
   const totalUnverifiedIn = groups.reduce((s, g) => s + g.unverifiedInput, 0);
   const totalUnverifiedOut = groups.reduce((s, g) => s + g.unverifiedOutput, 0);
@@ -471,6 +608,26 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
   // must cover the same set (#36 finding 2).
   const attrUnverifiedIn = attributedGroups.reduce((s, g) => s + g.unverifiedInput, 0);
   const attrUnverifiedOut = attributedGroups.reduce((s, g) => s + g.unverifiedOutput, 0);
+  // What the supersession exclusion removed from the counterfactual, priced the
+  // same way and over the same (attributed) groups as the figure it was removed
+  // from — otherwise the report names a subtraction nobody can check.
+  // Null, not 0, when nothing is attributed: the figure this was removed FROM is
+  // unavailable there, and summing an empty set gives a confident $0.0000 that
+  // reads as "the exclusion changed nothing" when it changed everything.
+  const attrSupersededRuns = attributedGroups.reduce((s, g) => s + g.supersededRunCount, 0);
+  // Keyed on the superseded volume that is actually IN the counterfactual's own
+  // set, not on whether any group is attributed at all. `totalSupersededRuns`
+  // spans every group including the unattributed bucket, so one attributed
+  // session that superseded nothing used to make this an empty-sum 0 rather than
+  // null — and the footnote then printed the confident "$0.0000 removed" the
+  // comment above forbids.
+  const supersededExcluded = attrSupersededRuns === 0 ? null : valueAtClaudePricesCached(
+    attributedGroups.reduce((s, g) => s + g.supersededUncachedInput, 0),
+    attributedGroups.reduce((s, g) => s + g.supersededCachedInput, 0),
+    attributedGroups.reduce((s, g) => s + g.supersededOutput, 0),
+    opts.counterfactualModel,
+  );
+  const escalationsUnmatched = supersededMatcher.unmatched();
   const unattributedRuns = groups.filter((g) => !g.attributed).reduce((s, g) => s + g.runCount, 0);
   // Ledger-wide cached input: the "Input priced" disclosure line is a disclosure,
   // not an arithmetic component — it should appear whenever the ledger has any
@@ -489,7 +646,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     const k = label === null ? "\u0000null" : label;
     let agg = labelMap.get(k);
     if (!agg) {
-      agg = { label, runCount: 0, reviewRunCount: 0, benchRunCount: 0, authorInput: 0, uncachedInput: 0, cachedInput: 0, authorOutput: 0, reviewInput: 0, reviewOutput: 0, benchInput: 0, benchOutput: 0, unverifiedRunCount: 0, unverifiedInput: 0, unverifiedOutput: 0 };
+      agg = { label, runCount: 0, reviewRunCount: 0, benchRunCount: 0, authorInput: 0, uncachedInput: 0, cachedInput: 0, authorOutput: 0, reviewInput: 0, reviewOutput: 0, benchInput: 0, benchOutput: 0, unverifiedRunCount: 0, unverifiedInput: 0, unverifiedOutput: 0, supersededRunCount: 0, supersededInput: 0, supersededOutput: 0 };
       labelMap.set(k, agg);
     }
     agg.runCount++;
@@ -501,7 +658,7 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       agg.benchRunCount++;
       agg.benchInput += r.ollamaInputTokens;
       agg.benchOutput += r.ollamaOutputTokens;
-    } else {
+    } else if (!isSuperseded(r)) {
       agg.authorInput += r.ollamaInputTokens;
       {
         const split = splitCachedInput(r.ollamaInputTokens, r.turns);
@@ -509,7 +666,12 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       }
       agg.authorOutput += r.ollamaOutputTokens;
     }
-    if (isUnverifiedRow(r)) {
+    if (isSuperseded(r)) {
+      agg.supersededRunCount++;
+      agg.supersededInput += r.ollamaInputTokens;
+      agg.supersededOutput += r.ollamaOutputTokens;
+    }
+    if (isUnverifiedRow(r) && !isSuperseded(r)) {
       agg.unverifiedRunCount++;
       agg.unverifiedInput += r.ollamaInputTokens;
       agg.unverifiedOutput += r.ollamaOutputTokens;
@@ -554,6 +716,9 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
         ...(totalBenchRuns > 0 ? {
           bench_run_count: g.benchRunCount, bench_input: g.benchInput, bench_output: g.benchOutput,
         } : {}),
+        ...(totalSupersededRuns > 0 ? {
+          superseded_run_count: g.supersededRunCount, superseded_input: g.supersededInput, superseded_output: g.supersededOutput,
+        } : {}),
         ...(totalUnverifiedRuns > 0 ? {
           unverified_run_count: g.unverifiedRunCount, unverified_input: g.unverifiedInput, unverified_output: g.unverifiedOutput,
           unverified_turn_cap_run_count: g.unverifiedByKind["turn-cap"],
@@ -585,6 +750,14 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       totals.bench_input = totalBenchIn;
       totals.bench_output = totalBenchOut;
     }
+    if (totalSupersededRuns > 0) {
+      totals.superseded_run_count = totalSupersededRuns;
+      totals.superseded_input = totalSupersededIn;
+      totals.superseded_output = totalSupersededOut;
+      // The dollar figure the exclusion removed, over attributed groups — the
+      // same set counterfactual_usd covers.
+      totals.superseded_excluded_usd = supersededExcluded;
+    }
     if (totalUnverifiedRuns > 0) {
       totals.unverified_run_count = totalUnverifiedRuns;
       totals.unverified_input = totalUnverifiedIn;
@@ -603,6 +776,22 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       meta: { generated_at: new Date().toISOString(), token_scope_version: VERSION },
       report: "savings",
       ledger_path: ledgerPath,
+      // The ledger's own load status, for the same reason the sidecar's is here.
+      // Disclosing one and not the other is the worse asymmetry: this is the
+      // PRIMARY source, so an unreadable ledger renders a confident zero under
+      // five fields that read as an integrity claim about the whole report.
+      ledger_status: ledgerStatus,
+      ledger_skipped_lines: ledgerRead.skippedLines,
+      // Unconditional, like ledger_path. These are the only fields that separate
+      // "the sidecar said nothing was superseded" from "the sidecar was missing,
+      // unreadable, or read with the wrong window" — gating them on a non-zero
+      // result suppressed them in exactly the case they exist for.
+      escalations_path: escalationsPath,
+      escalations_status: escalationsStatus,
+      escalations_records: escRead.records.length,
+      escalations_skipped_lines: escRead.skippedLines,
+      escalations_unmatched: escalationsUnmatched,
+      attempt_gap_seconds: attemptGapSeconds,
       counterfactual_model: opts.counterfactualModel,
       counterfactual_priced: counterfactualPriced,
       since_floor_applied: sinceFloorApplied,
@@ -630,6 +819,11 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
         unverified_run_count: a.unverifiedRunCount,
         unverified_input: a.unverifiedInput,
         unverified_output: a.unverifiedOutput,
+        ...(totalSupersededRuns > 0 ? {
+          superseded_run_count: a.supersededRunCount,
+          superseded_input: a.supersededInput,
+          superseded_output: a.supersededOutput,
+        } : {}),
         counterfactual_usd: valueAtClaudePricesCached(a.uncachedInput, a.cachedInput, a.authorOutput, opts.counterfactualModel),
       }));
     }
@@ -734,6 +928,10 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
     totalsKv.splice(1, 0, ["Benchmark runs (excluded from counterfactual)",
       `${totalBenchRuns}  in=${formatTokens(totalBenchIn)}  out=${formatTokens(totalBenchOut)}`]);
   }
+  if (totalSupersededRuns > 0) {
+    totalsKv.splice(1, 0, ["Superseded by an escalation (excluded from counterfactual)",
+      `${totalSupersededRuns}  in=${formatTokens(totalSupersededIn)}  out=${formatTokens(totalSupersededOut)}`]);
+  }
   if (totalUnverifiedRuns > 0) {
     // Split rather than one number: a gate rejecting the work and a turn cap set
     // too low are different problems with different fixes, and the old single
@@ -789,6 +987,22 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       ? ` That is ${formatUsd(failedShare)} of the ${formatUsd(counterfactualAttributed)} counterfactual — ${Math.round(failedShare / counterfactualAttributed * 100)}% of the priced figure bought nothing (a floor, since crashed runs are in neither figure).`
       : "";
     console.log(renderFootnote(`Authoring runs that did not succeed (hit the turn cap, or failed their verify command) are INCLUDED in the counterfactual — the tokens were really spent, and Claude would have paid for a wrong first try too — but reported separately so failed work is not hidden in the total. A run that CRASHED is not counted here and is not in the ledger at all — the bridge writes its row after the failure path has already returned (nhangen/claude-ceo#328), so its tokens are missing from every figure on this report.${sharePct}`));
+  }
+  // Only on an unscoped report. --session and --since filter the runs BEFORE the
+  // matcher sees them, so a scoped report leaves most records naming nothing by
+  // construction and the warning would fire on every one of them.
+  const scoped = opts.sessionId !== undefined || sinceFloorApplied;
+  if (escalationsUnmatched > 0 && !scoped) {
+    console.log(renderFootnote(`${escalationsUnmatched} of ${escRead.records.length} escalation record(s) name a run that is not in this ledger, so nothing was excluded for them. Matching keys on superseded_run_id AND cwd; a worktree moved or renamed after the escalation breaks every record naming it, which restores the double-count silently. Read ${escalationsPath} against the run_id and cwd values in the ledger.`));
+  }
+  if (escRead.skippedLines > 0) {
+    console.log(renderFootnote(`${escRead.skippedLines} line(s) in ${escalationsPath} yielded no record — unparseable, or missing superseded_run_id or epoch. Neither field can be guessed, so those escalations excluded nothing.`));
+  }
+  if (totalSupersededRuns > 0) {
+    const removed = supersededExcluded !== null
+      ? ` Excluding them removed ${formatUsd(supersededExcluded)} from the counterfactual.`
+      : "";  // no attributed session: there is no counterfactual to have removed it from
+    console.log(renderFootnote(`${totalSupersededRuns} authoring run(s) were superseded: they hit the turn cap, and \`ollama-delegate\` then handed the same spec to a higher-tier author, which was billed for the job. They are EXCLUDED from the counterfactual — leaving them in prices work Claude went on to do as work Claude never did — but their tokens stay in the ledger totals so no spend is hidden. Matched from ${escalationsPath} on superseded_run_id + cwd, within the ${attemptGapSeconds}s attempt window before each record.${removed}`));
   }
   if (opts.pmCost !== undefined) {
     console.log(renderFootnote(`PM overhead (†) = ${formatUsd(opts.pmCost)}, supplied by the caller as a measured figure (e.g. a subagent PM's cost from the subagent-bucket delta between two --spend runs). Net = Counterfactual − measured PM. The figure's accuracy is the caller's — the report does not verify it against transcripts.`));

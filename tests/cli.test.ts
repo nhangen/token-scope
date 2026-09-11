@@ -92,6 +92,54 @@ describe("parseArgs --savings", () => {
     expect(a.counterfactualModel).toBe("claude-sonnet-5");
   });
 
+  it("accepts --escalations with --savings", () => {
+    const a = parseArgs(["--savings", "--escalations", "/e.jsonl"]);
+    expect(a.escalationsPath).toBe("/e.jsonl");
+  });
+
+  it("rejects --escalations without --savings", () => {
+    expect(() => parseArgs(["--escalations", "/e.jsonl"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("only valid with --savings");
+  });
+
+  it("rejects --escalations with no path argument", () => {
+    expect(() => parseArgs(["--savings", "--escalations"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("--escalations requires a path");
+  });
+
+  it("rejects a flag where --escalations wants a path", () => {
+    // It used to take "--json" as the path, swallow the flag, find no sidecar
+    // there, and print a human-readable report with nothing excluded — three
+    // wrong things, none of them announced.
+    expect(() => parseArgs(["--savings", "--escalations", "--json"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("--escalations requires a path");
+  });
+
+  it("rejects a flag where --ledger wants a path", () => {
+    expect(() => parseArgs(["--savings", "--ledger", "--json"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("--ledger requires a path");
+  });
+
+  // Every flag taking a required value, not just the two the review named. The
+  // reflex fix covered --ledger and --escalations; --session was the worse one,
+  // because its own length check made it look validated ("--json" is 6 chars).
+  for (const [flag, needle] of [
+    ["--session", "--session requires a session ID"],
+    ["--db", "--db requires a path"],
+    ["--projects-dir", "--projects-dir requires a path"],
+    ["--agent", "--agent requires an agent id"],
+    ["--pm-agent", "--pm-agent requires an agent id"],
+    ["--counterfactual-model", "--counterfactual-model requires a model id"],
+    ["--artifact-path", "--artifact-path requires a fragment"],
+    ["--artifact-show", "--artifact-show requires a file path"],
+    ["--artifact-compare", "--artifact-compare requires an .md file path"],
+  ] as const) {
+    it(`rejects a flag where ${flag} wants a value`, () => {
+      expect(() => parseArgs([flag, "--json"])).toThrow("__exit_1");
+      expect(stderrBuf).toContain(needle);
+    });
+  }
+
   it("rejects --ledger without --savings", () => {
     expect(() => parseArgs(["--ledger", "/l.jsonl"])).toThrow("__exit_1");
     expect(stderrBuf).toContain("only valid with --savings");

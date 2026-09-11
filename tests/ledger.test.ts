@@ -1,5 +1,8 @@
 import { describe, expect, it, afterEach } from "bun:test";
-import { readLedger, resolveLedgerPath } from "@/ledger";
+import { readLedger, readLedgerWithStatus, resolveLedgerPath } from "@/ledger";
+import { mkdtempSync, writeFileSync, chmodSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 
 const LEDGER = new URL("./fixtures/ledger/runs.jsonl", import.meta.url).pathname;
 
@@ -29,6 +32,36 @@ describe("readLedger", () => {
 
   it("returns [] for a missing file", () => {
     expect(readLedger("/no/such/ledger/runs.jsonl")).toEqual([]);
+  });
+});
+
+describe("readLedgerWithStatus", () => {
+  it("separates an absent ledger from an unreadable one, and counts skipped lines", () => {
+    // Same reason as the escalations sidecar: [] from a missing file and [] from
+    // a permission error render as the same confident zero, and this is the
+    // PRIMARY source of every figure the savings report prints.
+    const absent = readLedgerWithStatus("/no/such/runs.jsonl");
+    expect(absent.exists).toBe(false);
+    expect(absent.readError).toBeNull();
+    expect(absent.runs).toEqual([]);
+
+    const dir = mkdtempSync(join(tmpdir(), "ledger-status-"));
+    const p = join(dir, "runs.jsonl");
+    writeFileSync(p, 'not json\n{"run_id":"author:1","ollama_input_tokens":5}\n');
+    const ok = readLedgerWithStatus(p);
+    expect(ok.exists).toBe(true);
+    expect(ok.readError).toBeNull();
+    expect(ok.runs.length).toBe(1);
+    expect(ok.skippedLines).toBe(1);
+
+    if (typeof process.getuid === "function" && process.getuid() === 0) return;
+    chmodSync(p, 0o000);
+    try {
+      const bad = readLedgerWithStatus(p);
+      expect(bad.exists).toBe(true);
+      expect(bad.readError).not.toBeNull();
+      expect(bad.runs).toEqual([]);
+    } finally { chmodSync(p, 0o600); }
   });
 });
 

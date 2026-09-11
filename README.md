@@ -157,6 +157,7 @@ token-scope --savings --counterfactual-model claude-sonnet-5   # value against a
 token-scope --savings --session be299042 --pm-turns 4..9   # net vs. just the delegation's PM turns
 token-scope --savings --session be299042 --pm-cost 0.87    # net vs. a measured PM figure (subagent PM)
 token-scope --savings --ledger /path/to/runs.jsonl     # explicit ledger location
+token-scope --savings --escalations /path/to/escalations.jsonl  # explicit escalation sidecar
 ```
 
 Answers the "did delegating authorship to a local ollama model actually save money?"
@@ -190,6 +191,62 @@ Net = Counterfactual − PM overhead
   **`--pm-cost <usd>`** (requires `--session`, mutually exclusive with `--pm-turns`). The
   report takes the figure on trust and labels the scope `measured (caller)`. Because no
   transcript lookup happens, this also attributes sessions that ran on another machine.
+
+#### Escalated runs are not savings
+
+When a spec hits the turn cap twice, `ollama-delegate` no longer stops — it hands the same
+spec to a higher-tier author (a Sonnet subagent in Claude Code, `gpt-5.6-terra`/`-luna` in
+Codex). That author is billed for the job. Pricing the local attempts as "what Claude would
+have cost" then counts one job twice: once as a counterfactual saving and once as real spend.
+
+So token-scope reads a sidecar written by llm-tools'
+`~/.claude/scripts/ollama-record-escalation.sh`:
+
+```
+$XDG_STATE_HOME/ollama-agent/escalations.jsonl   (or $OLLAMA_AGENT_ESCALATIONS, or --escalations)
+```
+
+It is a sibling of `runs.jsonl` rather than a field on it — that file is written by
+claude-ceo's bridge, and a new field there risks the parsing this report depends on.
+
+A ledger run is **superseded** when a record names its `run_id`, ran in the same `cwd`, the
+run itself failed, and it falls in the `OLLAMA_ATTEMPT_GAP` window (default 4h) before the
+record. All four matter: a label is a ticket number and gets reused, a later run on the same
+ticket that *succeeded* saved real work, and a run outside the window belongs to an earlier
+cycle. Three shapes cannot be decided and all three stay in the counterfactual, over-stating the
+saving rather than inventing an exclusion: a run with no timestamp, a legacy run with no
+`cwd`, and a run whose `reason`/`completed`/`verified` are all unrecorded (the ledger
+defines that as "not recorded — never a claim about the run", and the matcher reads it as
+"succeeded"). A record with an empty `cwd` is read as having none, so it matches nothing —
+the recorder refuses to write one and calls such a record not discountable at all.
+
+Superseded runs are **excluded from the counterfactual** — unlike runs that merely failed,
+which stay in it and are footnoted — but their tokens remain in the ledger totals, so no
+spend is hidden. `--json` adds `superseded_run_count`, `superseded_input`,
+`superseded_output`, and `superseded_excluded_usd` (the dollar figure the exclusion removed)
+whenever the report found any.
+
+**A sidecar that fails to load is never reported as one that legitimately held nothing.**
+That distinction is the whole point of the feature: both produce zero exclusions, and zero
+exclusions is a full, confident, wrong counterfactual — the double-count #81 removed, back
+again. So `--json` always carries `escalations_path`, `escalations_status`
+(`ok`/`absent`/`unreadable`), `escalations_records`, `escalations_skipped_lines`,
+`escalations_unmatched`, and `attempt_gap_seconds`, whether or not anything was superseded.
+An unreadable file warns on stderr; so does a missing file whose path you named yourself,
+since a path you typed is an assertion that it is there.
+
+Records that name a run the ledger does not contain are footnoted rather than dropped.
+Matching keys on `cwd` as well as `run_id`, so a worktree that moved after the escalation
+breaks every record naming it — silently restoring the double-count if nothing counts the
+misses. A record whose run is present but ineligible (it succeeded, or it cannot be dated)
+is doing its job by not firing and is not counted, and the footnote is suppressed on a
+`--session`/`--since` report, where scoping leaves most records naming nothing by
+construction.
+
+The same disclosure covers the ledger itself: `ledger_status` and `ledger_skipped_lines`
+sit beside `ledger_path`, and an unreadable ledger warns on stderr. It is the primary
+source of every figure in the report, so disclosing the sidecar's load status and not the
+ledger's would advertise an integrity the report does not have.
 
 A **positive net means delegation saved money.** Note the economics: for a *small* task the
 counterfactual is tiny, so a single expensive PM turn can exceed it (net negative) — delegation

@@ -76,6 +76,15 @@ SPEND FLAGS (with --spend)
 SAVINGS FLAGS (with --savings)
   --ledger <path>         Ledger file to read (default: OLLAMA_AGENT_LEDGER env, else
                           $XDG_STATE_HOME/ollama-agent/runs.jsonl).
+  --escalations <path>    Escalation sidecar to read (default:
+                          OLLAMA_AGENT_ESCALATIONS env, else
+                          $XDG_STATE_HOME/ollama-agent/escalations.jsonl). Runs
+                          it names are excluded from the counterfactual: a
+                          higher-tier author was billed for the same job.
+                          OLLAMA_ATTEMPT_GAP (seconds, default 14400) sets how
+                          far back of a record each escalation reaches; it must
+                          match the recorder or the two disagree about which
+                          runs a record covers.
   --counterfactual-model <id>  Claude model to price the counterfactual against
                           (default: claude-opus-4-8). --session scopes to one
                           delegation session; --since floors by ledger timestamp.
@@ -140,6 +149,7 @@ interface CliArgs {
   artifactPath?: string;
   turnRange?: { from?: number; to?: number };
   ledgerPath?: string;
+  escalationsPath?: string;
   counterfactualModel?: string;
   pmTurnRange?: { from?: number; to?: number };
   pmCost?: number;
@@ -166,6 +176,29 @@ export function parseTurnRange(raw: string): { from?: number; to?: number } {
   if (to !== undefined && to < 1) throw new Error(`--turns end must be >= 1 (got "${raw}").`);
   if (from !== undefined && to !== undefined && from > to) throw new Error(`--turns start must be <= end (got "${raw}").`);
   return { from, to };
+}
+
+
+/**
+ * Reads a flag's required value, rejecting one that looks like another flag.
+ *
+ * `--escalations --json` used to take the literal string "--json" as the path,
+ * swallow the flag, and then find no sidecar there — a human-readable report with
+ * nothing excluded and no indication either thing had happened. Every flag here
+ * takes a required value, and none of those values is a real string beginning
+ * "--": a path that does starts `./--x`, and a session id or agent id never does.
+ *
+ * This covers every such flag rather than only the one the review found.
+ * `--session --json` was the same defect and the worse one, because its
+ * length check made it look validated: "--json" is six characters, so it passed.
+ */
+function flagValue(argv: string[], i: number, flag: string, what = "a path"): string {
+  const v = argv[i];
+  if (!v || v.startsWith("--")) {
+    process.stderr.write(`Error: ${flag} requires ${what} argument.\n`);
+    process.exit(1);
+  }
+  return v;
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -201,14 +234,15 @@ export function parseArgs(argv: string[]): CliArgs {
         else setMode("savings");
         break;
       case "--ledger": {
-        const v = argv[++i];
-        if (!v) { process.stderr.write("Error: --ledger requires a path argument.\n"); process.exit(1); }
-        args.ledgerPath = v;
+        args.ledgerPath = flagValue(argv, ++i, "--ledger");
+        break;
+      }
+      case "--escalations": {
+        args.escalationsPath = flagValue(argv, ++i, "--escalations");
         break;
       }
       case "--counterfactual-model": {
-        const v = argv[++i];
-        if (!v) { process.stderr.write("Error: --counterfactual-model requires a model id.\n"); process.exit(1); }
+        const v = flagValue(argv, ++i, "--counterfactual-model", "a model id");
         args.counterfactualModel = v;
         break;
       }
@@ -231,14 +265,12 @@ export function parseArgs(argv: string[]): CliArgs {
         break;
       }
       case "--agent": {
-        const v = argv[++i];
-        if (!v) { process.stderr.write("Error: --agent requires an agent id (e.g. agent-abc123).\n"); process.exit(1); }
+        const v = flagValue(argv, ++i, "--agent", "an agent id (e.g. agent-abc123)");
         args.agentId = v;
         break;
       }
       case "--pm-agent": {
-        const v = argv[++i];
-        if (!v) { process.stderr.write("Error: --pm-agent requires an agent id (e.g. agent-abc123).\n"); process.exit(1); }
+        const v = flagValue(argv, ++i, "--pm-agent", "an agent id (e.g. agent-abc123)");
         args.pmAgentId = v;
         break;
       }
@@ -281,22 +313,19 @@ export function parseArgs(argv: string[]): CliArgs {
         break;
       }
       case "--artifact-path": {
-        const v = argv[++i];
-        if (!v) { process.stderr.write("Error: --artifact-path requires a fragment.\n"); process.exit(1); }
+        const v = flagValue(argv, ++i, "--artifact-path", "a fragment");
         args.artifactPathFragment = v;
         if (!modeSet) setMode("artifacts");
         break;
       }
       case "--artifact-show": {
         setMode("artifact-show");
-        args.artifactPath = argv[++i];
-        if (!args.artifactPath) { process.stderr.write("Error: --artifact-show requires a file path.\n"); process.exit(1); }
+        args.artifactPath = flagValue(argv, ++i, "--artifact-show", "a file path");
         break;
       }
       case "--artifact-compare": {
         setMode("artifact-compare");
-        args.artifactPath = argv[++i];
-        if (!args.artifactPath) { process.stderr.write("Error: --artifact-compare requires an .md file path.\n"); process.exit(1); }
+        args.artifactPath = flagValue(argv, ++i, "--artifact-compare", "an .md file path");
         break;
       }
       case "--tuning":
@@ -331,8 +360,7 @@ export function parseArgs(argv: string[]): CliArgs {
         break;
       }
       case "--session": {
-        const id = argv[++i];
-        if (!id) { process.stderr.write("Error: --session requires a session ID argument.\n"); process.exit(1); }
+        const id = flagValue(argv, ++i, "--session", "a session ID");
         if (id!.length < 6) { process.stderr.write("Error: --session ID must be at least 6 characters.\n"); process.exit(1); }
         // When --spend/--savings is the active mode, --session scopes it rather
         // than claiming its own (mutually-exclusive) mode.
@@ -355,12 +383,10 @@ export function parseArgs(argv: string[]): CliArgs {
         break;
       }
       case "--db":
-        args.dbPath = argv[++i];
-        if (!args.dbPath) { process.stderr.write("Error: --db requires a path argument.\n"); process.exit(1); }
+        args.dbPath = flagValue(argv, ++i, "--db");
         break;
       case "--projects-dir": {
-        const d = argv[++i];
-        if (!d) { process.stderr.write("Error: --projects-dir requires a path argument.\n"); process.exit(1); }
+        const d = flagValue(argv, ++i, "--projects-dir");
         args.projectsDirs.push(...d.split(":").filter(Boolean));
         break;
       }
@@ -391,8 +417,8 @@ export function parseArgs(argv: string[]): CliArgs {
     process.exit(1);
   }
 
-  if ((args.ledgerPath || args.counterfactualModel) && args.mode !== "savings") {
-    process.stderr.write("Error: --ledger/--counterfactual-model are only valid with --savings.\n");
+  if ((args.ledgerPath || args.escalationsPath || args.counterfactualModel) && args.mode !== "savings") {
+    process.stderr.write("Error: --ledger/--escalations/--counterfactual-model are only valid with --savings.\n");
     process.exit(1);
   }
 
@@ -511,6 +537,7 @@ async function main() {
     renderSavingsReport(reader, {
       sessionId: args.sessionId, since, sinceStr: args.since, json: args.json,
       ledgerPath: args.ledgerPath,
+      escalationsPath: args.escalationsPath,
       counterfactualModel: args.counterfactualModel ?? DEFAULT_COUNTERFACTUAL_MODEL,
       pmTurnRange: args.pmTurnRange,
       pmCost: args.pmCost,

@@ -43,7 +43,9 @@ function num(v: unknown): number {
 function numOrNull(v: unknown): number | null {
   return typeof v === "number" && isFinite(v) ? v : null;
 }
-function strOrNull(v: unknown): string | null {
+/** Exported so the escalations reader shares one definition rather than inlining
+ *  the same `typeof` narrowing at each field. */
+export function strOrNull(v: unknown): string | null {
   return typeof v === "string" ? v : null;
 }
 function boolOrNull(v: unknown): boolean | null {
@@ -51,23 +53,61 @@ function boolOrNull(v: unknown): boolean | null {
 }
 
 /**
+ * What one read of the ledger found.
+ *
+ * Same shape and same reason as `EscalationRead`: `[]` from a missing ledger and
+ * `[]` from a permission error are one value, and the report renders both as a
+ * confident, complete-looking zero. That is worse here than on the sidecar, since
+ * this is the primary source — a savings report that discloses the sidecar's load
+ * status and not the ledger's advertises an integrity it does not have.
+ */
+export interface LedgerRead {
+  runs: LedgerRun[];
+  /** The path actually read, so no caller reports a file it did not consult. */
+  path: string;
+  exists: boolean;
+  /** Non-null when the file is there and could not be read. */
+  readError: string | null;
+  /** Non-empty lines that yielded no run. */
+  skippedLines: number;
+}
+
+/**
  * Reads and parses the ledger. A missing file yields []; malformed lines are
  * skipped (best-effort, matching the writer's never-fail contract) so one bad
  * append can't blind the whole report.
+ *
+ * Callers that render a figure derived from the result should use
+ * `readLedgerWithStatus` instead and disclose what it found.
  */
 export function readLedger(path?: string): LedgerRun[] {
-  const p = resolveLedgerPath(path);
-  if (!existsSync(p)) return [];
-  let raw: string;
-  try { raw = readFileSync(p, "utf8"); } catch { return []; }
+  return readLedgerWithStatus(path).runs;
+}
 
+/** `readLedger` plus what the read itself found. See `LedgerRead`. */
+export function readLedgerWithStatus(path?: string): LedgerRead {
+  const p = resolveLedgerPath(path);
+  if (!existsSync(p)) {
+    return { runs: [], path: p, exists: false, readError: null, skippedLines: 0 };
+  }
+  let raw: string;
+  try {
+    raw = readFileSync(p, "utf8");
+  } catch (e) {
+    return {
+      runs: [], path: p, exists: true, skippedLines: 0,
+      readError: e instanceof Error ? e.message : String(e),
+    };
+  }
+
+  let skipped = 0;
   const runs: LedgerRun[] = [];
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     let o: unknown;
-    try { o = JSON.parse(trimmed); } catch { continue; }
-    if (o === null || typeof o !== "object" || Array.isArray(o)) continue;
+    try { o = JSON.parse(trimmed); } catch { skipped++; continue; }
+    if (o === null || typeof o !== "object" || Array.isArray(o)) { skipped++; continue; }
     const r = o as Record<string, unknown>;
     runs.push({
       ts: strOrNull(r["ts"]),
@@ -84,5 +124,5 @@ export function readLedger(path?: string): LedgerRun[] {
       reason: strOrNull(r["reason"]),
     });
   }
-  return runs;
+  return { runs, path: p, exists: true, readError: null, skippedLines: skipped };
 }

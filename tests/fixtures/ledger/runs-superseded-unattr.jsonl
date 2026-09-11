@@ -1,0 +1,3 @@
+{"ts":"2026-07-08T09:00:00Z","run_id":"author:600","session_id":"sess-spend","model":"qwen3.8:27b","task_name":null,"cwd":"/w/600","ollama_input_tokens":100000,"ollama_output_tokens":40000,"turns":4,"completed":true,"verified":true,"reason":"ok"}
+{"ts":"2026-07-08T09:00:00Z","run_id":"author:601","session_id":"sess-not-in-transcripts","model":"qwen3.8:27b","task_name":null,"cwd":"/w/601","ollama_input_tokens":20000,"ollama_output_tokens":5000,"turns":6,"completed":false,"verified":null,"reason":"turn-cap"}
+{"ts":"2026-07-08T10:00:00Z","run_id":"author:601","session_id":"sess-not-in-transcripts","model":"qwen3.8:27b","task_name":null,"cwd":"/w/601","ollama_input_tokens":24000,"ollama_output_tokens":6000,"turns":6,"completed":false,"verified":null,"reason":"turn-cap"}
