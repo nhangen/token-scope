@@ -192,10 +192,11 @@ describe("renderSavingsReport — superseded (escalated) runs", () => {
   });
 
   it("says nothing about supersession when there is none", () => {
-    const out = capture(() => renderSavingsReport(reader, { ...withoutEsc, json: false }));
+    const out = capture(() => renderSavingsReport(reader, { ...withoutEsc, json: false, byLabel: true }));
     // Not the bare word: the ledger fixture's own filename carries it.
     expect(out).not.toContain("superseded_run_id");
     expect(out).not.toContain("Superseded by an escalation");
+    expect(out).not.toContain("omit excluded volume:");
   });
 
   it("does not claim a $0.0000 removal when nothing is attributed", () => {
@@ -391,5 +392,12 @@ describe("--escalations end to end", () => {
     const p = JSON.parse(r.out);
     expect(p.totals.superseded_run_count).toBeUndefined();
     expect(p.escalations_status).toBe("absent");
+  });
+
+  it("wires --by-label into the text report", () => {
+    const r = run(["--escalations", ESCALATIONS, "--by-label"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("By Label");
+    expect(r.out).toContain("601: superseded 2 run(s) in=44,000 out=11,000");
   });
 });

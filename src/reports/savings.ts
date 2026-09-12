@@ -5,13 +5,42 @@ import { getPricing } from "@/pricing";
 import { tsMs } from "@/providers/types";
 import {
   renderHeader, renderKV, renderTable, renderFootnote,
-  formatTokens, formatUsd, truncate, bold,
+  formatTokens, formatUsd, truncate, bold, dim,
 } from "@/format";
 import { VERSION } from "@/version";
 
 /** The model the counterfactual is priced against by default — the most
  *  capable current tier, i.e. what would plausibly have authored the code. */
 export const DEFAULT_COUNTERFACTUAL_MODEL = "claude-opus-4-8";
+
+const PIPE_LINE_WIDTH = 80;
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+function wrapExcludedFootnote(text: string, firstIndent: number, continuationIndent: number): string {
+  const reportedColumns = process.stdout.columns;
+  const width = Number.isInteger(reportedColumns) && reportedColumns > 0
+    ? reportedColumns
+    : PIPE_LINE_WIDTH;
+  const lines: string[] = [];
+  let indent = " ".repeat(Math.min(firstIndent, Math.max(0, width - 2)));
+  let line = indent;
+  let lineWidth = indent.length;
+
+  for (const { segment } of GRAPHEME_SEGMENTER.segment(text)) {
+    const segmentWidth = Bun.stringWidth(segment);
+    if (line.length > indent.length && lineWidth + segmentWidth > width) {
+      lines.push(line);
+      indent = " ".repeat(Math.min(continuationIndent, Math.max(0, width - 2)));
+      line = indent;
+      lineWidth = indent.length;
+    }
+    line += segment;
+    lineWidth += segmentWidth;
+  }
+  if (line.length > indent.length) lines.push(line);
+
+  return lines.join("\n");
+}
 
 interface SavingsOptions {
   sessionId?: string;
@@ -922,7 +951,10 @@ export function renderSavingsReport(reader: Reader, opts: SavingsOptions): void 
       return excluded.length > 0 ? `${a.label ?? "(unlabelled)"}: ${excluded.join("; ")}` : null;
     }).filter((x): x is string => x !== null);
     if (excludedByLabel.length > 0) {
-      console.log(renderFootnote(`By Label Author In/Out and Counterfact.* omit excluded volume: ${excludedByLabel.join("; ")}.`));
+      console.log(`\n${dim(wrapExcludedFootnote("* By Label Author In/Out and Counterfact.* omit excluded volume:", 2, 4))}`);
+      for (const excluded of excludedByLabel) {
+        console.log(dim(wrapExcludedFootnote(`${excluded}.`, 4, 6)));
+      }
     }
   }
 
