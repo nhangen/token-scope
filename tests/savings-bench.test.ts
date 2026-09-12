@@ -90,6 +90,11 @@ describe("renderSavingsReport — benchmark sweeps are not delegation savings", 
     expect(text.toLowerCase()).toContain("benchmark");
   });
 
+  it("accounts for benchmark token volume by label in the text report", () => {
+    const text = capture(() => renderSavingsReport(reader, { ...base, json: false, byLabel: true }));
+    expect(text).toContain("model-matrix: benchmark 2 run(s) in=2,000,000 out=40,000");
+  });
+
   it("stays silent on a ledger with no bench rows", () => {
     const clean = new URL("./fixtures/ledger/runs-labelled.jsonl", import.meta.url).pathname;
     const text = capture(() => renderSavingsReport(reader, { ...base, ledgerPath: clean, json: false }));

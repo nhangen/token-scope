@@ -353,6 +353,11 @@ describe("renderSavingsReport — superseded (escalated) runs", () => {
     const l600 = p.by_label.find((x: any) => x.label === "600");
     expect(l600.superseded_run_count).toBe(0);
   });
+
+  it("accounts for superseded token volume by label in the text report", () => {
+    const text = capture(() => renderSavingsReport(reader, { ...withEsc, json: false, byLabel: true }));
+    expect(text).toContain("601: superseded 2 run(s) in=44,000 out=11,000");
+  });
 });
 
 // Production entry point: parseArgs tests prove the flag is read into args, not
