@@ -1,0 +1,15 @@
+{
+  "id": "status-old",
+  "ok": true,
+  "result": {
+    "app": { "running": true, "pid": 4412 },
+    "runtime": {
+      "state": "ready",
+      "reachable": true,
+      "runtimeId": "runtime-old",
+      "appVersion": "0.9.9"
+    },
+    "graph": { "state": "ready" }
+  },
+  "_meta": { "runtimeId": "runtime-old" }
+}

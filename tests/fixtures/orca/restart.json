@@ -1,0 +1,26 @@
+{
+  "before": {
+    "id": "status-before-restart",
+    "ok": true,
+    "result": {
+      "runtime": {
+        "state": "ready",
+        "reachable": true,
+        "runtimeId": "runtime-before-restart",
+        "appVersion": "1.4.162"
+      }
+    }
+  },
+  "after": {
+    "id": "status-after-restart",
+    "ok": true,
+    "result": {
+      "runtime": {
+        "state": "ready",
+        "reachable": true,
+        "runtimeId": "runtime-after-restart",
+        "appVersion": "1.4.162"
+      }
+    }
+  }
+}

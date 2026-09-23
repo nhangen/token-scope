@@ -1,0 +1,27 @@
+{
+  "id": "terminals-conflicting-placement",
+  "ok": true,
+  "result": {
+    "terminals": [
+      {
+        "handle": "term-local",
+        "worktreeId": "repo-token::/Users/alice/token-scope",
+        "tabId": "tab-local",
+        "leafId": "leaf-local",
+        "agentIdentity": "codex",
+        "executionHostId": "local"
+      },
+      {
+        "handle": "term-local",
+        "worktreeId": "repo-token::/Users/alice/other-worktree",
+        "tabId": "tab-other",
+        "leafId": "leaf-other",
+        "agentIdentity": "claude",
+        "executionHostId": "local"
+      }
+    ],
+    "totalCount": 2,
+    "truncated": false,
+    "hostScope": { "hostIds": ["local"], "omittedHostIds": [] }
+  }
+}

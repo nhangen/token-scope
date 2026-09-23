@@ -1,0 +1,105 @@
+{
+  "status": {
+    "id": "status-ssh",
+    "ok": true,
+    "result": {
+      "app": { "running": true, "pid": 4412 },
+      "runtime": {
+        "state": "ready",
+        "reachable": true,
+        "runtimeId": "runtime-mac",
+        "appVersion": "1.4.162"
+      },
+      "graph": { "state": "ready" }
+    },
+    "_meta": { "runtimeId": "runtime-mac" }
+  },
+  "hosts": {
+    "id": "hosts-ssh",
+    "ok": true,
+    "result": {
+      "hosts": [
+        { "kind": "local", "name": "this machine", "id": "local", "selector": "--host local", "platform": "darwin" },
+        { "kind": "ssh", "name": "gpu box", "id": "gpu-box", "selector": "--host ssh:gpu-box", "platform": "linux", "connected": true },
+        { "kind": "environment", "name": "Build Mac", "id": "build-mac", "selector": "--environment Build Mac" }
+      ]
+    },
+    "_meta": { "runtimeId": "local" }
+  },
+  "worktrees": {
+    "id": "worktrees-ssh",
+    "ok": true,
+    "result": {
+      "worktrees": [
+        {
+          "worktreeId": "repo-a::/srv/repo-a/feature",
+          "repoId": "repo-a",
+          "hostId": "ssh:gpu-box",
+          "agents": [
+            { "paneKey": "tab-codex:leaf-codex", "agentType": "codex", "prompt": "DO NOT RETAIN" }
+          ]
+        },
+        {
+          "worktreeId": "repo-b::/srv/repo-b/fix",
+          "repoId": "repo-b",
+          "hostId": "ssh:gpu-box",
+          "agents": [
+            { "paneKey": "tab-claude:leaf-claude", "agentType": "claude", "prompt": "DO NOT RETAIN EITHER" }
+          ]
+        },
+        {
+          "worktreeId": "repo-c::/Users/alice/repo-c/review",
+          "repoId": "repo-c",
+          "hostId": "local",
+          "agents": [
+            { "paneKey": "tab-gemini:leaf-gemini", "agentType": "gemini", "prompt": "REMOTE PRIVATE PROMPT" }
+          ]
+        }
+      ],
+      "totalCount": 3,
+      "truncated": false,
+      "hostScope": { "hostIds": ["local", "ssh:gpu-box"], "omittedHostIds": ["runtime:build-mac"] }
+    },
+    "_meta": { "runtimeId": "runtime-mac" }
+  },
+  "terminals": {
+    "id": "terminals-ssh",
+    "ok": true,
+    "result": {
+      "terminals": [
+        {
+          "handle": "term-codex",
+          "ptyId": "ssh:gpu-box@@pty-7",
+          "worktreeId": "repo-a::/srv/repo-a/feature",
+          "tabId": "tab-codex",
+          "leafId": "leaf-codex",
+          "executionHostId": "ssh:gpu-box",
+          "preview": "SECRET SCROLLBACK"
+        },
+        {
+          "handle": "term-claude",
+          "ptyId": "ssh:gpu-box@@pty-8",
+          "worktreeId": "repo-b::/srv/repo-b/fix",
+          "tabId": "tab-claude",
+          "leafId": "leaf-claude",
+          "agentIdentity": "claude",
+          "executionHostId": "ssh:gpu-box",
+          "preview": "ANOTHER SECRET"
+        },
+        {
+          "handle": "term-gemini",
+          "ptyId": "pty-2",
+          "worktreeId": "repo-c::/Users/alice/repo-c/review",
+          "tabId": "tab-gemini",
+          "leafId": "leaf-gemini",
+          "executionHostId": "local",
+          "preview": "REMOTE SECRET SCROLLBACK"
+        }
+      ],
+      "totalCount": 3,
+      "truncated": false,
+      "hostScope": { "hostIds": ["local", "ssh:gpu-box"], "omittedHostIds": ["runtime:build-mac"] }
+    },
+    "_meta": { "runtimeId": "runtime-mac" }
+  }
+}

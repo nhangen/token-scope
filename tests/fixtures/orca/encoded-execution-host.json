@@ -1,0 +1,58 @@
+{
+  "status": {
+    "id": "status-encoded-host",
+    "ok": true,
+    "result": {
+      "runtime": {
+        "state": "ready",
+        "reachable": true,
+        "runtimeId": "runtime-encoded-host",
+        "appVersion": "1.4.162"
+      }
+    }
+  },
+  "hosts": {
+    "id": "hosts-encoded",
+    "ok": true,
+    "result": {
+      "hosts": [
+        { "kind": "ssh", "name": "GPU Box", "id": "gpu box", "platform": "linux" }
+      ]
+    }
+  },
+  "worktrees": {
+    "id": "worktrees-encoded-host",
+    "ok": true,
+    "result": {
+      "worktrees": [
+        {
+          "worktreeId": "encoded-worktree",
+          "hostId": "ssh:gpu%20box",
+          "agents": [{ "paneKey": "tab-encoded:leaf-encoded", "agentType": "codex" }]
+        }
+      ],
+      "totalCount": 1,
+      "truncated": false,
+      "hostScope": { "hostIds": ["ssh:gpu%20box"], "omittedHostIds": [] }
+    }
+  },
+  "terminals": {
+    "id": "terminals-encoded-host",
+    "ok": true,
+    "result": {
+      "terminals": [
+        {
+          "handle": "term-encoded",
+          "worktreeId": "encoded-worktree",
+          "tabId": "tab-encoded",
+          "leafId": "leaf-encoded",
+          "agentIdentity": "codex",
+          "executionHostId": "ssh:gpu%20box"
+        }
+      ],
+      "totalCount": 1,
+      "truncated": false,
+      "hostScope": { "hostIds": ["ssh:gpu%20box"], "omittedHostIds": [] }
+    }
+  }
+}

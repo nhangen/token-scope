@@ -1,0 +1,72 @@
+{
+  "status": {
+    "id": "status-malformed-hosts",
+    "ok": true,
+    "result": {
+      "runtime": {
+        "state": "ready",
+        "reachable": true,
+        "runtimeId": "runtime-malformed-hosts",
+        "appVersion": "1.4.162"
+      }
+    }
+  },
+  "hosts": {
+    "id": "hosts-malformed",
+    "ok": true,
+    "result": {
+      "hosts": [
+        { "kind": "ssh", "name": "pipe host", "id": "bad|id", "platform": "linux" },
+        { "kind": "environment", "name": "percent host", "id": "bad%ZZ", "platform": "linux" }
+      ]
+    }
+  },
+  "worktrees": {
+    "id": "worktrees-malformed-hosts",
+    "ok": true,
+    "result": {
+      "worktrees": [
+        {
+          "worktreeId": "pipe-worktree",
+          "hostId": "ssh:bad|id",
+          "agents": [{ "paneKey": "tab-pipe:leaf-pipe", "agentType": "codex" }]
+        },
+        {
+          "worktreeId": "percent-worktree",
+          "hostId": "runtime:bad%ZZ",
+          "agents": [{ "paneKey": "tab-percent:leaf-percent", "agentType": "gemini" }]
+        }
+      ],
+      "totalCount": 2,
+      "truncated": false,
+      "hostScope": { "hostIds": ["ssh:bad|id", "runtime:bad%ZZ"], "omittedHostIds": [] }
+    }
+  },
+  "terminals": {
+    "id": "terminals-malformed-hosts",
+    "ok": true,
+    "result": {
+      "terminals": [
+        {
+          "handle": "term-pipe",
+          "worktreeId": "pipe-worktree",
+          "tabId": "tab-pipe",
+          "leafId": "leaf-pipe",
+          "agentIdentity": "codex",
+          "executionHostId": "ssh:bad|id"
+        },
+        {
+          "handle": "term-percent",
+          "worktreeId": "percent-worktree",
+          "tabId": "tab-percent",
+          "leafId": "leaf-percent",
+          "agentIdentity": "gemini",
+          "executionHostId": "runtime:bad%ZZ"
+        }
+      ],
+      "totalCount": 2,
+      "truncated": false,
+      "hostScope": { "hostIds": ["ssh:bad|id", "runtime:bad%ZZ"], "omittedHostIds": [] }
+    }
+  }
+}
