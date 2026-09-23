@@ -11,11 +11,11 @@
 export interface ProviderEvent {
   /** Source-qualified and deterministic: "<harness>:<stable local id>". */
   eventId: string;
-  harness: "claude" | "ollama-claude" | "codex" | "opencode";
+  harness: "claude" | "ollama-claude" | "codex" | "opencode" | "gemini-cli";
   /** How the request was paid for: subscription | metered | local | unknown. */
   billingRoute: "subscription" | "metered" | "local" | "unknown";
   modelProvider: string;
-  model: string;
+  model: string | null;
   ts: string | null;
   status: "ok" | "error" | "incomplete";
   /** Set when this event is a retry of an earlier attempt. */

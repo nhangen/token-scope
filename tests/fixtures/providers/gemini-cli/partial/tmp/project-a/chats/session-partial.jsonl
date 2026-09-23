@@ -1,0 +1,2 @@
+{"sessionId":"session-partial","projectHash":"project-a","startTime":"2026-09-23T11:00:00.000Z","lastUpdated":"2026-09-23T11:01:00.000Z","kind":"main"}
+{"id":"response-partial","timestamp":"2026-09-23T11:01:00.000Z","type":"gemini","content":"sanitized","model":"gemini-3-flash-preview","thoughts":[],"tokens":{"input":500,"output":40,"tool":0,"total":540}}

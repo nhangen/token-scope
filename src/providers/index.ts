@@ -4,7 +4,8 @@
  * Sources can be overridden per call OR via environment variables so the
  * production CLI path (`token-scope --providers`) is testable end to end:
  *   TOKEN_SCOPE_CLAUDE_ROOT, TOKEN_SCOPE_LEDGER,
- *   TOKEN_SCOPE_CODEX_HOME, TOKEN_SCOPE_OPENCODE_DB
+ *   TOKEN_SCOPE_CODEX_HOME, TOKEN_SCOPE_OPENCODE_DB,
+ *   TOKEN_SCOPE_GEMINI_ROOT
  */
 import { homedir } from "os";
 import { existsSync, readFileSync } from "fs";
@@ -13,6 +14,7 @@ import { claudeEvents } from "./claude";
 import { ollamaEvents } from "./ollama";
 import { codexEvents } from "./codex";
 import { opencodeEvents } from "./opencode";
+import { geminiCliEvents, UNSUPPORTED_GOOGLE_SURFACES } from "./gemini-cli";
 import type { ProviderEvent } from "./types";
 export type { ProviderEvent } from "./types";
 
@@ -20,9 +22,11 @@ export interface Collected {
   events: ProviderEvent[];
   /** Sources that could not be read. Their volume is unknown, never zero. */
   unavailable: string[];
-  /** Sources read partially: files that existed but failed to parse/read,
-   * by harness. Partial volume must not masquerade as complete (#38 panel). */
+  /** Sources read partially: affected files by harness. Partial volume must
+   * not masquerade as complete (#38 panel). */
   partial: Record<string, number>;
+  /** Source surfaces intentionally not ingested by this version. */
+  unsupported?: string[];
 }
 
 export function dedupeEvents(events: ProviderEvent[]): ProviderEvent[] {
@@ -41,6 +45,7 @@ export function collectProviderEvents(opts?: {
   ledgerPath?: string;
   codexHome?: string;
   opencodeDb?: string;
+  geminiRoot?: string;
   sinceMs?: number;
 }): Collected {
   const unavailable: string[] = [];
@@ -52,6 +57,8 @@ export function collectProviderEvents(opts?: {
   const dataRoot = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
   const opencodeDb =
     opts?.opencodeDb ?? process.env.TOKEN_SCOPE_OPENCODE_DB ?? join(dataRoot, "opencode", "opencode.db");
+  const geminiRoot =
+    opts?.geminiRoot ?? process.env.TOKEN_SCOPE_GEMINI_ROOT ?? join(homedir(), ".gemini");
   const sinceMs = opts?.sinceMs;
   let events: ProviderEvent[] = [];
 
@@ -98,5 +105,17 @@ export function collectProviderEvents(opts?: {
     unavailable.push("opencode");
   }
 
-  return { events: dedupeEvents(events), unavailable, partial };
+  const gemini = geminiCliEvents(geminiRoot, sinceMs);
+  events.push(...gemini.events);
+  if (gemini.source.state === "unavailable") unavailable.push("gemini-cli");
+  if (gemini.source.state === "partial") {
+    partial["gemini-cli"] = gemini.affectedFiles;
+  }
+
+  return {
+    events: dedupeEvents(events),
+    unavailable,
+    partial,
+    unsupported: [...UNSUPPORTED_GOOGLE_SURFACES],
+  };
 }
