@@ -1,3 +1,5 @@
+import { PrivacyError, privateOpaqueId, privateSafeLabel } from "@/private-values";
+
 export const FLEET_SCHEMA_VERSION = "1.0" as const;
 
 export type FleetRecordStatus =
@@ -147,14 +149,55 @@ function nullableString(value: unknown, name: string): string | null {
   return stringValue(value, name);
 }
 
-function qualifiedId(value: unknown, name: string): string | null {
+interface SanitizedValue<T> {
+  value: T;
+  redacted: boolean;
+}
+
+function privateSafeNullableString(value: unknown, name: string): SanitizedValue<string | null> {
+  const label = nullableString(value, name);
+  if (label === null) return { value: null, redacted: false };
+  try {
+    return { value: privateSafeLabel(label), redacted: false };
+  } catch (error) {
+    if (error instanceof PrivacyError) return { value: null, redacted: true };
+    throw error;
+  }
+}
+
+function privateSafeRequiredString(value: unknown, name: string): SanitizedValue<string> {
+  const label = stringValue(value, name);
+  try {
+    return { value: privateSafeLabel(label), redacted: false };
+  } catch (error) {
+    if (error instanceof PrivacyError) return { value: "unknown", redacted: true };
+    throw error;
+  }
+}
+
+function privateSafeRecordId(value: unknown): string {
+  const recordId = stringValue(value, "record_id");
+  try {
+    return privateSafeLabel(recordId);
+  } catch (error) {
+    if (error instanceof PrivacyError) return privateOpaqueId("record", recordId);
+    throw error;
+  }
+}
+
+function qualifiedId(value: unknown, name: string): SanitizedValue<string | null> {
   const id = nullableString(value, name);
-  if (id === null) return null;
+  if (id === null) return { value: null, redacted: false };
   const separator = id.indexOf(":");
   if (separator <= 0 || separator === id.length - 1) {
     throw new Error(`${name} must be source-qualified`);
   }
-  return id;
+  try {
+    return { value: privateSafeLabel(id), redacted: false };
+  } catch (error) {
+    if (error instanceof PrivacyError) return { value: null, redacted: true };
+    throw error;
+  }
 }
 
 function timestampValue(value: unknown, name: string): string {
@@ -168,6 +211,10 @@ function timestampValue(value: unknown, name: string): string {
     throw new Error(`${name} must be a valid timestamp`);
   }
   return timestamp;
+}
+
+export function canonicalFleetTimestamp(value: unknown, name: string): string {
+  return timestampValue(value, name);
 }
 
 function nullableMeasurement(value: unknown, name: string): number | null {
@@ -186,44 +233,78 @@ function nullableTokenCount(value: unknown, name: string): number | null {
   return value;
 }
 
-function provenanceValue(value: unknown): FleetProvenance {
+function provenanceValue(value: unknown): SanitizedValue<FleetProvenance> {
   const provenance = objectValue(value, "provenance");
   assertExactKeys(provenance, ["source", "locator", "collected_at", "completeness"], "provenance");
   const completeness = provenance.completeness;
   if (completeness !== "complete" && completeness !== "partial" && completeness !== "unavailable") {
     throw new Error("provenance.completeness is invalid");
   }
-  return {
-    source: stringValue(provenance.source, "provenance.source"),
-    locator: nullableString(provenance.locator, "provenance.locator"),
+  const source = privateSafeRequiredString(provenance.source, "provenance.source");
+  const locator = privateSafeNullableString(provenance.locator, "provenance.locator");
+  return { value: {
+    source: source.value,
+    locator: locator.value,
     collected_at: timestampValue(provenance.collected_at, "provenance.collected_at"),
     completeness,
-  };
+  }, redacted: source.redacted || locator.redacted };
 }
 
-function commonFields(record: Record<string, unknown>): FleetRecordFields {
+function commonFields(
+  record: Record<string, unknown>,
+  redactedStatus: "incomplete" | "partial",
+): FleetRecordFields {
   if (record.schema_version !== FLEET_SCHEMA_VERSION) {
     throw new Error(`unsupported fleet schema version ${String(record.schema_version)}`);
   }
   if (!RECORD_STATUSES.has(record.status as FleetRecordStatus)) {
     throw new Error("status is invalid");
   }
+  const runId = qualifiedId(record.run_id, "run_id");
+  const sessionId = qualifiedId(record.session_id, "session_id");
+  const requestId = qualifiedId(record.request_id, "request_id");
+  const promptOriginHost = privateSafeNullableString(record.prompt_origin_host, "prompt_origin_host");
+  const executionHost = privateSafeNullableString(record.execution_host, "execution_host");
+  const routerHost = privateSafeNullableString(record.router_host, "router_host");
+  const backendHost = privateSafeNullableString(record.backend_host, "backend_host");
+  const harness = privateSafeNullableString(record.harness, "harness");
+  const provider = privateSafeNullableString(record.provider, "provider");
+  const backend = privateSafeNullableString(record.backend, "backend");
+  const model = privateSafeNullableString(record.model, "model");
+  const provenance = provenanceValue(record.provenance);
+  const redacted = [
+    runId,
+    sessionId,
+    requestId,
+    promptOriginHost,
+    executionHost,
+    routerHost,
+    backendHost,
+    harness,
+    provider,
+    backend,
+    model,
+    provenance,
+  ].some((field) => field.redacted);
+  const status = record.status as FleetRecordStatus;
   return {
     schema_version: FLEET_SCHEMA_VERSION,
-    record_id: stringValue(record.record_id, "record_id"),
-    run_id: qualifiedId(record.run_id, "run_id"),
-    session_id: qualifiedId(record.session_id, "session_id"),
-    request_id: qualifiedId(record.request_id, "request_id"),
-    prompt_origin_host: nullableString(record.prompt_origin_host, "prompt_origin_host"),
-    execution_host: nullableString(record.execution_host, "execution_host"),
-    router_host: nullableString(record.router_host, "router_host"),
-    backend_host: nullableString(record.backend_host, "backend_host"),
-    harness: nullableString(record.harness, "harness"),
-    provider: nullableString(record.provider, "provider"),
-    backend: nullableString(record.backend, "backend"),
-    model: nullableString(record.model, "model"),
-    status: record.status as FleetRecordStatus,
-    provenance: provenanceValue(record.provenance),
+    record_id: privateSafeRecordId(record.record_id),
+    run_id: runId.value,
+    session_id: sessionId.value,
+    request_id: requestId.value,
+    prompt_origin_host: promptOriginHost.value,
+    execution_host: executionHost.value,
+    router_host: routerHost.value,
+    backend_host: backendHost.value,
+    harness: harness.value,
+    provider: provider.value,
+    backend: backend.value,
+    model: model.value,
+    status: redacted && status === "ok" ? redactedStatus : status,
+    provenance: redacted && provenance.value.completeness === "complete"
+      ? { ...provenance.value, completeness: "partial" }
+      : provenance.value,
   };
 }
 
@@ -242,7 +323,7 @@ export function parseFleetRecord(value: unknown): FleetRecord {
       "cash_charge_usd",
     ], "usage");
     return {
-      ...commonFields(record),
+      ...commonFields(record, "incomplete"),
       record_type: "usage_event",
       timestamp: record.timestamp === null ? null : timestampValue(record.timestamp, "timestamp"),
       usage: {
@@ -271,11 +352,25 @@ export function parseFleetRecord(value: unknown): FleetRecord {
     }
     const counters = objectValue(record.counters, "counters");
     const parsedCounters: Record<string, number | null> = {};
+    let countersRedacted = false;
     for (const [name, counter] of Object.entries(counters).sort(([a], [b]) => a.localeCompare(b))) {
       if (!name) throw new Error("counter names cannot be empty");
-      parsedCounters[name] = nullableMeasurement(counter, `counters.${name}`);
+      try {
+        parsedCounters[privateSafeLabel(name)] = nullableMeasurement(counter, `counters.${name}`);
+      } catch (error) {
+        if (!(error instanceof PrivacyError)) throw error;
+        countersRedacted = true;
+      }
     }
-    const common = commonFields(record);
+    const processId = qualifiedId(record.process_id, "process_id");
+    let common = commonFields(record, "partial");
+    if ((processId.redacted || countersRedacted) && common.provenance.completeness === "complete") {
+      common = {
+        ...common,
+        status: common.status === "ok" ? "partial" : common.status,
+        provenance: { ...common.provenance, completeness: "partial" },
+      };
+    }
     const expectedCompleteness =
       common.status === "partial" || common.status === "unavailable"
         ? common.status
@@ -288,7 +383,7 @@ export function parseFleetRecord(value: unknown): FleetRecord {
       record_type: "operational_snapshot",
       timestamp,
       window: { start, end },
-      process_id: qualifiedId(record.process_id, "process_id"),
+      process_id: processId.value,
       stale_after_ms: nullableMeasurement(record.stale_after_ms, "stale_after_ms"),
       counters: parsedCounters,
     };

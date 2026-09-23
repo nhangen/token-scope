@@ -79,6 +79,55 @@ describe("Orca fleet placement adapter", () => {
     expect(serialized).not.toContain("private.txt");
   });
 
+  it("retains only explicit source-qualified terminal correlation identities", async () => {
+    const source = fixture("local.json");
+    Object.assign(source.terminals.result.terminals[0], {
+      requestId: "opencode:request-7",
+      runId: "opencode:run-4",
+      sessionId: "opencode:session-2",
+    });
+    const collected = await collectOrcaPlacement({
+      collectedAt: COLLECTED_AT,
+      runner: fixtureRunner(source).runner,
+    });
+
+    expect(collected.records[0]).toMatchObject({
+      request_id: "opencode:request-7",
+      run_id: "opencode:run-4",
+      session_id: "opencode:session-2",
+      execution_host: "orca:local",
+      status: "ok",
+    });
+  });
+
+  it("nulls rejected terminal correlation identities without dropping placement", async () => {
+    const source = fixture("local.json");
+    Object.assign(source.terminals.result.terminals[0], {
+      requestId: "opencode:glpat-private-request",
+      runId: "unqualified-run",
+      sessionId: "opencode:session\nprivate",
+    });
+    const collected = await collectOrcaPlacement({
+      collectedAt: COLLECTED_AT,
+      runner: fixtureRunner(source).runner,
+    });
+
+    expect(collected.records).toHaveLength(1);
+    expect(collected.records[0]).toMatchObject({
+      request_id: null,
+      run_id: null,
+      session_id: null,
+      execution_host: "orca:local",
+      status: "partial",
+    });
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      command: "orca terminal list --json",
+      state: "partial",
+      reason: "privacy",
+    }));
+    expect(JSON.stringify(collected)).not.toContain("glpat-private-request");
+  });
+
   it("retains local and SSH sessions while marking omitted paired-runtime coverage partial", async () => {
     const source = fixture("ssh.json");
     const { runner, calls } = fixtureRunner(source);
@@ -252,7 +301,7 @@ describe("Orca fleet placement adapter", () => {
     expect(JSON.stringify(collected)).not.toContain("leaked-secret");
   });
 
-  it("normalizes control characters before rejecting credential-like identifiers", async () => {
+  it("rejects control-bearing identifiers without normalizing them", async () => {
     const source = fixture("local.json");
     source.terminals = fixture("control-obfuscated-terminal-handle.json");
     const collected = await collectOrcaPlacement({

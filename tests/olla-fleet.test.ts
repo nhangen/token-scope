@@ -43,6 +43,7 @@ async function collect(overrides: Record<string, string | Error | number> = {}, 
   observedRoutes?: Array<{
     requestId?: string;
     runId?: string;
+    sessionId?: string;
     endpointId?: string;
     endpointName?: string;
     model?: string;
@@ -389,13 +390,17 @@ describe("Olla fleet telemetry adapter", () => {
     )).toBe(false);
   });
 
-  it("rejects credential-like observed request and run IDs before collection persistence", async () => {
-    await expect(collect({}, {
-      observedRoutes: [{ requestId: "Bearer request-secret", endpointId: "ml1-id" }],
-    })).rejects.toThrow("credential-like label value rejected");
-    await expect(collect({}, {
-      observedRoutes: [{ runId: "codex:Bearer run-secret", endpointId: "ml1-id" }],
-    })).rejects.toThrow("credential-like label value rejected");
+  it("marks credential-like observed request and run IDs partial without persistence", async () => {
+    for (const route of [
+      { requestId: "Bearer request-secret", endpointId: "ml1-id" },
+      { runId: "codex:Bearer run-secret", endpointId: "ml1-id" },
+    ]) {
+      const collected = await collect({}, { observedRoutes: [route] });
+      expect(collected.observedRoutes).toEqual([]);
+      expect(collected.routeObservationState).toBe("partial");
+      expect(collected.sources.every((source) => source.state === "available")).toBe(true);
+      expect(JSON.stringify(collected)).not.toContain("secret");
+    }
   });
 
   const qualifiedRoutePrivacyCases = JSON.parse(fixture("private-observed-route-ids.json")) as Array<{
@@ -409,12 +414,12 @@ describe("Olla fleet telemetry adapter", () => {
   }>;
 
   for (const privacyCase of qualifiedRoutePrivacyCases) {
-    it(`rejects credential assignments in ${privacyCase.label} before persistence`, async () => {
-      const result = collect({}, { observedRoutes: [privacyCase.route] });
-      await expect(result).rejects.toThrow("credential-like label value rejected");
-      await result.catch((error) => {
-        expect(JSON.stringify(error)).not.toContain(privacyCase.secret);
-      });
+    it(`marks credential assignments in ${privacyCase.label} partial before persistence`, async () => {
+      const collected = await collect({}, { observedRoutes: [privacyCase.route] });
+      expect(collected.observedRoutes).toEqual([]);
+      expect(collected.routeObservationState).toBe("partial");
+      expect(collected.sources.every((source) => source.state === "available")).toBe(true);
+      expect(JSON.stringify(collected)).not.toContain(privacyCase.secret);
     });
   }
 
@@ -526,25 +531,139 @@ describe("Olla fleet telemetry adapter", () => {
     })).toEqual({ state: "unmatched", key: null, snapshot: null });
   });
 
-  it("returns ambiguous with both provenance records when JSON and Prometheus match the same route", async () => {
+  it("marks privacy-rejected route observations partial without downgrading network sources", async () => {
+    const collected = await collect({}, {
+      observedRoutes: [{
+        runId: "ollama-agent:Bearer route-secret",
+        endpointId: "ml1-id",
+      }],
+    });
+
+    expect(collected.observedRoutes).toEqual([]);
+    expect(collected.routeObservationState).toBe("partial");
+    expect(collected.sources.every((source) => source.state === "available")).toBe(true);
+  });
+
+  it("matches exact observed request, run, and session routes without requiring an observed model", async () => {
+    const collected = await collect({}, {
+      observedRoutes: [{
+        requestId: "request-without-model",
+        endpointId: "ml1-id",
+      }, {
+        runId: "ollama-agent:author%3A91",
+        endpointId: "ml1-id",
+      }, {
+        sessionId: "ollama-agent:session-without-model",
+        endpointId: "ml1-id",
+      }],
+    });
+    const cases = [
+      {
+        route: { requestId: "request-without-model", model: "qwen3.8:27b" },
+        key: "request_id=olla:request-without-model",
+      },
+      {
+        route: { runId: "ollama-agent:author%3A91", model: "qwen3.8:27b" },
+        key: "run_id=ollama-agent:author%3A91",
+      },
+      {
+        route: { sessionId: "ollama-agent:session-without-model", model: "qwen3.8:27b" },
+        key: "session_id=ollama-agent:session-without-model",
+      },
+    ];
+    for (const testCase of cases) {
+      const result = correlateOllaRoute(collected, testCase.route);
+      expect(result.state, testCase.key).toBe("matched");
+      if (result.state !== "matched") throw new Error("expected model-optional route match");
+      expect(result.key).toBe(testCase.key);
+      expect(result.snapshot.backend_host).toBe("ml1");
+    }
+  });
+
+  it("falls through request, run, and session correlation IDs by precedence", async () => {
+    const collected = await collect({}, {
+      observedRoutes: [{
+        runId: "ollama-agent:author%3A91",
+        endpointId: "ml1-id",
+      }, {
+        sessionId: "ollama-agent:session-91",
+        endpointId: "ml2-id",
+      }],
+    });
+
+    const runMatch = correlateOllaRoute(collected, {
+      requestId: "unobserved-request",
+      runId: "ollama-agent:author%3A91",
+      sessionId: "ollama-agent:session-91",
+    });
+    expect(runMatch.state).toBe("matched");
+    if (runMatch.state !== "matched") throw new Error("expected run fallback match");
+    expect(runMatch.key).toBe("run_id=ollama-agent:author%3A91");
+    expect(runMatch.snapshot.backend_host).toBe("ml1");
+
+    const sessionMatch = correlateOllaRoute(collected, {
+      requestId: "unobserved-request",
+      runId: "ollama-agent:unobserved-run",
+      sessionId: "ollama-agent:session-91",
+    });
+    expect(sessionMatch.state).toBe("matched");
+    if (sessionMatch.state !== "matched") throw new Error("expected session fallback match");
+    expect(sessionMatch.key).toBe("session_id=ollama-agent:session-91");
+    expect(sessionMatch.snapshot.backend_host).toBe("ml2");
+  });
+
+  it("keeps multiple distinct observations at the selected precedence ambiguous", async () => {
+    const collected = await collect({}, {
+      observedRoutes: [{
+        runId: "ollama-agent:ambiguous-run",
+        endpointId: "ml1-id",
+      }, {
+        runId: "ollama-agent:ambiguous-run",
+        endpointId: "ml2-id",
+      }],
+    });
+
+    const result = correlateOllaRoute(collected, {
+      requestId: "unobserved-request",
+      runId: "ollama-agent:ambiguous-run",
+    });
+    expect(result).toEqual({
+      state: "ambiguous",
+      key: "run_id=ollama-agent:ambiguous-run",
+      snapshot: null,
+      provenance: [],
+    });
+  });
+
+  it("deduplicates JSON and Prometheus observations of the same model-absent backend", async () => {
     const collected = await collect({}, {
       observedRoutes: [{
         requestId: "duplicate-route",
         endpointId: "ml1-id",
-        model: "qwen3.8:27b",
       }],
     });
     const result = correlateOllaRoute(collected, { requestId: "duplicate-route" });
-    expect(result).toMatchObject({
-      state: "ambiguous",
-      key: "request_id=olla:duplicate-route",
-      snapshot: null,
+    expect(result.state).toBe("matched");
+    if (result.state !== "matched") throw new Error("expected one canonical backend match");
+    expect(result.key).toBe("request_id=olla:duplicate-route");
+    expect(result.snapshot.backend_host).toBe("ml1");
+  });
+
+  it("preserves ambiguity when one endpoint name identifies distinct backends", async () => {
+    const endpoints = JSON.parse(fixture("endpoints.json"));
+    endpoints.endpoints[1].name = endpoints.endpoints[0].name;
+    const collected = await collect({
+      "/internal/status/endpoints": JSON.stringify(endpoints),
+    }, {
+      observedRoutes: [{
+        requestId: "ambiguous-route",
+        endpointName: endpoints.endpoints[0].name,
+      }],
     });
-    if (result.state !== "ambiguous") throw new Error("expected duplicate-source ambiguity");
-    expect(result.provenance).toEqual(expect.arrayContaining([
-        expect.objectContaining({ source: "olla-stats-models-include_endpoints-true-include_summary-true" }),
-        expect.objectContaining({ source: "olla-metrics" }),
-    ]));
-    expect(result.provenance).toHaveLength(2);
+    const result = correlateOllaRoute(collected, { requestId: "ambiguous-route" });
+    expect(result.state).toBe("ambiguous");
+    if (result.state !== "ambiguous") throw new Error("expected distinct-backend ambiguity");
+    expect(result.key).toBe("request_id=olla:ambiguous-route");
+    expect(result.provenance.length).toBeGreaterThan(0);
   });
 });

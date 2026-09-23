@@ -11,13 +11,26 @@
  * rows rotated. The composite collapses true re-scan duplicates (identical
  * row content) while keeping every distinct observation.
  */
-import { stableId, type ProviderEvent } from "./types";
+import {
+  privateSafeEventId,
+  privateSafeProviderIdentity,
+  qualifiedProviderId,
+  type ProviderEvent,
+} from "./types";
 import { readLedger, type LedgerRun } from "@/ledger";
 
 export function ollamaEventsFromRuns(runs: LedgerRun[], provenance: string): ProviderEvent[] {
   const events: ProviderEvent[] = [];
   for (const run of runs) {
-    const id = [
+    const safeRunId = privateSafeProviderIdentity(run.runId);
+    const safeSessionId = privateSafeProviderIdentity(run.sessionId);
+    const runId = qualifiedProviderId("ollama-agent", safeRunId);
+    const sessionId = qualifiedProviderId("ollama-agent", safeSessionId);
+    const rejectedRunId = typeof run.runId === "string" && run.runId.length > 0 && runId === null;
+    const rejectedSessionId = typeof run.sessionId === "string" && run.sessionId.length > 0
+      && sessionId === null;
+    const partial = rejectedRunId || rejectedSessionId;
+    const eventIdentity = [
       run.runId ?? "",
       run.ts ?? "",
       run.model ?? "",
@@ -27,13 +40,14 @@ export function ollamaEventsFromRuns(runs: LedgerRun[], provenance: string): Pro
       String(run.ollamaOutputTokens),
     ].join("|");
     events.push({
-      eventId: stableId("ollama-claude", id),
+      eventId: privateSafeEventId("ollama-claude", eventIdentity),
       harness: "ollama-claude",
       billingRoute: "local",
       modelProvider: "ollama",
       model: run.model ?? "unknown",
       ts: run.ts ?? null,
-      status: run.completed ? "ok" : run.verified === false ? "error" : "incomplete",
+      status: run.completed ? (partial ? "incomplete" : "ok") : run.verified === false ? "error" : "incomplete",
+      partial,
       retryOf: null,
       inputTokens: run.ollamaInputTokens ?? null,
       outputTokens: run.ollamaOutputTokens ?? null,
@@ -42,6 +56,9 @@ export function ollamaEventsFromRuns(runs: LedgerRun[], provenance: string): Pro
       reasoningTokens: null,
       cashChargeUsd: null,
       provenance,
+      requestId: null,
+      runId,
+      sessionId,
     });
   }
   return events;

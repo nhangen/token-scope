@@ -205,6 +205,12 @@ describe("parseArgs --savings", () => {
     expect(stderrBuf).toContain("mutually exclusive");
   });
 
+  it("lists fleet and providers in the mutually-exclusive report mode error", () => {
+    expect(() => parseArgs(["--fleet", "--providers"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("--fleet");
+    expect(stderrBuf).toContain("--providers");
+  });
+
   it("rejects a non-numeric --pm-cost", () => {
     expect(() => parseArgs(["--savings", "--session", "abc123", "--pm-cost", "cheap"])).toThrow("__exit_1");
     expect(stderrBuf).toContain("non-negative dollar amount");

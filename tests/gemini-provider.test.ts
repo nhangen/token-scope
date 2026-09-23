@@ -82,13 +82,14 @@ describe("Gemini CLI source contract", () => {
 
     expect(parsed.events).toHaveLength(1);
     expect(parsed.events[0]).toMatchObject({
-      eventId: "gemini-cli:response-duplicate",
       model: "gemini-later",
       inputTokens: 864,
       outputTokens: 65,
       cacheReadTokens: 123,
       reasoningTokens: 9,
     });
+    expect(parsed.events[0]!.eventId).toMatch(/^gemini-cli:opaque:[a-f0-9]{64}$/);
+    expect(parsed.events[0]!.eventId).not.toContain("response-duplicate");
   });
 
   it("replaces the live message set when a $set.messages snapshot arrives", () => {
@@ -125,13 +126,14 @@ describe("Gemini CLI source contract", () => {
 
     expect(parsed.events).toHaveLength(1);
     expect(parsed.events[0]).toMatchObject({
-      eventId: "gemini-cli:response-from-set",
       model: "gemini-set",
       inputTokens: 654,
       outputTokens: 54,
       cacheReadTokens: 111,
       reasoningTokens: 8,
     });
+    expect(parsed.events[0]!.eventId).toMatch(/^gemini-cli:opaque:[a-f0-9]{64}$/);
+    expect(parsed.events[0]!.eventId).not.toContain("response-from-set");
   });
 
   it("removes a known rewind target and every message after it", () => {
@@ -169,13 +171,15 @@ describe("Gemini CLI source contract", () => {
     ].join("\n"), "known-rewind.jsonl");
 
     expect(parsed.events.map((event) => ({
-      eventId: event.eventId,
       inputTokens: event.inputTokens,
       outputTokens: event.outputTokens,
     }))).toEqual([
-      { eventId: "gemini-cli:response-kept", inputTokens: 400, outputTokens: 43 },
-      { eventId: "gemini-cli:response-after-rewind", inputTokens: 800, outputTokens: 76 },
+      { inputTokens: 400, outputTokens: 43 },
+      { inputTokens: 800, outputTokens: 76 },
     ]);
+    expect(parsed.events.every((event) => /^gemini-cli:opaque:[a-f0-9]{64}$/.test(event.eventId)))
+      .toBe(true);
+    expect(parsed.events.some((event) => event.eventId.includes("response"))).toBe(false);
   });
 
   it("preserves null for token classes omitted by a partial record", () => {
@@ -225,7 +229,8 @@ describe("Gemini CLI source contract", () => {
     const result = geminiCliEvents(join(FX, "rewind"));
 
     expect(result.events).toHaveLength(1);
-    expect(result.events[0]!.eventId).toContain("response-after-rewind");
+    expect(result.events[0]!.eventId).toMatch(/^gemini-cli:opaque:[a-f0-9]{64}$/);
+    expect(result.events[0]!.eventId).not.toContain("response-after-rewind");
     expect(result.events[0]!.inputTokens).toBe(300);
   });
 
