@@ -1,0 +1,27 @@
+{
+  "id": "terminals-duplicate-rows",
+  "ok": true,
+  "result": {
+    "terminals": [
+      {
+        "handle": "term-local",
+        "worktreeId": "repo-token::/Users/alice/token-scope",
+        "tabId": "tab-local",
+        "leafId": "leaf-local",
+        "agentIdentity": "opencode",
+        "executionHostId": "local"
+      },
+      {
+        "handle": "term-local",
+        "worktreeId": "repo-token::/Users/alice/token-scope",
+        "tabId": "tab-local",
+        "leafId": "leaf-local",
+        "agentIdentity": "opencode",
+        "executionHostId": "local"
+      }
+    ],
+    "totalCount": 2,
+    "truncated": false,
+    "hostScope": { "hostIds": ["local"], "omittedHostIds": [] }
+  }
+}
