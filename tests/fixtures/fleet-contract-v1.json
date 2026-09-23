@@ -1,0 +1,68 @@
+{
+  "usage_event": {
+    "schema_version": "1.0",
+    "record_type": "usage_event",
+    "record_id": "usage:openai:req-7",
+    "run_id": "codex:run-3",
+    "session_id": "codex:session-2",
+    "request_id": "openai:req-7",
+    "prompt_origin_host": "studio32",
+    "execution_host": "ml1",
+    "router_host": "ml1",
+    "backend_host": "ml2",
+    "harness": "codex",
+    "provider": "openai",
+    "backend": "vllm",
+    "model": "gpt-oss-120b",
+    "timestamp": "2026-09-22T14:02:03.456Z",
+    "status": "ok",
+    "provenance": {
+      "source": "codex-rollout",
+      "locator": "sessions/2026/09/22/run-3.jsonl",
+      "collected_at": "2026-09-22T14:02:04.000Z",
+      "completeness": "complete"
+    },
+    "usage": {
+      "input_tokens": 120,
+      "output_tokens": 24,
+      "cache_read_tokens": null,
+      "cache_write_tokens": null,
+      "reasoning_tokens": null,
+      "cash_charge_usd": null
+    }
+  },
+  "operational_snapshot": {
+    "schema_version": "1.0",
+    "record_type": "operational_snapshot",
+    "record_id": "olla:snapshot:2026-09-22T14:05:00.000Z",
+    "run_id": "codex:run-3",
+    "session_id": null,
+    "request_id": null,
+    "prompt_origin_host": null,
+    "execution_host": null,
+    "router_host": "ml1",
+    "backend_host": "ml2",
+    "harness": null,
+    "provider": "ollama",
+    "backend": "vllm",
+    "model": "gpt-oss-120b",
+    "timestamp": "2026-09-22T14:05:00.000Z",
+    "status": "partial",
+    "provenance": {
+      "source": "olla-internal-metrics",
+      "locator": "http://ml1/internal/metrics",
+      "collected_at": "2026-09-22T14:05:01.000Z",
+      "completeness": "partial"
+    },
+    "window": {
+      "start": "2026-09-22T14:00:00.000Z",
+      "end": "2026-09-22T14:05:00.000Z"
+    },
+    "process_id": "olla:ml1:pid-42",
+    "stale_after_ms": 60000,
+    "counters": {
+      "requests": 18,
+      "errors": null
+    }
+  }
+}

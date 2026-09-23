@@ -552,6 +552,33 @@ Cross-cutting rules:
 
 ---
 
+## Fleet Record Contract
+
+Fleet-aware sources use the additive schema in `src/fleet-contract.ts`. Version `1.0` has two envelopes:
+
+- `usage_event` is one request observation. It may carry nullable token classes and a nullable measured cash charge.
+- `operational_snapshot` is an aggregate observation over a half-open time window. Its counters describe the whole window and must never be presented as request-level measurements.
+
+Both envelopes always contain `schema_version`, `record_type`, `record_id`, `run_id`, `session_id`, `request_id`, `prompt_origin_host`, `execution_host`, `router_host`, `backend_host`, `harness`, `provider`, `backend`, `model`, `timestamp`, `status`, and `provenance`. An unavailable value is `null`; it is never `0`, an empty string, or an inferred host or route. Zero is reserved for a source that explicitly measured zero. Status is one of `ok`, `error`, `incomplete`, `partial`, `unavailable`, or `unknown`. Provenance names the source and collection time, with `complete`, `partial`, or `unavailable` completeness.
+
+### Identity, clocks, and joins
+
+- `record_id` is the stable deduplication identity. Identical records with the same ID collapse. Different content with the same ID is a conflict; neither variant wins.
+- `run_id`, `session_id`, `request_id`, and snapshot `process_id` are opaque, source-qualified identifiers such as `codex:run-3`. Raw IDs are qualified by the adapter that owns their namespace.
+- Correlation precedence is exact `request_id`, then exact `run_id`, then exact `session_id`. A match must also place the event timestamp inside the snapshot's `[window.start, window.end)` interval. One candidate is `matched`, none is `unmatched`, and more than one at the first matching precedence level is `ambiguous`. There is no model, hostname, or nearest-time fallback.
+- Timestamps are canonical RFC 3339 UTC values at whole-second or millisecond precision. A usage timestamp is the source-reported request time or `null`; it is never replaced by file modification or collection time. A snapshot timestamp is its observation time, while `provenance.collected_at` is when TokenScope read it. TokenScope does not correct host clock skew. An undated event cannot be placed in a snapshot window and remains unmatched.
+- A snapshot is `current` through exactly `stale_after_ms` after its timestamp and `stale` after that. A missing threshold or a future-dated snapshot has unknown freshness.
+
+Snapshot counter deltas are emitted only when both values and both process IDs are present. A changed process ID is `restart`; a lower counter under the same process ID is `reset`; either case has a null delta. Missing values or process identity are `unavailable`, not zero. Snapshot provenance marked `partial` or `unavailable` requires the matching status, and those statuses require matching provenance; all other snapshot statuses require complete provenance. Partial snapshots retain measured counters and leave missing counters null. Unmatched, ambiguous, stale, partial, reset, restart, and unavailable states remain visible to downstream reports.
+
+### Privacy and migration
+
+Fleet records contain metadata and measured numeric telemetry only. They must not contain prompt text, terminal content or scrollback, credentials, authorization values, raw authorization headers, or arbitrary header collections. The v1 parser rejects those fields, including when nested.
+
+This contract does not replace `ProviderEvent` or alter `--providers`. Existing adapters and nullable token/cost behavior remain unchanged. New fleet adapters should emit v1 envelopes alongside the existing provider events where both views are supported. Historical provider records must not be upgraded by guessing host, route, request, run, or session identity; unavailable fleet fields stay null. A future schema change uses a new `schema_version` and an explicit adapter rather than changing v1 interpretation in place.
+
+---
+
 ## Cost Alert Hook
 
 Real-time in-session spend alerts for Claude Code. Fires after each response and
