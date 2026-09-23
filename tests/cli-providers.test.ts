@@ -19,6 +19,7 @@ function runProviders(extraArgs: string[] = []) {
       TOKEN_SCOPE_CLAUDE_ROOT: join(FX, "claude-root"),
       TOKEN_SCOPE_CODEX_HOME: join(FX, "codex-home"),
       TOKEN_SCOPE_LEDGER: join(FX, "ledger-sample.jsonl"),
+      TOKEN_SCOPE_GEMINI_ROOT: join(FX, "gemini-cli", "success"),
       // No opencode fixture db on disk: source must be reported unavailable.
       TOKEN_SCOPE_OPENCODE_DB: "/nonexistent/opencode.db",
     },
@@ -32,8 +33,10 @@ describe("--providers production CLI path", () => {
   it("renders the full report from fixture stores via env overrides", () => {
     const { code, out } = runProviders();
     expect(code).toBe(0);
-    expect(out).toContain("provider usage by harness / billing route / model");
+    expect(out).toContain("provider usage by harness / provider / billing route / model");
     expect(out).toContain("unavailable sources (volume unknown, not zero): opencode");
+    expect(out).toContain("unsupported sources (not ingested): google-ai-api, vertex-ai");
+    expect(out).toContain("gemini-cli");
     expect(out).toContain("all values measured from source records; no estimates");
   });
 
@@ -46,6 +49,7 @@ describe("--providers production CLI path", () => {
     expect(parsed.rows.length).toBeGreaterThan(0);
     expect(typeof parsed.untimedExcluded).toBe("number");
     expect(Array.isArray(parsed.unavailable)).toBe(true);
+    expect(parsed.unsupported).toEqual(["google-ai-api", "vertex-ai"]);
     // Every row carries provenance and partial-class accounting (#37 AC).
     for (const row of parsed.rows) {
       expect(Array.isArray(row.provenance)).toBe(true);

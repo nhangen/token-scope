@@ -1,0 +1,2 @@
+{"type":"assistant","sessionId":"boundary-session","timestamp":"2026-09-22T13:05:00.000Z","message":{"id":"boundary-excluded","model":"claude-opus-4-8","usage":{"input_tokens":10,"output_tokens":2}}}
+{"type":"assistant","sessionId":"boundary-session","timestamp":"2026-09-22T13:05:01.000Z","message":{"id":"boundary-included","model":"claude-opus-4-8","usage":{"input_tokens":20,"output_tokens":4}}}

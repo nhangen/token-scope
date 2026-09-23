@@ -1,0 +1,3 @@
+{"sessionId":"session-missing-null","projectHash":"project-a","startTime":"2026-09-23T13:00:00.000Z","lastUpdated":"2026-09-23T13:02:00.000Z","kind":"main"}
+{"id":"response-missing","timestamp":"2026-09-23T13:01:00.000Z","type":"gemini","content":"sanitized","thoughts":[]}
+{"id":"response-null","timestamp":"2026-09-23T13:02:00.000Z","type":"gemini","content":"sanitized","model":"gemini-3-flash-preview","thoughts":[],"tokens":null}

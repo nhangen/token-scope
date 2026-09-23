@@ -4,6 +4,7 @@ import {
   type FleetOperationalSnapshot,
   type FleetProvenance,
 } from "@/fleet-contract";
+import { PrivacyError, assertSafeLabelValue } from "@/private-values";
 
 const APPROVED_ORCA_COMMANDS = Object.freeze([
   Object.freeze(["status", "--json"] as const),
@@ -144,12 +145,6 @@ interface OrcaHostScope {
   omittedHostIds: Set<string>;
 }
 
-class PrivacyError extends Error {}
-
-const SENSITIVE_KEY = /^(?:api[_-]?key|access[_-]?token|auth(?:orization)?|credential|password|secret|token|key)$/i;
-const CREDENTIAL_VALUE = /\b(?:bearer|basic)(?:\s+|%20)\S+|(?:^|[?&#/:;\s])(?:api[_-]?key|access[_-]?token|auth(?:orization)?|credential|password|secret|token|key)\s*[:=]\s*\S+/i;
-const RAW_CREDENTIAL_VALUE = /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,})\b/i;
-
 function objectValue(value: unknown, name: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`${name} must be an object`);
@@ -164,21 +159,8 @@ function optionalString(value: unknown): string | null {
 function safeString(value: unknown, name: string): string {
   const raw = optionalString(value);
   if (raw === null) throw new Error(`${name} must be a non-empty string`);
-  const text = raw.replace(/[\u0000-\u001f\u007f]/g, "");
-  if (text.length === 0) throw new Error(`${name} must be a non-empty string`);
-  if (CREDENTIAL_VALUE.test(text) || RAW_CREDENTIAL_VALUE.test(text)) {
-    throw new PrivacyError(`${name} contains a credential-like value`);
-  }
-  try {
-    const parsed = new URL(text);
-    const sensitiveQuery = [...parsed.searchParams.keys()].some((key) => SENSITIVE_KEY.test(key));
-    if (parsed.username !== "" || parsed.password !== "" || sensitiveQuery) {
-      throw new PrivacyError(`${name} contains a credential-like URL`);
-    }
-  } catch (error) {
-    if (error instanceof PrivacyError) throw error;
-  }
-  return text.slice(0, 2048);
+  assertSafeLabelValue(raw);
+  return raw.slice(0, 2048);
 }
 
 function optionalSafeString(value: unknown, name: string): string | null {
@@ -192,6 +174,25 @@ function orcaAgentIdentity(value: unknown, name: string): { value: string | null
     return { value: null, invalid: true };
   }
   return { value: candidate, invalid: false };
+}
+
+function orcaCorrelationIdentity(
+  value: unknown,
+  name: string,
+): { value: string | null; reason: "partial_records" | "privacy" | null } {
+  if (value === null || value === undefined || value === "") return { value: null, reason: null };
+  if (typeof value !== "string") return { value: null, reason: "partial_records" };
+  let candidate: string;
+  try {
+    candidate = safeString(value, name);
+  } catch (error) {
+    return { value: null, reason: error instanceof PrivacyError ? "privacy" : "partial_records" };
+  }
+  const separator = candidate.indexOf(":");
+  if (separator <= 0 || separator === candidate.length - 1) {
+    return { value: null, reason: "partial_records" };
+  }
+  return { value: candidate, reason: null };
 }
 
 function canonicalTimestamp(value: unknown, name: string): string {
@@ -437,7 +438,7 @@ function hasCompleteScope(value: Record<string, unknown>): boolean {
 
 function markPartial(source: OrcaSourceObservation, reason: OrcaSourceReason): void {
   source.state = "partial";
-  source.reason = reason;
+  if (source.reason !== "privacy" || reason === "privacy") source.reason = reason;
   source.provenance.completeness = "partial";
 }
 
@@ -460,6 +461,9 @@ function addTerminalRecords(
     paneKey: string | null;
     agentIdentity: string | null;
     invalidAgentIdentity: boolean;
+    requestId: string | null;
+    runId: string | null;
+    sessionId: string | null;
   }>();
   if (!sourceComplete) markPartial(source, "partial_records");
   for (const [terminalIndex, candidate] of value.terminals.entries()) {
@@ -486,6 +490,12 @@ function addTerminalRecords(
         && worktree?.placement.ambiguousPaneKeys.has(paneKey) === true;
       const directAgentType = orcaAgentIdentity(terminal.agentIdentity, "terminal.agentIdentity");
       if (directAgentType.invalid) markPartial(source, "partial_records");
+      const requestId = orcaCorrelationIdentity(terminal.requestId, "terminal.requestId");
+      const runId = orcaCorrelationIdentity(terminal.runId, "terminal.runId");
+      const sessionId = orcaCorrelationIdentity(terminal.sessionId, "terminal.sessionId");
+      for (const identity of [requestId, runId, sessionId]) {
+        if (identity.reason !== null) markPartial(source, identity.reason);
+      }
       const terminalIdentity = JSON.stringify([executionSourceId, handle]);
       const duplicate = seenTerminalIdentities.get(terminalIdentity);
       if (duplicate !== undefined) {
@@ -493,11 +503,17 @@ function addTerminalRecords(
         if (duplicate.worktreeId !== worktreeId
           || duplicate.paneKey !== paneKey
           || duplicate.agentIdentity !== directAgentType.value
-          || duplicate.invalidAgentIdentity !== directAgentType.invalid) {
+          || duplicate.invalidAgentIdentity !== directAgentType.invalid
+          || duplicate.requestId !== requestId.value
+          || duplicate.runId !== runId.value
+          || duplicate.sessionId !== sessionId.value) {
           const existing = records[duplicate.recordIndex];
           if (existing !== undefined) {
             const unattributed = parseFleetRecord({
               ...existing,
+              request_id: null,
+              run_id: null,
+              session_id: null,
               harness: null,
               status: "partial",
               provenance: { ...existing.provenance, completeness: "partial" },
@@ -521,6 +537,9 @@ function addTerminalRecords(
         paneKey,
         agentIdentity: directAgentType.value,
         invalidAgentIdentity: directAgentType.invalid,
+        requestId: requestId.value,
+        runId: runId.value,
+        sessionId: sessionId.value,
       });
       const agentType = directAgentType.invalid
         ? null
@@ -545,9 +564,9 @@ function addTerminalRecords(
         schema_version: FLEET_SCHEMA_VERSION,
         record_type: "operational_snapshot",
         record_id: `orca:placement:${encodeURIComponent(collectedAt)}:${terminalIndex}`,
-        run_id: null,
-        session_id: null,
-        request_id: null,
+        run_id: runId.value,
+        session_id: sessionId.value,
+        request_id: requestId.value,
         prompt_origin_host: null,
         execution_host: executionHost,
         router_host: null,

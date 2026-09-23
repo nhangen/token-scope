@@ -2,12 +2,13 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { claudeEvents, claudeEventsFromTranscript } from "@/providers/claude";
+import { geminiCliEventsFromTranscript } from "@/providers/gemini-cli";
 import { ollamaEvents, ollamaEventsFromRuns } from "@/providers/ollama";
 import { opencodeEventsFromDb } from "@/providers/opencode";
 import type { LedgerRun } from "@/ledger";
 import { codexEventsFromRollout } from "@/providers/codex";
 import { collectProviderEvents, dedupeEvents } from "@/providers";
-import { stableId } from "@/providers/types";
+import { privateSafeEventId, privateSafeProviderIdentity } from "@/providers/types";
 import { providerRows, renderProviderReport, providerReportJson, untimedExcluded } from "@/reports/providers";
 
 const FX = join(import.meta.dir, "fixtures", "providers");
@@ -106,6 +107,186 @@ describe("ollama run_id reuse (#37 post-merge audit)", () => {
     const deduped = dedupeEvents(evs);
     expect(deduped.length).toBe(2); // dedup must not delete the second run
   });
+
+  it("uses an opaque event ID when an Ollama correlation identity is rejected", () => {
+    const secret = "Bearer audit-secret";
+    const [event] = ollamaEventsFromRuns([{
+      ts: "2099-12-31T23:59:58.000Z",
+      runId: secret,
+      sessionId: null,
+      model: "model-private-marker",
+      taskName: "task-private-marker",
+      cwd: null,
+      ollamaInputTokens: 987654321,
+      ollamaOutputTokens: 123456789,
+      turns: 1,
+      completed: true,
+      verified: true,
+      reason: "ok",
+    } as LedgerRun], "ledger");
+    expect(event?.eventId).toMatch(/^ollama-claude:opaque:[a-f0-9]{64}$/);
+    for (const privatePart of [
+      secret,
+      "audit-secret",
+      "2099-12-31T23:59:58.000Z",
+      "model-private-marker",
+      "task-private-marker",
+      "987654321",
+      "123456789",
+    ]) {
+      expect(event?.eventId).not.toContain(privatePart);
+    }
+    expect(event?.runId).toBeNull();
+    expect(event?.sessionId).toBeNull();
+    expect(event?.status).toBe("incomplete");
+  });
+});
+
+describe("provider correlation identity privacy", () => {
+  it("always hashes every complete event identity", () => {
+    const first = privateSafeEventId(
+      "test-provider",
+      "accepted-source-id",
+      "/private/provenance.jsonl",
+      "private-model",
+      "2099-12-31T23:59:58.000Z",
+      987654321,
+    );
+    const same = privateSafeEventId(
+      "test-provider",
+      "accepted-source-id",
+      "/private/provenance.jsonl",
+      "private-model",
+      "2099-12-31T23:59:58.000Z",
+      987654321,
+    );
+    const distinct = privateSafeEventId(
+      "test-provider",
+      "accepted-source-id",
+      "/private/provenance.jsonl",
+      "private-model",
+      "2099-12-31T23:59:58.000Z",
+      987654322,
+    );
+
+    expect(first).toMatch(/^test-provider:opaque:[a-f0-9]{64}$/);
+    expect(same).toBe(first);
+    expect(distinct).not.toBe(first);
+    expect(privateSafeEventId("test-provider", null))
+      .not.toBe(privateSafeEventId("test-provider", undefined));
+    expect(privateSafeEventId("test-provider", "1"))
+      .not.toBe(privateSafeEventId("test-provider", 1));
+    expect(privateSafeEventId("test-provider", 0))
+      .not.toBe(privateSafeEventId("test-provider", -0));
+    for (const privatePart of [
+      "accepted-source-id",
+      "/private/provenance.jsonl",
+      "private-model",
+      "2099-12-31T23:59:58.000Z",
+      "987654321",
+    ]) {
+      expect(first).not.toContain(privatePart);
+    }
+  });
+
+  it("rejects raw token formats and control-bearing identities while preserving unknown/null", () => {
+    expect(privateSafeProviderIdentity("ghp_auditsecret")).toBeNull();
+    expect(privateSafeProviderIdentity("sk-audit-secret")).toBeNull();
+    expect(privateSafeProviderIdentity("glpat-audit-secret")).toBeNull();
+    expect(privateSafeProviderIdentity("ghp_\u0000auditsecret")).toBeNull();
+    expect(privateSafeProviderIdentity("safe\u0000\u001f\u007f-identity")).toBeNull();
+    expect(privateSafeProviderIdentity("safe\u0085\u009f-identity")).toBeNull();
+    expect(privateSafeProviderIdentity("AIzaSyD-auditGoogleKey0123456789012345")).toBeNull();
+    expect(privateSafeProviderIdentity("xox" + "b-123456789012-auditSlackToken")).toBeNull();
+    expect(privateSafeProviderIdentity("xoxp-123456789012-auditSlackToken")).toBeNull();
+    expect(privateSafeProviderIdentity("xoxa-123456789012-auditSlackToken")).toBeNull();
+    expect(privateSafeProviderIdentity("xapp-1-A0123456789-auditSlackAppToken")).toBeNull();
+    expect(privateSafeProviderIdentity("npm_0123456789abcdef0123456789abcdef0123")).toBeNull();
+    expect(privateSafeProviderIdentity("eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJhdWRpdCJ9.audit_signature_value")).toBeNull();
+    expect(privateSafeProviderIdentity("unknown")).toBe("unknown");
+    expect(privateSafeProviderIdentity(null)).toBeNull();
+  });
+
+  it("keeps distinct overlength source identities as distinct opaque event ids", () => {
+    const prefix = "x".repeat(256);
+    const Database = require("bun:sqlite").Database;
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)");
+    for (const suffix of ["a", "b"]) {
+      const identity = `${prefix}${suffix}`;
+      db.run(
+        "INSERT INTO message (id, session_id, data) VALUES (?, ?, ?)",
+        identity,
+        identity,
+        JSON.stringify({ role: "assistant", tokens: { input: 1, output: 1 } }),
+      );
+    }
+    const events = opencodeEventsFromDb(db);
+    db.close();
+
+    expect(events).toHaveLength(2);
+    expect(new Set(events.map((event) => event.eventId)).size).toBe(2);
+    expect(events.every((event) => /^opencode:opaque:[a-f0-9]{64}$/.test(event.eventId))).toBe(true);
+    expect(events.every((event) => event.requestId === null && event.sessionId === null)).toBe(true);
+    expect(dedupeEvents(events)).toHaveLength(2);
+  });
+
+  it("keeps rejected Claude, Gemini, Codex, and OpenCode identities out of event ids", () => {
+    const claudeSecret = "glpat-claude-audit-secret";
+    const claude = claudeEventsFromTranscript(JSON.stringify({
+      type: "assistant",
+      timestamp: "2026-09-23T00:00:00.000Z",
+      message: {
+        id: claudeSecret,
+        model: "claude-opus-4-8",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    }), "claude.jsonl")[0]!;
+    expect(claude.requestId).toBeNull();
+    expect(claude.eventId).not.toContain(claudeSecret);
+
+    const geminiSecret = "ghp_gemini_auditsecret";
+    const gemini = geminiCliEventsFromTranscript([
+      JSON.stringify({ sessionId: "safe-session", messages: [] }),
+      JSON.stringify({
+        id: geminiSecret,
+        type: "gemini",
+        model: "gemini-test",
+        timestamp: "2026-09-23T00:00:00.000Z",
+        tokens: { input: 2, cached: 1, output: 1, thoughts: 0 },
+      }),
+    ].join("\n"), "gemini.jsonl").events[0]!;
+    expect(gemini.requestId).toBeNull();
+    expect(gemini.eventId).not.toContain(geminiSecret);
+
+    const codexSecret = "sk-codex-audit-secret";
+    const codex = codexEventsFromRollout([
+      JSON.stringify({ type: "session_meta", payload: { id: codexSecret } }),
+      JSON.stringify({ type: "event_msg", payload: { info: { total_token_usage: { input_tokens: 1, output_tokens: 1 } } } }),
+    ].join("\n"), "codex.jsonl")[0]!;
+    expect(codex.sessionId).toBeNull();
+    expect(codex.eventId).not.toContain(codexSecret);
+
+    const opencodeSecret = "ghp_opencode_auditsecret";
+    const Database = require("bun:sqlite").Database;
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)");
+    db.run(
+      "INSERT INTO message (id, session_id, data) VALUES (?, ?, ?)",
+      opencodeSecret,
+      "safe-session",
+      JSON.stringify({ role: "assistant", tokens: { input: 1, output: 1 } }),
+    );
+    const opencode = opencodeEventsFromDb(db)[0]!;
+    db.close();
+    expect(opencode.requestId).toBeNull();
+    expect(opencode.eventId).not.toContain(opencodeSecret);
+
+    for (const event of [claude, gemini, codex, opencode]) {
+      expect(event.eventId).toMatch(/^[^:]+:opaque:[a-f0-9]{64}$/);
+      expect(event.status).toBe("incomplete");
+    }
+  });
 });
 
 describe("opencode cost/error/id mapping (#37 post-merge audit)", () => {
@@ -129,7 +310,8 @@ describe("opencode cost/error/id mapping (#37 post-merge audit)", () => {
     expect(ev[0]!.status).toBe("ok");
     expect(ev[1]!.status).toBe("error"); // aborted messages are not successes
     expect(ev.every((e) => e.cashChargeUsd !== null)).toBe(true);
-    expect(ev[0]!.eventId).toBe(stableId("opencode", "row-1")); // db pk, not JSON id
+    expect(ev[0]!.eventId).toMatch(/^opencode:opaque:[a-f0-9]{64}$/); // db pk, not JSON id
+    expect(ev[0]!.eventId).not.toContain("row-1");
     db.close();
   });
 
@@ -190,6 +372,50 @@ describe("partial aggregation (#37 post-merge audit)", () => {
     // claude-sample fixture semantics: absent vs zero matter; here b omits
     expect(rows[0]!.cacheRead).toBe(100); // sums what exists
     expect(rows[0]!.partialClasses).toContain("cacheRead"); // and says so
+  });
+});
+
+describe("provider model wire compatibility", () => {
+  it("keeps the existing unknown model sentinel across existing adapters", () => {
+    const claude = claudeEventsFromTranscript(JSON.stringify({
+      type: "assistant",
+      message: { id: "missing-model", usage: { input_tokens: 1, output_tokens: 1 } },
+    }), "claude.jsonl");
+    expect(claude[0]!.model).toBe("unknown");
+
+    const codex = codexEventsFromRollout([
+      JSON.stringify({ type: "session_meta", payload: { id: "missing-model", model_provider: "openai" } }),
+      JSON.stringify({ type: "event_msg", payload: { info: { total_token_usage: { input_tokens: 1, output_tokens: 1 } } } }),
+    ].join("\n"), "codex.jsonl");
+    expect(codex[0]!.model).toBe("unknown");
+
+    const ollama = ollamaEventsFromRuns([{
+      ts: "2026-09-23T00:00:00.000Z",
+      runId: "missing-model",
+      sessionId: null,
+      model: null,
+      taskName: "fixture",
+      cwd: null,
+      ollamaInputTokens: 1,
+      ollamaOutputTokens: 1,
+      turns: 1,
+      completed: true,
+      verified: true,
+      reason: "ok",
+    } as LedgerRun], "ledger");
+    expect(ollama[0]!.model).toBe("unknown");
+
+    const Database = require("bun:sqlite").Database;
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)");
+    db.run(
+      "INSERT INTO message (id, session_id, data) VALUES (?, ?, ?)",
+      "missing-model",
+      "session",
+      JSON.stringify({ role: "assistant", tokens: { input: 1, output: 1 } }),
+    );
+    expect(opencodeEventsFromDb(db)[0]!.model).toBe("unknown");
+    db.close();
   });
 });
 
@@ -258,7 +484,8 @@ describe("codex adapter", () => {
       "codex-rollout.jsonl",
     );
     expect(ev.length).toBe(1);
-    expect(ev[0]!.eventId.startsWith("codex:019e-codex")).toBe(true);
+    expect(ev[0]!.eventId).toMatch(/^codex:opaque:[a-f0-9]{64}$/);
+    expect(ev[0]!.eventId).not.toContain("019e-codex");
     // OpenAI-style input includes cached; adapter emits the disjoint 750.
     expect(ev[0]!.inputTokens).toBe(750);
     expect(ev[0]!.cacheReadTokens).toBe(150);
@@ -338,6 +565,7 @@ describe("dedup + report", () => {
       ledgerPath: join(dir, "ledger.jsonl"),
       codexHome: "/nonexistent",
       opencodeDb: "/nonexistent.db",
+      geminiRoot: "/nonexistent",
     });
     expect(c.partial["ollama-claude"]).toBe(2); // two real rows, zero events
     expect(c.unavailable).toEqual(["opencode"]);
@@ -349,6 +577,7 @@ describe("dedup + report", () => {
       ledgerPath: "/nonexistent-dir/ledger.jsonl",
       codexHome: "/nonexistent",
       opencodeDb: "/nonexistent.db",
+      geminiRoot: "/nonexistent",
     });
     expect(c.unavailable).toEqual(["opencode"]);
     expect(c.partial["ollama-claude"]).toBeUndefined();
@@ -360,6 +589,7 @@ describe("dedup + report", () => {
       ledgerPath: "/nonexistent.jsonl",
       codexHome: "/nonexistent",
       opencodeDb: "/nonexistent.db",
+      geminiRoot: "/nonexistent",
     });
     // Absent sources are legitimately empty (a machine without codex has zero
     // codex usage). Unavailable is reserved for present-but-unreadable sources
@@ -432,6 +662,7 @@ describe("collect integration over fixtures (#38 panel)", () => {
       ledgerPath: "/nonexistent.jsonl",
       codexHome: join(FX, "codex-home"),
       opencodeDb: "/nonexistent.db",
+      geminiRoot: "/nonexistent",
     });
     expect(c.partial["opencode"]).toBeUndefined();
     const ids = c.events.map((e) => e.eventId);

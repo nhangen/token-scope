@@ -1,0 +1,1 @@
+{"ts":"2026-09-22T14:03:00.000Z","run_id":"author:91","session_id":"local-session","model":"qwen3.8:27b","task_name":"fleet fixture","cwd":"/srv/repo","ollama_input_tokens":5758,"ollama_output_tokens":1839,"turns":1,"completed":true,"verified":true,"reason":"ok"}

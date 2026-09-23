@@ -1,0 +1,14 @@
+#!/usr/bin/env bun
+import { readFileSync } from "fs";
+
+const fixture = JSON.parse(readFileSync(process.env.TOKEN_SCOPE_ORCA_FIXTURE!, "utf8"));
+const key = process.argv.slice(2).join(" ");
+const source = {
+  "status --json": "status",
+  "host list --json": "hosts",
+  "worktree ps --json": "worktrees",
+  "terminal list --json": "terminals",
+}[key];
+
+if (!source) process.exit(2);
+process.stdout.write(JSON.stringify(fixture[source]) + "\n");

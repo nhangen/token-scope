@@ -443,7 +443,7 @@ Optimal session length analysis — where the per-turn cost curve breaks.
 ```bash
 token-scope --credits --since 60d
   --providers             Cross-harness usage: Claude native, Claude over Ollama,
-                          Codex, and OpenCode normalized into one provider-neutral
+                          Codex, OpenCode, and Gemini CLI normalized into one provider-neutral
                           report (pairs with --since)
 token-scope --credits --cap 4.8B           # Max 20x instead of the 5x default
 ```
@@ -529,7 +529,7 @@ Per-file production cost: which artifacts (files written or edited) cost the mos
 
 ## Provider Report (`--providers`)
 
-`token-scope --providers --since 7d` normalizes the active coding harnesses into one provider-neutral table: per harness / billing route / model usage with nullable token classes (absent classes print `—`, never `0`), retry counts, and a measured-not-estimated footer. `--json` emits `{ rows, unavailable, measured }`.
+`token-scope --providers --since 7d` normalizes the active coding harnesses into one provider-neutral table: per harness / provider / billing route / model usage with nullable token classes (absent classes print `—`, never `0`), retry counts, and a measured-not-estimated footer. `--json` emits `{ rows, unavailable, unsupported, measured }`.
 
 ### Data sources and limitations
 
@@ -539,16 +539,59 @@ Per-file production cost: which artifacts (files written or edited) cost the mos
 | Claude over Ollama | `$XDG_STATE_HOME/ollama-agent/runs.jsonl` | One aggregate event per run: final cumulative input/output tokens; local route | No cache or reasoning classes (null); run-level, not per-request. Ledger `run_id`s identify tasks, not runs — event ids composite content so repeated ids with different totals stay distinct. The ledger records no attempt linkage, so `retryOf` stays null here. |
 | Codex | `~/.codex/sessions/**/*.jsonl` rollouts | Session-aggregate token totals; reasoning class where recorded | Billing route unknown (not in rollout records); aggregate events dated by the last token-count record, not session start. OpenAI-style `input_tokens` includes cached input — the adapter subtracts it so every source's columns are disjoint and summable. Model comes from turn-context records when present. Event ids are file-anchored because resumed rollouts can inherit a prior session_meta id. |
 | OpenCode | `$XDG_DATA_HOME/opencode/opencode.db` (defaulting to `~/.local/share`) | Per-message input/output/cache/reasoning, **measured cash cost** (`cost` → cash column, route `metered` when > 0), and error state (`error` → status) from message usage | Zero-value cost is genuinely zero on several routed providers; zero token classes can be absent or genuinely zero depending on the plugin. |
+| Gemini CLI session JSONL | `~/.gemini/tmp/<project>/chats/**/*.jsonl` | Gemini CLI `0.44.1` contract: the final `type: "gemini"` record for each durable message id. `tokens.input` is `promptTokenCount`, which already includes tool-use prompt tokens. Normalized disjoint input is `tokens.input - tokens.cached`; if either operand is unavailable, input remains null. `tokens.output`, `tokens.cached`, and `tokens.thoughts` map to output/cache-read/reasoning usage. Repeated append-log updates replace the same id, and imported copies retain that id so historical usage counts once. | Gemini CLI owns authentication. TokenScope rejects configured roots and discovered entries that are symlinks, reads only regular chat JSONL files whose resolved paths remain under the root, never reads `~/.gemini` credentials, and never calls a Google network API. This is a read-only containment check for a normal user-owned session tree, not a race-hardened boundary against a process concurrently replacing path components. A final message with missing/null `tokens` remains visible with null usage and partial provenance. The record does not identify Google sign-in vs API key vs Vertex, billing route, cash charge, or quota utilization, so those remain unknown/null. Missing model and cache-write remain null. |
+
+The first supported Google surface is specifically `gemini-cli-session-jsonl`, tested against Gemini CLI `0.44.1`. Google AI API/AI Studio (`google-ai-api`) and Vertex (`vertex-ai`) are separate unsupported surfaces and appear under `unsupported`; they are never folded into the Gemini CLI row. The adapter labels the model provider `google`, keeps the billing route `unknown`, and leaves cash charge null. Quota utilization remains a separate allowance concern, and counterfactual valuation remains a separate explicitly derived analysis; neither is inferred from Gemini token counts.
 
 Cross-cutting rules:
 
 - A source that exists but cannot be read is reported under **unavailable sources** — its volume is *unknown*, not zero. A source that reads partially names the skipped file count in the footer.
+- A source surface that has no adapter is reported under **unsupported sources**. Unsupported is not treated as zero usage and is distinct from an adapter failing to read an otherwise supported source.
 - Without `--since`, timestamp-less events count like any other. With `--since`, an undated event cannot be placed in the window: it is excluded and counted (`untimedExcluded` in JSON, footer line in text) rather than silently kept or dropped.
 - `--since` bounds the SCAN, not just aggregation: file sources prefilter by mtime and sqlite filters at the storage layer. Files actually touched inside the window must still be parsed — on a machine with days of in-window transcript volume, expect seconds, not milliseconds.
 - A token class that SOME events in a row report and others omit prints with its sum plus a named entry in the `partial` column: the aggregate covers reported events only and is not fully measured.
 - Event IDs are source-qualified and deterministic, so re-scans deduplicate. The `retry` column counts events carrying `retryOf`; no source currently links retry attempts, so it reads 0 until one does.
 - Cash spend appears only for metered routes once a source meters per request — no manufactured per-request cost for subscription plans. Allowance utilization stays in `--credits` (native five-hour / weekly / monthly units).
 - All values are measured from source records; nothing is estimated. Row provenance (distinct source files) ships in the `--json` rows.
+
+---
+
+## Fleet Report (`--fleet`)
+
+`token-scope --fleet --since 1h` joins provider events with current Orca placement and optional Olla route telemetry. Both text and JSON output show origin, execution host, router, backend host, harness, provider, model, source-qualified request/run/session IDs, run status, input/output tokens, billing route, measured cash charge, TTFT, decode TPS, total latency, placement/route state, and provenance. Unknown values are explicit and aggregate measurements are labeled.
+
+Join states are explicit: `matched`, `unmatched`, `ambiguous`, `stale`, `partial`, and `unavailable`. Cloud-provider rows use `provider` for route state because no Olla join applies. Billing routes remain `local`, `subscription`, `metered`, or `unknown`; only a source-recorded request charge appears under `cash_charge_usd`.
+
+Example Orca plus Olla workflow:
+
+```bash
+orca status --json
+export TOKEN_SCOPE_PROMPT_ORIGIN_HOST="$(hostname)"
+export TOKEN_SCOPE_OLLA_URL=http://router.local:40114
+export TOKEN_SCOPE_OLLA_ROUTES=/path/to/olla-route-observations.json
+token-scope --fleet --since 1h
+token-scope --fleet --since 1h --json > fleet.json
+```
+
+The route observation file is a JSON array. Each entry needs an exact `requestId`, source-qualified `runId`, or source-qualified `sessionId`, plus an exact Olla `endpointId` or `endpointName`; `model` and `timestamp` can narrow the match:
+
+```json
+[
+  {
+    "runId": "ollama-agent:author%3A91",
+    "endpointId": "ml1-id",
+    "model": "qwen3.8:27b",
+    "timestamp": "2026-09-22T14:03:00.000Z"
+  }
+]
+```
+
+Limitations:
+
+- Orca placement can optionally carry source-qualified `requestId`, `runId`, or `sessionId` values. When an exact ID exists on both the Orca placement and provider event, it can join that event to the execution host. Placement records without an explicit shared ID remain `unmatched`; harness, timestamp proximity, terminal handle, worktree, or pane metadata never infer provider placement. `TOKEN_SCOPE_PROMPT_ORIGIN_HOST` is explicit because copied history cannot prove where a prompt originated.
+- Olla endpoints expose aggregate snapshots, not request traces. Snapshot latency or throughput is always emitted with `scope: "aggregate"`; it is never presented as a request measurement. TTFT and decode TPS remain null unless a source measures them.
+- Olla routing requires the exact external observation file above. Correlation tries exact request ID, then exact run ID, then exact session ID, stopping at the first level with matches. There is no model-only, hostname-only, or nearest-time fallback. Without `TOKEN_SCOPE_OLLA_URL`, or when every configured Olla source is unavailable, local route state is `unavailable`; without a matching observation, it is `unmatched`.
+- Provider files can be partial or unreadable, Orca can omit hosts, and Olla endpoints can be stale or unavailable. These conditions remain named in row join states and the top-level `sources` array. JSON rows are sorted by deterministic event ID and contain no generated timestamp. One evaluation timestamp anchors both collection provenance and the half-open `--since` window; set `TOKEN_SCOPE_FLEET_COLLECTED_AT` for reproducible fixture/export collection.
 
 ---
 
@@ -577,13 +620,15 @@ Snapshot counter deltas are emitted only when both values and both process IDs a
 
 Endpoint URLs are reduced to scheme, host, port, and path before storage; userinfo, query strings, and fragments are removed. Credential-like URL paths, including generic `token=` and `key=` assignments, are rejected rather than retained. Credential-like base URL paths, queries, fragments, and userinfo are rejected before collection, while provenance locators contain only the validated origin and known internal endpoint path. Every endpoint metadata key and string value, every record-ID component, Prometheus label value, JSON model name, routing string, and observed request/run ID passes the same privacy-safe validation before persistence. This includes assignment values following qualified-ID colons, such as `codex:token=...`. Credential-like source values make their source `partial/privacy`, and no records or metadata from that source are retained. Raw source bodies, headers, prompt data, and authorization fields are not retained. Endpoint and routing strings live in a separate sanitized metadata index rather than being added to the numeric v1 counter map. Missing model `endpoint_ids` produce a null endpoint counter; malformed arrays make the source `partial/malformed` rather than turning unknown placement into zero. Missing and unreadable routes are `unavailable`; stale, malformed, privacy-rejected, and dependency-incomplete routes are `partial`, each with source locator and collection-time provenance. Comparing consecutive collections reports endpoint IDs that disappeared only when the current endpoint source is valid and available; otherwise disappearance is unknown (`null`).
 
-Optional route correlation requires a request or source-qualified run ID already present in the collection's `observedRoutes`, where it is paired with an exact endpoint ID or name. A model may further constrain the observation. The helper returns the unchanged aggregate snapshot, so caller IDs are never injected into snapshot records. An unseen key is `unmatched` with no returned key. If JSON and Prometheus both describe the same exact route, the result is `ambiguous` and carries both provenance records rather than silently selecting a source. There is no model-only, hostname-only, or nearest-time attribution. This adapter is additive and does not change `--providers`; the fleet report is introduced separately.
+Optional route correlation requires a request ID, source-qualified run ID, or source-qualified session ID already present in the collection's `observedRoutes`, where it is paired with an exact endpoint ID or name. Matching falls back from request to run to session only when the preceding identity has no match. A model may further constrain the observation. The helper returns the unchanged aggregate snapshot, so caller IDs are never injected into snapshot records. An unseen key is `unmatched` with no returned key. Equivalent JSON endpoint and Prometheus endpoint/metrics observations for the same backend are deduplicated, preferring the JSON endpoint snapshot; distinct matching backends remain `ambiguous`. There is no model-only, hostname-only, or nearest-time attribution. This adapter is additive and does not change `--providers`; the fleet report is introduced separately.
 
 ### Orca placement adapter
 
-`collectOrcaPlacement` invokes the fixed `orca` executable with only the deeply frozen allowlist of `status --json`, `host list --json`, `worktree ps --json`, and `terminal list --json`. It emits v1 `operational_snapshot` records for agent terminals using Orca's explicit `executionHostId`, worktree ID, and documented `TuiAgent` identity enum, including `opencode2`, `freebuff`, and `muse`; arbitrary strings are rejected. Stable host IDs use `orca:local`, `orca:ssh:<target>`, or `orca:runtime:<environment>` and do not include Orca's restart-sensitive runtime ID. Worktree-to-agent correlation requires both source host identity and membership in the worktree response's authoritative host scope. Host/worktree collisions and duplicate pane identities remain partial and unattributed rather than choosing an agent. Terminal identity is the execution host plus the runtime-scoped terminal handle. Exact duplicate rows are deterministically deduplicated and reported partial; rows sharing that identity but conflicting on worktree, pane, or agent fields collapse to one partial record with no worktree or agent attribution. Because paired runtimes require a separate environment-selected collection, validated local and SSH rows remain usable but base listings with omitted paired-runtime host IDs are reported partial. The current Orca terminal JSON does not expose a provider session ID or prompt-origin host, so both fleet fields remain null.
+`collectOrcaPlacement` invokes the fixed `orca` executable with only the deeply frozen allowlist of `status --json`, `host list --json`, `worktree ps --json`, and `terminal list --json`. It emits v1 `operational_snapshot` records for agent terminals using Orca's explicit `executionHostId`, worktree ID, and documented `TuiAgent` identity enum, including `opencode2`, `freebuff`, and `muse`; arbitrary strings are rejected. Stable host IDs use `orca:local`, `orca:ssh:<target>`, or `orca:runtime:<environment>` and do not include Orca's restart-sensitive runtime ID. Worktree-to-agent correlation requires both source host identity and membership in the worktree response's authoritative host scope. Host/worktree collisions and duplicate pane identities remain partial and unattributed rather than choosing an agent. Terminal identity is the execution host plus the runtime-scoped terminal handle. Exact duplicate rows are deterministically deduplicated and reported partial; rows sharing that identity but conflicting on worktree, pane, agent, or correlation fields collapse to one partial record with no placement correlation. Because paired runtimes require a separate environment-selected collection, validated local and SSH rows remain usable but base listings with omitted paired-runtime host IDs are reported partial.
 
-The adapter retains only allowlisted placement fields. A safe terminal handle is exposed only as non-join observation metadata; it is never promoted to `session_id`. Control characters are removed before credential and URL checks, and recognizable raw token forms are rejected at the shared string boundary. Prompt text, assistant previews, tool input, terminal previews/scrollback, selectors, command stderr, credentials, and raw JSON responses are discarded. Missing CLI, unreachable runtime, non-1.x or absent Orca version, failed or malformed commands, omitted hosts, out-of-scope rows, malformed or non-canonical host IDs, mismatched row totals, truncated listings, privacy rejection, unknown host references, worktree collisions, duplicate pane identities, and records missing execution-host or agent identity are reported explicitly through source observations and partial/unavailable record status. This adapter is additive and does not change provider or Olla collection.
+Orca terminal rows may optionally provide source-qualified `requestId`, `runId`, or `sessionId` values. The adapter privacy-validates and retains only those explicit IDs. The fleet report joins placement by exact request, then run, then session identity; rows without a shared explicit ID remain `unmatched`. Harness, timestamp proximity, terminal handle, worktree, and pane metadata never infer provider placement. Orca does not expose prompt origin, so `prompt_origin_host` remains null unless the caller supplies it separately.
+
+The adapter retains only allowlisted placement fields. A safe terminal handle is exposed only as non-join observation metadata; it is never promoted to `session_id`. C0 and C1 control-bearing values are rejected rather than stripped, and recognizable raw token forms are rejected at the shared string boundary. Prompt text, assistant previews, tool input, terminal previews/scrollback, selectors, command stderr, credentials, and raw JSON responses are discarded. Missing CLI, unreachable runtime, non-1.x or absent Orca version, failed or malformed commands, omitted hosts, out-of-scope rows, malformed or non-canonical host IDs, mismatched row totals, truncated listings, privacy rejection, unknown host references, worktree collisions, duplicate pane identities, and records missing execution-host or agent identity are reported explicitly through source observations and partial/unavailable record status. This adapter is additive and does not change provider or Olla collection.
 
 ### Privacy and migration
 
@@ -666,6 +711,7 @@ the cap is denominated in.
 | `--db <path>` | auto | Override SQLite database path |
 | `--projects-dir <path>` | auto | Override JSONL projects directory |
 | `--cap <n>` | `1.2B` | (with `--credits`) weekly credit allowance; accepts `1200000000` or `1.2B` |
+| `--fleet` | — | Join provider usage with Orca placement and optional Olla route telemetry |
 
 ## Environment Variables
 
@@ -675,6 +721,10 @@ the cap is denominated in.
 | `TOKEN_SCOPE_PROJECTS_DIR` | Colon-separated JSONL project dirs |
 | `TOKEN_SCOPE_PRICING_FILE` | Custom pricing JSON |
 | `TOKEN_SCOPE_CREDIT_CAP` | Weekly credit cap, for `--credits` and the cost-alert hook; accepts `1200000000` or `1.2B` (`--cap` wins) |
+| `TOKEN_SCOPE_PROMPT_ORIGIN_HOST` | Explicit prompt-origin host label for `--fleet`; unset remains null |
+| `TOKEN_SCOPE_OLLA_URL` | Olla base URL used by `--fleet` |
+| `TOKEN_SCOPE_OLLA_ROUTES` | JSON file containing exact request/run/session-to-endpoint observations |
+| `TOKEN_SCOPE_FLEET_COLLECTED_AT` | Fixed RFC 3339 evaluation time anchoring collection and `--since` for reproducible exports/tests |
 | `TOKEN_SCOPE_CHECKPOINT_PCT` | Checkpoint at this % of the weekly cap (default `3.5`) |
 | `TOKEN_SCOPE_CHECKPOINT_TURNS` | Checkpoint at this turn count (default `50`) |
 | `TOKEN_SCOPE_TURN_WARN_PCT` | Warn when one turn's CONTEXT costs this % of the cap (default `0.0056`) |

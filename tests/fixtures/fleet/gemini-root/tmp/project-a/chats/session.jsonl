@@ -1,0 +1,2 @@
+{"sessionId":"gemini-session","projectHash":"project-a","startTime":"2026-09-22T14:02:00.000Z","lastUpdated":"2026-09-22T14:02:40.000Z","kind":"main"}
+{"id":"gemini-request","timestamp":"2026-09-22T14:02:40.000Z","type":"gemini","model":"gemini-3-flash-preview","tokens":{"input":1000,"output":120,"cached":200,"thoughts":30,"tool":10,"total":1150}}
