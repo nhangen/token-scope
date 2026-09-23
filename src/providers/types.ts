@@ -30,6 +30,22 @@ export interface ProviderEvent {
   cashChargeUsd: number | null;
   /** Source file (or db) the record came from. */
   provenance: string;
+  /** Codex turn metadata, when the source records it. */
+  reasoningEffort?: string;
+  /** Codex thread metadata. Older rollouts keep every ancestry field unknown. */
+  codexThread?: {
+    threadId: string;
+    role: "root" | "subagent" | "unknown";
+    parentThreadId: string | null | "unknown";
+    depth: number | "unknown";
+    agentPath: string[] | "unknown";
+  };
+  /** Source contradictions that prevent a disjoint token value. */
+  malformed?: string[];
+  /** Source omissions that prevent complete attribution or token classes. */
+  partial?: string[];
+  /** Codex usage schema used for this event. */
+  usageSource?: "response" | "legacy-cumulative";
 }
 
 export function stableId(...parts: Array<string | number>): string {

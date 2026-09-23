@@ -22,6 +22,12 @@ export interface ProviderRow {
   reasoning: number | null;
   /** Events marked as retries of an earlier attempt. */
   retries: number;
+  /** Events whose source token classes contradict or fail the schema. */
+  malformedEvents: number;
+  /** Events with incomplete class coverage or response attribution. */
+  partialEvents: number;
+  /** Aggregate fallback events from rollouts without per-response usage. */
+  legacyCumulativeEvents: number;
   /** Summed measured cash charge for this row, where any source provides it. */
   cashUsd: number | null;
   /** Token classes where SOME events reported a value and others did not —
@@ -92,6 +98,9 @@ export function providerRows(collected: Collected, sinceMs?: number): ProviderRo
       cacheWrite: classes[3]![1].value,
       reasoning: classes[4]![1].value,
       retries: evs.filter((e) => e.retryOf !== null).length,
+      malformedEvents: evs.filter((e) => (e.malformed?.length ?? 0) > 0).length,
+      partialEvents: evs.filter((e) => (e.partial?.length ?? 0) > 0).length,
+      legacyCumulativeEvents: evs.filter((e) => e.usageSource === "legacy-cumulative").length,
       cashUsd: cashVals.length > 0 ? cashVals.reduce((a, v) => a + v, 0) : null,
       partialClasses,
       provenance: [...new Set(evs.map((e) => e.provenance))].sort(),
@@ -115,8 +124,8 @@ export interface ProviderReportJson {
   partial: Record<string, number>;
   /** Events outside --since only because they carry no timestamp. */
   untimedExcluded: number;
-  /** Every number above is read from source records; nothing is estimated. */
-  measured: true;
+  /** False when source records have malformed or incomplete observations. */
+  measured: boolean;
 }
 
 const dash = (v: number | null): string => (v === null ? "—" : String(v));
@@ -159,7 +168,22 @@ export function renderProviderReport(
     lines.push('partial: token classes some events in the group do not report — sums cover reported events only');
   }
   lines.push("");
-  lines.push("all values measured from source records; no estimates");
+  const malformed = rows.reduce((sum, row) => sum + row.malformedEvents, 0);
+  const partialEvents = rows.reduce((sum, row) => sum + row.partialEvents, 0);
+  const legacy = rows.reduce((sum, row) => sum + row.legacyCumulativeEvents, 0);
+  if (malformed > 0 || partialEvents > 0 || legacy > 0) {
+    const issues = [
+      malformed > 0 ? `${malformed} malformed event(s)` : null,
+      partialEvents > 0 ? `${partialEvents} partial event(s)` : null,
+      legacy > 0 ? `${legacy} legacy aggregate event(s)` : null,
+    ].filter((issue): issue is string => issue !== null);
+    lines.push(`measurement incomplete: ${issues.join(", ")}; reported values are source-recorded, not estimated`);
+  } else {
+    lines.push("all values measured from source records; no estimates");
+  }
+  if (legacy > 0) {
+    lines.push(`legacy cumulative fallback: ${legacy} aggregate event(s) lack per-response attribution`);
+  }
   if (Object.keys(partial).length > 0) {
     const parts = Object.entries(partial).map(([h, n]) => `${h}: ${n} file(s) skipped`);
     lines.push(`partially read (${parts.join(", ")}) — skipped volume unknown`);
@@ -176,5 +200,13 @@ export function providerReportJson(
   partial: Record<string, number> = {},
   untimedExcluded = 0,
 ): ProviderReportJson {
-  return { rows, unavailable, partial, untimedExcluded, measured: true };
+  return {
+    rows,
+    unavailable,
+    partial,
+    untimedExcluded,
+    measured: rows.every((row) => row.malformedEvents === 0
+      && row.partialEvents === 0
+      && row.legacyCumulativeEvents === 0),
+  };
 }

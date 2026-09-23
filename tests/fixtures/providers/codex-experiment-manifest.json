@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "normalization": {
+    "version": "codex-normalized-v1",
+    "weights": {
+      "uncachedInput": 1,
+      "cacheReadInput": 0.1,
+      "cacheWriteInput": 1.25,
+      "visibleOutput": 5,
+      "reasoningOutput": 5
+    }
+  },
+  "experiments": {
+    "root-sol": {
+      "strategy": "sol-main",
+      "protocol": {
+        "freshContext": false,
+        "forkTurns": "none",
+        "acceptanceTest": "bun test tests/codex-experiments.test.ts"
+      },
+      "acceptanceResult": "passed",
+      "elapsedSeconds": 120,
+      "humanReworkMinutes": 2,
+      "officialAccountMeter": {
+        "unit": "percent",
+        "direction": "used",
+        "before": { "value": 12, "capturedAt": "2026-09-20T11:55:00Z" },
+        "after": { "value": 13, "capturedAt": "2026-09-20T12:10:00Z" }
+      }
+    },
+    "root-luna": {
+      "strategy": "luna-root-sol-fresh-implementer",
+      "protocol": {
+        "freshContext": true,
+        "forkTurns": "none",
+        "acceptanceTest": "bun test tests/codex-experiments.test.ts"
+      },
+      "acceptanceResult": "passed",
+      "elapsedSeconds": 90,
+      "humanReworkMinutes": 0
+    }
+  }
+}
