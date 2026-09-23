@@ -1,0 +1,52 @@
+{
+  "status": {
+    "ok": true,
+    "result": {
+      "runtime": {
+        "state": "ready",
+        "reachable": true,
+        "runtimeId": "runtime-fixture",
+        "appVersion": "1.4.162"
+      }
+    }
+  },
+  "hosts": {
+    "ok": true,
+    "result": {
+      "hosts": [
+        { "kind": "local", "name": "origin mac", "id": "local", "platform": "darwin" },
+        { "kind": "ssh", "name": "gpu box", "id": "gpu-box", "platform": "linux", "connected": true }
+      ]
+    }
+  },
+  "worktrees": {
+    "ok": true,
+    "result": {
+      "worktrees": [
+        { "worktreeId": "repo-claude", "hostId": "ssh:gpu-box", "agents": [{ "paneKey": "tab-claude:leaf-claude", "agentType": "claude" }] },
+        { "worktreeId": "repo-codex", "hostId": "ssh:gpu-box", "agents": [{ "paneKey": "tab-codex:leaf-codex", "agentType": "codex" }] },
+        { "worktreeId": "repo-opencode", "hostId": "local", "agents": [{ "paneKey": "tab-opencode:leaf-opencode", "agentType": "opencode" }] },
+        { "worktreeId": "repo-gemini", "hostId": "local", "agents": [{ "paneKey": "tab-gemini:leaf-gemini", "agentType": "gemini" }] },
+        { "worktreeId": "repo-olla", "hostId": "ssh:gpu-box", "agents": [{ "paneKey": "tab-olla:leaf-olla", "agentType": "claude" }] }
+      ],
+      "totalCount": 5,
+      "truncated": false,
+      "hostScope": { "hostIds": ["local", "ssh:gpu-box"], "omittedHostIds": [] }
+    }
+  },
+  "terminals": {
+    "ok": true,
+    "result": {
+      "terminals": [
+        { "handle": "term-claude", "worktreeId": "repo-claude", "tabId": "tab-claude", "leafId": "leaf-claude", "executionHostId": "ssh:gpu-box", "requestId": "claude:claude-request", "sessionId": "claude:claude-session" },
+        { "handle": "term-codex", "worktreeId": "repo-codex", "tabId": "tab-codex", "leafId": "leaf-codex", "executionHostId": "ssh:gpu-box", "sessionId": "codex:codex-session" },
+        { "handle": "term-opencode", "worktreeId": "repo-opencode", "tabId": "tab-opencode", "leafId": "leaf-opencode", "executionHostId": "local", "requestId": "opencode:opencode-request", "sessionId": "opencode:opencode-session" },
+        { "handle": "term-gemini", "worktreeId": "repo-gemini", "tabId": "tab-gemini", "leafId": "leaf-gemini", "executionHostId": "local", "requestId": "gemini-cli:gemini-request", "sessionId": "gemini-cli:gemini-session" },
+        { "handle": "term-olla", "worktreeId": "repo-olla", "tabId": "tab-olla", "leafId": "leaf-olla", "executionHostId": "ssh:gpu-box", "runId": "ollama-agent:author%3A91", "sessionId": "ollama-agent:local-session" }
+      ],
+      "totalCount": 5,
+      "truncated": false,
+      "hostScope": { "hostIds": ["local", "ssh:gpu-box"], "omittedHostIds": [] }
+    }
+  }
+}

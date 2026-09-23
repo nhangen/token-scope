@@ -5,6 +5,7 @@ import {
   type FleetProvenance,
   type FleetRecordStatus,
 } from "@/fleet-contract";
+import { PrivacyError, assertSafeLabelValue, privateSafeLabel } from "@/private-values";
 
 const JSON_PATHS = [
   "/internal/status",
@@ -80,6 +81,7 @@ export interface CollectOllaTelemetryOptions {
 export interface OllaRouteCorrelation {
   requestId?: string;
   runId?: string;
+  sessionId?: string;
   endpointId?: string;
   endpointName?: string;
   model?: string;
@@ -91,6 +93,7 @@ export interface OllaRouteObservation extends OllaRouteCorrelation {}
 export interface OllaObservedRoute {
   requestId: string | null;
   runId: string | null;
+  sessionId: string | null;
   endpointId: string | null;
   endpointName: string | null;
   model: string | null;
@@ -101,8 +104,6 @@ export type OllaRouteCorrelationResult =
   | { state: "matched"; key: string; snapshot: FleetOperationalSnapshot }
   | { state: "unmatched"; key: string | null; snapshot: null }
   | { state: "ambiguous"; key: string; snapshot: null; provenance: FleetProvenance[] };
-
-class PrivacyError extends Error {}
 
 const PRIVATE_KEYS = new Set([
   "authorization",
@@ -169,35 +170,6 @@ function assertNoPrivateFields(value: unknown): void {
     }
     assertNoPrivateFields(child);
   }
-}
-
-function safeLabel(value: string): string {
-  return value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 256);
-}
-
-function assertSafeLabelValue(value: string): void {
-  if (/\b(?:bearer|basic)(?:\s+|%20)\S+/i.test(value)) {
-    throw new PrivacyError("credential-like label value rejected");
-  }
-  if (/(?:^|[?&#/:;\s])(?:api[_-]?key|access[_-]?token|auth(?:orization)?|credential|password|secret|token|key)\s*[:=]\s*\S+/i.test(value)) {
-    throw new PrivacyError("credential-like label value rejected");
-  }
-  try {
-    const parsed = new URL(value);
-    const sensitiveQuery = [...parsed.searchParams.keys()].some((key) =>
-      /^(?:api[_-]?key|access[_-]?token|auth(?:orization)?|credential|password|secret|token|key)$/i.test(key)
-    );
-    if (parsed.username !== "" || parsed.password !== "" || sensitiveQuery) {
-      throw new PrivacyError("credential-like label value rejected");
-    }
-  } catch (error) {
-    if (error instanceof PrivacyError) throw error;
-  }
-}
-
-function privateSafeLabel(value: string): string {
-  assertSafeLabelValue(value);
-  return safeLabel(value);
 }
 
 function privateSafePersistenceValue<T>(value: T): T {
@@ -720,7 +692,7 @@ function qualifiedRequestId(value: string | undefined): string | null {
   return id.startsWith("olla:") ? id : `olla:${id}`;
 }
 
-function qualifiedRunId(value: string | undefined): string | null {
+function qualifiedSourceId(value: string | undefined): string | null {
   if (value === undefined) return null;
   const id = privateSafeLabel(value);
   const separator = id.indexOf(":");
@@ -730,14 +702,19 @@ function qualifiedRunId(value: string | undefined): string | null {
 function normalizeObservedRoutes(routes: OllaRouteObservation[] | undefined): OllaObservedRoute[] {
   const normalized = (routes ?? []).map((route): OllaObservedRoute | null => {
     const requestId = qualifiedRequestId(route.requestId);
-    const runId = qualifiedRunId(route.runId);
+    const runId = qualifiedSourceId(route.runId);
+    const sessionId = qualifiedSourceId(route.sessionId);
     const endpointId = route.endpointId === undefined ? null : privateSafeLabel(route.endpointId);
     const endpointName = route.endpointName === undefined ? null : privateSafeLabel(route.endpointName);
     const model = route.model === undefined ? null : privateSafeLabel(route.model);
-    if ((requestId === null && runId === null) || (endpointId === null && endpointName === null)) return null;
+    if (
+      (requestId === null && runId === null && sessionId === null)
+      || (endpointId === null && endpointName === null)
+    ) return null;
     return {
       requestId,
       runId,
+      sessionId,
       endpointId,
       endpointName,
       model,
@@ -874,21 +851,44 @@ export function correlateOllaRoute(
   route: OllaRouteCorrelation,
 ): OllaRouteCorrelationResult {
   const requestId = qualifiedRequestId(route.requestId);
-  const runId = qualifiedRunId(route.runId);
-  if (requestId === null && runId === null) {
+  const runId = qualifiedSourceId(route.runId);
+  const sessionId = qualifiedSourceId(route.sessionId);
+  if (requestId === null && runId === null && sessionId === null) {
     return { state: "unmatched", key: null, snapshot: null };
   }
-  const observed = collection.observedRoutes.filter((candidate) => {
-    if (requestId !== null && candidate.requestId !== requestId) return false;
-    if (requestId === null && runId !== null && candidate.runId !== runId) return false;
-    if (runId !== null && candidate.runId !== runId) return false;
+  const matchesRoute = (candidate: OllaObservedRoute): boolean => {
     if (route.endpointId !== undefined && candidate.endpointId !== route.endpointId) return false;
     if (route.endpointName !== undefined && candidate.endpointName !== route.endpointName) return false;
-    if (route.model !== undefined && candidate.model !== route.model) return false;
+    if (route.model !== undefined && candidate.model !== null && candidate.model !== route.model) return false;
     return true;
-  });
-  if (observed.length === 0) return { state: "unmatched", key: null, snapshot: null };
-  const key = requestId !== null ? `request_id=${requestId}` : `run_id=${runId!}`;
+  };
+  const candidates = [
+    requestId === null ? null : {
+      key: `request_id=${requestId}`,
+      matches: (candidate: OllaObservedRoute) => candidate.requestId === requestId,
+    },
+    runId === null ? null : {
+      key: `run_id=${runId}`,
+      matches: (candidate: OllaObservedRoute) => candidate.runId === runId,
+    },
+    sessionId === null ? null : {
+      key: `session_id=${sessionId}`,
+      matches: (candidate: OllaObservedRoute) => candidate.sessionId === sessionId,
+    },
+  ];
+  let key: string | null = null;
+  let observed: OllaObservedRoute[] = [];
+  for (const candidate of candidates) {
+    if (candidate === null) continue;
+    const matches = collection.observedRoutes.filter((routeCandidate) =>
+      candidate.matches(routeCandidate) && matchesRoute(routeCandidate)
+    );
+    if (matches.length === 0) continue;
+    key = candidate.key;
+    observed = matches;
+    break;
+  }
+  if (key === null) return { state: "unmatched", key: null, snapshot: null };
   if (observed.length > 1) {
     return { state: "ambiguous", key, snapshot: null, provenance: [] };
   }
@@ -909,13 +909,31 @@ export function correlateOllaRoute(
     }
     return true;
   });
-  if (matches.length === 1) return { state: "matched", key, snapshot: matches[0]! };
-  if (matches.length > 1) {
-    const provenance = [...new Map(matches.map((snapshot) => [
+  const matchesByBackend = new Map<string, FleetOperationalSnapshot>();
+  for (const snapshot of matches) {
+    const metadata = collection.metadata[snapshot.record_id];
+    if (metadata === undefined || metadata.endpoint === null) continue;
+    const endpoint = metadata.endpoint;
+    const existing = matchesByBackend.get(endpoint.id);
+    const existingScope = existing === undefined
+      ? null
+      : collection.metadata[existing.record_id]?.scope ?? null;
+    const isJsonObservation = metadata.scope === "endpoint" || metadata.scope === "model_endpoint";
+    const existingIsJsonObservation = existingScope === "endpoint" || existingScope === "model_endpoint";
+    if (existing === undefined || (isJsonObservation && !existingIsJsonObservation)) {
+      matchesByBackend.set(endpoint.id, snapshot);
+    }
+  }
+  const backendMatches = [...matchesByBackend.values()];
+  if (backendMatches.length === 1) {
+    return { state: "matched", key, snapshot: backendMatches[0]! };
+  }
+  if (backendMatches.length > 1) {
+    const provenance = [...new Map(backendMatches.map((snapshot) => [
       JSON.stringify(snapshot.provenance),
       snapshot.provenance,
     ])).values()];
     return { state: "ambiguous", key, snapshot: null, provenance };
   }
-  return { state: "unmatched", key: null, snapshot: null };
+  return { state: "unmatched", key, snapshot: null };
 }

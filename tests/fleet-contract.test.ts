@@ -151,4 +151,84 @@ describe("fleet schema v1 contract", () => {
       counters: { requests: 18, raw_authorization_headers: "Bearer secret" },
     })).toThrow("private field raw_authorization_headers");
   });
+
+  it("nulls or obscures private-safe dynamic values before retaining fleet records", () => {
+    const secret = "glpat-audit-private-value";
+    const parsed = parseFleetRecord({
+      ...fixture.usage_event,
+      request_id: `claude:${secret}`,
+      run_id: `claude:${secret}`,
+      session_id: `claude:${secret}`,
+      prompt_origin_host: secret,
+      execution_host: secret,
+      router_host: secret,
+      backend_host: secret,
+      harness: secret,
+      provider: secret,
+      backend: secret,
+      model: `model\n${secret}`,
+      provenance: {
+        ...fixture.usage_event.provenance,
+        source: secret,
+        locator: `/tmp/${secret}`,
+      },
+    });
+    if (parsed.record_type !== "usage_event") throw new Error("wrong fixture type");
+    expect(parsed).toMatchObject({
+      request_id: null,
+      run_id: null,
+      session_id: null,
+      prompt_origin_host: null,
+      execution_host: null,
+      router_host: null,
+      backend_host: null,
+      harness: null,
+      provider: null,
+      backend: null,
+      model: null,
+      provenance: { source: "unknown", locator: null },
+    });
+    expect(JSON.stringify(parsed)).not.toContain(secret);
+
+    const parsedOperational = parseFleetRecord({
+      ...fixture.operational_snapshot,
+      process_id: `olla:${secret}`,
+      counters: { requests: 18, [secret]: 7 },
+    });
+    if (parsedOperational.record_type !== "operational_snapshot") {
+      throw new Error("wrong fixture type");
+    }
+    expect(parsedOperational.process_id).toBeNull();
+    expect(parsedOperational.counters).toEqual({ requests: 18 });
+  });
+
+  it("keeps rejected record IDs distinct behind deterministic opaque hashes", () => {
+    const originalIds = [
+      "usage:Bearer audit-secret-one",
+      "usage:Bearer audit-secret-two",
+    ];
+    const parsed = originalIds.map((recordId) => parseFleetRecord({
+      ...fixture.usage_event,
+      record_id: recordId,
+    }));
+    const repeated = originalIds.map((recordId) => parseFleetRecord({
+      ...fixture.usage_event,
+      record_id: recordId,
+    }));
+    const reparsed = parsed.map((record) => parseFleetRecord(record));
+
+    expect(repeated.map((record) => record.record_id)).toEqual(
+      parsed.map((record) => record.record_id),
+    );
+    expect(parsed.map((record) => record.record_id)).toEqual(
+      reparsed.map((record) => record.record_id),
+    );
+    expect(new Set(parsed.map((record) => record.record_id)).size).toBe(2);
+    expect(parsed.every((record) => /^record:opaque:[a-f0-9]{64}$/.test(record.record_id)))
+      .toBe(true);
+    for (const originalId of originalIds) {
+      expect(JSON.stringify(parsed)).not.toContain(originalId);
+      expect(JSON.stringify(parsed)).not.toContain(originalId.split("audit-")[1]!);
+    }
+  });
 });

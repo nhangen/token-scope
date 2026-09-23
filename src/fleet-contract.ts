@@ -1,3 +1,5 @@
+import { PrivacyError, privateOpaqueId, privateSafeLabel } from "@/private-values";
+
 export const FLEET_SCHEMA_VERSION = "1.0" as const;
 
 export type FleetRecordStatus =
@@ -147,6 +149,37 @@ function nullableString(value: unknown, name: string): string | null {
   return stringValue(value, name);
 }
 
+function privateSafeNullableString(value: unknown, name: string): string | null {
+  const label = nullableString(value, name);
+  if (label === null) return null;
+  try {
+    return privateSafeLabel(label);
+  } catch (error) {
+    if (error instanceof PrivacyError) return null;
+    throw error;
+  }
+}
+
+function privateSafeRequiredString(value: unknown, name: string): string {
+  const label = stringValue(value, name);
+  try {
+    return privateSafeLabel(label);
+  } catch (error) {
+    if (error instanceof PrivacyError) return "unknown";
+    throw error;
+  }
+}
+
+function privateSafeRecordId(value: unknown): string {
+  const recordId = stringValue(value, "record_id");
+  try {
+    return privateSafeLabel(recordId);
+  } catch (error) {
+    if (error instanceof PrivacyError) return privateOpaqueId("record", recordId);
+    throw error;
+  }
+}
+
 function qualifiedId(value: unknown, name: string): string | null {
   const id = nullableString(value, name);
   if (id === null) return null;
@@ -154,7 +187,12 @@ function qualifiedId(value: unknown, name: string): string | null {
   if (separator <= 0 || separator === id.length - 1) {
     throw new Error(`${name} must be source-qualified`);
   }
-  return id;
+  try {
+    return privateSafeLabel(id);
+  } catch (error) {
+    if (error instanceof PrivacyError) return null;
+    throw error;
+  }
 }
 
 function timestampValue(value: unknown, name: string): string {
@@ -194,8 +232,8 @@ function provenanceValue(value: unknown): FleetProvenance {
     throw new Error("provenance.completeness is invalid");
   }
   return {
-    source: stringValue(provenance.source, "provenance.source"),
-    locator: nullableString(provenance.locator, "provenance.locator"),
+    source: privateSafeRequiredString(provenance.source, "provenance.source"),
+    locator: privateSafeNullableString(provenance.locator, "provenance.locator"),
     collected_at: timestampValue(provenance.collected_at, "provenance.collected_at"),
     completeness,
   };
@@ -210,18 +248,18 @@ function commonFields(record: Record<string, unknown>): FleetRecordFields {
   }
   return {
     schema_version: FLEET_SCHEMA_VERSION,
-    record_id: stringValue(record.record_id, "record_id"),
+    record_id: privateSafeRecordId(record.record_id),
     run_id: qualifiedId(record.run_id, "run_id"),
     session_id: qualifiedId(record.session_id, "session_id"),
     request_id: qualifiedId(record.request_id, "request_id"),
-    prompt_origin_host: nullableString(record.prompt_origin_host, "prompt_origin_host"),
-    execution_host: nullableString(record.execution_host, "execution_host"),
-    router_host: nullableString(record.router_host, "router_host"),
-    backend_host: nullableString(record.backend_host, "backend_host"),
-    harness: nullableString(record.harness, "harness"),
-    provider: nullableString(record.provider, "provider"),
-    backend: nullableString(record.backend, "backend"),
-    model: nullableString(record.model, "model"),
+    prompt_origin_host: privateSafeNullableString(record.prompt_origin_host, "prompt_origin_host"),
+    execution_host: privateSafeNullableString(record.execution_host, "execution_host"),
+    router_host: privateSafeNullableString(record.router_host, "router_host"),
+    backend_host: privateSafeNullableString(record.backend_host, "backend_host"),
+    harness: privateSafeNullableString(record.harness, "harness"),
+    provider: privateSafeNullableString(record.provider, "provider"),
+    backend: privateSafeNullableString(record.backend, "backend"),
+    model: privateSafeNullableString(record.model, "model"),
     status: record.status as FleetRecordStatus,
     provenance: provenanceValue(record.provenance),
   };
@@ -273,7 +311,11 @@ export function parseFleetRecord(value: unknown): FleetRecord {
     const parsedCounters: Record<string, number | null> = {};
     for (const [name, counter] of Object.entries(counters).sort(([a], [b]) => a.localeCompare(b))) {
       if (!name) throw new Error("counter names cannot be empty");
-      parsedCounters[name] = nullableMeasurement(counter, `counters.${name}`);
+      try {
+        parsedCounters[privateSafeLabel(name)] = nullableMeasurement(counter, `counters.${name}`);
+      } catch (error) {
+        if (!(error instanceof PrivacyError)) throw error;
+      }
     }
     const common = commonFields(record);
     const expectedCompleteness =

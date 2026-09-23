@@ -17,7 +17,7 @@ import {
   realpathSync,
 } from "fs";
 import { isAbsolute, join, relative, resolve, sep } from "path";
-import { stableId, type ProviderEvent } from "./types";
+import { privateSafeEventId, qualifiedProviderId, type ProviderEvent } from "./types";
 
 export const GEMINI_CLI_SOURCE_CONTRACT = Object.freeze({
   surface: "gemini-cli-session-jsonl",
@@ -215,7 +215,7 @@ export function geminiCliEventsFromTranscript(
     }
 
     events.push({
-      eventId: stableId("gemini-cli", messageId),
+      eventId: privateSafeEventId("gemini-cli", messageId),
       harness: "gemini-cli",
       billingRoute: "unknown",
       modelProvider: "google",
@@ -230,6 +230,9 @@ export function geminiCliEventsFromTranscript(
       reasoningTokens: reasoning,
       cashChargeUsd: null,
       provenance,
+      requestId: qualifiedProviderId("gemini-cli", messageId),
+      runId: null,
+      sessionId: qualifiedProviderId("gemini-cli", sessionId),
     });
   }
 

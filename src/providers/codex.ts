@@ -11,7 +11,7 @@
  */
 import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
-import { stableId, type ProviderEvent } from "./types";
+import { privateSafeEventId, qualifiedProviderId, type ProviderEvent } from "./types";
 
 interface CodexTotals {
   input_tokens?: number;
@@ -57,7 +57,7 @@ export function codexEventsFromRollout(
     rawInput !== null && cached !== null ? Math.max(0, rawInput - cached) : rawInput;
   return [
     {
-      eventId: stableId("codex", meta?.id ?? "", provenance),
+      eventId: privateSafeEventId("codex", meta?.id, provenance),
       harness: "codex",
       billingRoute: "unknown",
       modelProvider: provider,
@@ -72,6 +72,9 @@ export function codexEventsFromRollout(
       reasoningTokens: last?.reasoning_output_tokens ?? null,
       cashChargeUsd: null,
       provenance,
+      requestId: null,
+      runId: null,
+      sessionId: qualifiedProviderId("codex", meta?.id),
     },
   ];
 }

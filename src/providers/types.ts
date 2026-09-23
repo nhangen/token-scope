@@ -1,3 +1,5 @@
+import { PrivacyError, privateOpaqueId, privateSafeLabel } from "@/private-values";
+
 /**
  * Provider-neutral usage event (#37).
  *
@@ -30,10 +32,46 @@ export interface ProviderEvent {
   cashChargeUsd: number | null;
   /** Source file (or db) the record came from. */
   provenance: string;
+  /** Source-owned correlation identities for the fleet report. */
+  requestId?: string | null;
+  runId?: string | null;
+  sessionId?: string | null;
+  /** Request-level measurements only. Aggregate telemetry stays on snapshots. */
+  ttftMs?: number | null;
+  decodeTps?: number | null;
+  totalLatencyMs?: number | null;
 }
 
 export function stableId(...parts: Array<string | number>): string {
   return parts.join(":");
+}
+
+export function privateSafeProviderIdentity(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  try {
+    return privateSafeLabel(value);
+  } catch (error) {
+    if (error instanceof PrivacyError) return null;
+    throw error;
+  }
+}
+
+export function qualifiedProviderId(namespace: string, value: unknown): string | null {
+  const identity = privateSafeProviderIdentity(value);
+  if (identity === null) return null;
+  try {
+    return privateSafeLabel(`${privateSafeLabel(namespace)}:${encodeURIComponent(identity)}`);
+  } catch (error) {
+    if (error instanceof PrivacyError) return null;
+    throw error;
+  }
+}
+
+export function privateSafeEventId(
+  namespace: string,
+  ...parts: Array<string | number | null | undefined>
+): string {
+  return privateOpaqueId(namespace, ...parts);
 }
 
 /** Milliseconds for a record's timestamp, or null when it cannot be dated

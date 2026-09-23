@@ -16,7 +16,12 @@
  */
 import { readFileSync, readdirSync, existsSync, statSync } from "fs";
 import { join } from "path";
-import { stableId, type ProviderEvent } from "./types";
+import {
+  privateSafeEventId,
+  privateSafeProviderIdentity,
+  qualifiedProviderId,
+  type ProviderEvent,
+} from "./types";
 
 interface ClaudeUsage {
   input_tokens?: number;
@@ -52,15 +57,20 @@ export function claudeEventsFromTranscript(
     const usage: ClaudeUsage | undefined = msg.usage;
     if (!usage) continue;
     const messageId: string | undefined = msg.id;
-    if (messageId) {
+    const safeMessageId = privateSafeProviderIdentity(messageId);
+    if (safeMessageId !== null) {
       // One billed response, however many transcript lines carry it.
-      if (seenMessageIds.has(messageId)) continue;
-      seenMessageIds.add(messageId);
+      if (seenMessageIds.has(safeMessageId)) continue;
+      seenMessageIds.add(safeMessageId);
     }
+    const rejectedMessageId = typeof messageId === "string" && messageId.length > 0
+      && safeMessageId === null;
     const model = msg.model ?? "unknown";
     const subscription = isAnthropicModel(model);
     events.push({
-      eventId: stableId("claude", provenance, index),
+      eventId: rejectedMessageId
+        ? privateSafeEventId("claude", messageId)
+        : privateSafeEventId("claude", provenance, index),
       harness: "claude",
       billingRoute: subscription ? "subscription" : "unknown",
       modelProvider: subscription ? "anthropic" : "unknown",
@@ -75,6 +85,9 @@ export function claudeEventsFromTranscript(
       reasoningTokens: null,
       cashChargeUsd: null,
       provenance,
+      requestId: qualifiedProviderId("claude", messageId),
+      runId: null,
+      sessionId: qualifiedProviderId("claude", rec.sessionId),
     });
   }
   return events;

@@ -11,13 +11,20 @@
  * rows rotated. The composite collapses true re-scan duplicates (identical
  * row content) while keeping every distinct observation.
  */
-import { stableId, type ProviderEvent } from "./types";
+import {
+  privateSafeEventId,
+  privateSafeProviderIdentity,
+  qualifiedProviderId,
+  type ProviderEvent,
+} from "./types";
 import { readLedger, type LedgerRun } from "@/ledger";
 
 export function ollamaEventsFromRuns(runs: LedgerRun[], provenance: string): ProviderEvent[] {
   const events: ProviderEvent[] = [];
   for (const run of runs) {
-    const id = [
+    const safeRunId = privateSafeProviderIdentity(run.runId);
+    const safeSessionId = privateSafeProviderIdentity(run.sessionId);
+    const eventIdentity = [
       run.runId ?? "",
       run.ts ?? "",
       run.model ?? "",
@@ -27,7 +34,7 @@ export function ollamaEventsFromRuns(runs: LedgerRun[], provenance: string): Pro
       String(run.ollamaOutputTokens),
     ].join("|");
     events.push({
-      eventId: stableId("ollama-claude", id),
+      eventId: privateSafeEventId("ollama-claude", eventIdentity),
       harness: "ollama-claude",
       billingRoute: "local",
       modelProvider: "ollama",
@@ -42,6 +49,9 @@ export function ollamaEventsFromRuns(runs: LedgerRun[], provenance: string): Pro
       reasoningTokens: null,
       cashChargeUsd: null,
       provenance,
+      requestId: null,
+      runId: qualifiedProviderId("ollama-agent", safeRunId),
+      sessionId: qualifiedProviderId("ollama-agent", safeSessionId),
     });
   }
   return events;

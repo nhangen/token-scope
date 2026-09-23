@@ -6,7 +6,7 @@
  * db primary-key id outranks any JSON-internal fallback).
  */
 import { Database } from "bun:sqlite";
-import { stableId, type ProviderEvent } from "./types";
+import { privateSafeEventId, qualifiedProviderId, type ProviderEvent } from "./types";
 
 export function opencodeEventsFromDb(
   db: Database,
@@ -41,7 +41,7 @@ export function opencodeEventsFromDb(
       // The database primary key is authoritative (#41): two rows sharing a
       // JSON-internal id must stay distinct events, exactly the hazard the
       // Codex adapter fixed for inherited session_meta ids.
-      eventId: stableId("opencode", String(row.row_id)),
+      eventId: privateSafeEventId("opencode", String(row.row_id)),
       harness: "opencode",
       billingRoute: cost !== null && cost > 0 ? "metered" : "unknown",
       modelProvider: rec.providerID ?? "unknown",
@@ -56,6 +56,14 @@ export function opencodeEventsFromDb(
       reasoningTokens: t.reasoning ?? null,
       cashChargeUsd: cost,
       provenance: "opencode.db",
+      requestId: qualifiedProviderId("opencode", String(row.row_id)),
+      runId: null,
+      sessionId: qualifiedProviderId("opencode", row.session_id),
+      totalLatencyMs:
+        typeof rec.time?.created === "number" && typeof rec.time?.completed === "number"
+          && rec.time.completed >= rec.time.created
+          ? rec.time.completed - rec.time.created
+          : null,
     });
   }
   return out;
