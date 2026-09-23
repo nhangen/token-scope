@@ -8,6 +8,7 @@ import { VERSION } from "@/version";
 import { parseCap } from "@/parse";
 import { collectProviderEvents } from "@/providers";
 import { renderProviderReport, providerRows, providerReportJson, untimedExcluded } from "@/reports/providers";
+import { canonicalFleetTimestamp } from "@/fleet-contract";
 
 const ARTIFACT_FORMAT_SET = new Set<string>(KNOWN_ARTIFACT_FORMATS);
 const ARTIFACT_MODES = new Set(["artifacts", "artifact-show", "artifact-compare"]);
@@ -213,7 +214,7 @@ export function parseArgs(argv: string[]): CliArgs {
 
   const setMode = (mode: CliArgs["mode"]) => {
     if (modeSet) {
-      process.stderr.write("Error: --tool, --project, --session, --thinking, --sessions, --context, --cache, --efficiency, --tools, --contributors, --base-load, --cache-growth, and --budget are mutually exclusive.\n");
+      process.stderr.write("Error: --tool, --project, --session, --thinking, --sessions, --context, --cache, --efficiency, --tools, --contributors, --base-load, --cache-growth, --budget, --providers, and --fleet are mutually exclusive.\n");
       process.exit(1);
     }
     args.mode = mode;
@@ -511,10 +512,10 @@ async function main() {
   if (args.mode === "fleet") {
     const { collectFleetReport, renderFleetReport } = await import("@/reports/fleet");
     const evaluationTime = process.env.TOKEN_SCOPE_FLEET_COLLECTED_AT;
-    const evaluationTimeMs = evaluationTime === undefined ? Date.now() : Date.parse(evaluationTime);
-    if (!Number.isFinite(evaluationTimeMs)) {
-      throw new Error("TOKEN_SCOPE_FLEET_COLLECTED_AT must be a valid timestamp");
-    }
+    const canonicalEvaluationTime = evaluationTime === undefined
+      ? new Date().toISOString()
+      : canonicalFleetTimestamp(evaluationTime, "TOKEN_SCOPE_FLEET_COLLECTED_AT");
+    const evaluationTimeMs = Date.parse(canonicalEvaluationTime);
     const collectedAt = new Date(evaluationTimeMs).toISOString();
     const sinceMs = evaluationTimeMs - parseSinceToMs(args.since);
     const report = await collectFleetReport({ window: args.since, sinceMs, collectedAt });

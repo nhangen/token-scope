@@ -1,0 +1,25 @@
+{
+  "status": { "ok": true, "result": { "runtime": { "state": "ready", "reachable": true, "runtimeId": "runtime-fixture", "appVersion": "1.4.162" } } },
+  "hosts": { "ok": true, "result": { "hosts": [
+    { "kind": "local", "name": "origin mac", "id": "local", "platform": "darwin" },
+    { "kind": "ssh", "name": "gpu box", "id": "gpu-box", "platform": "linux", "connected": true }
+  ] } },
+  "worktrees": { "ok": true, "result": {
+    "worktrees": [
+      { "worktreeId": "repo-claude-a", "hostId": "ssh:gpu-box", "agents": [{ "paneKey": "tab-claude-a:leaf-claude-a", "agentType": "claude" }] },
+      { "worktreeId": "repo-claude-b", "hostId": "local", "agents": [{ "paneKey": "tab-claude-b:leaf-claude-b", "agentType": "claude" }] }
+    ],
+    "totalCount": 2,
+    "truncated": false,
+    "hostScope": { "hostIds": ["local", "ssh:gpu-box"], "omittedHostIds": [] }
+  } },
+  "terminals": { "ok": true, "result": {
+    "terminals": [
+      { "handle": "term-claude-a", "worktreeId": "repo-claude-a", "tabId": "tab-claude-a", "leafId": "leaf-claude-a", "executionHostId": "ssh:gpu-box", "requestId": "claude:claude-request" },
+      { "handle": "term-claude-b", "worktreeId": "repo-claude-b", "tabId": "tab-claude-b", "leafId": "leaf-claude-b", "executionHostId": "local", "requestId": "claude:claude-request" }
+    ],
+    "totalCount": 2,
+    "truncated": false,
+    "hostScope": { "hostIds": ["local", "ssh:gpu-box"], "omittedHostIds": [] }
+  } }
+}

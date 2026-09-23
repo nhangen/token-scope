@@ -24,6 +24,12 @@ export function ollamaEventsFromRuns(runs: LedgerRun[], provenance: string): Pro
   for (const run of runs) {
     const safeRunId = privateSafeProviderIdentity(run.runId);
     const safeSessionId = privateSafeProviderIdentity(run.sessionId);
+    const runId = qualifiedProviderId("ollama-agent", safeRunId);
+    const sessionId = qualifiedProviderId("ollama-agent", safeSessionId);
+    const rejectedRunId = typeof run.runId === "string" && run.runId.length > 0 && runId === null;
+    const rejectedSessionId = typeof run.sessionId === "string" && run.sessionId.length > 0
+      && sessionId === null;
+    const partial = rejectedRunId || rejectedSessionId;
     const eventIdentity = [
       run.runId ?? "",
       run.ts ?? "",
@@ -40,7 +46,8 @@ export function ollamaEventsFromRuns(runs: LedgerRun[], provenance: string): Pro
       modelProvider: "ollama",
       model: run.model ?? "unknown",
       ts: run.ts ?? null,
-      status: run.completed ? "ok" : run.verified === false ? "error" : "incomplete",
+      status: run.completed ? (partial ? "incomplete" : "ok") : run.verified === false ? "error" : "incomplete",
+      partial,
       retryOf: null,
       inputTokens: run.ollamaInputTokens ?? null,
       outputTokens: run.ollamaOutputTokens ?? null,
@@ -50,8 +57,8 @@ export function ollamaEventsFromRuns(runs: LedgerRun[], provenance: string): Pro
       cashChargeUsd: null,
       provenance,
       requestId: null,
-      runId: qualifiedProviderId("ollama-agent", safeRunId),
-      sessionId: qualifiedProviderId("ollama-agent", safeSessionId),
+      runId,
+      sessionId,
     });
   }
   return events;

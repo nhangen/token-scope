@@ -390,13 +390,17 @@ describe("Olla fleet telemetry adapter", () => {
     )).toBe(false);
   });
 
-  it("rejects credential-like observed request and run IDs before collection persistence", async () => {
-    await expect(collect({}, {
-      observedRoutes: [{ requestId: "Bearer request-secret", endpointId: "ml1-id" }],
-    })).rejects.toThrow("credential-like label value rejected");
-    await expect(collect({}, {
-      observedRoutes: [{ runId: "codex:Bearer run-secret", endpointId: "ml1-id" }],
-    })).rejects.toThrow("credential-like label value rejected");
+  it("marks credential-like observed request and run IDs partial without persistence", async () => {
+    for (const route of [
+      { requestId: "Bearer request-secret", endpointId: "ml1-id" },
+      { runId: "codex:Bearer run-secret", endpointId: "ml1-id" },
+    ]) {
+      const collected = await collect({}, { observedRoutes: [route] });
+      expect(collected.observedRoutes).toEqual([]);
+      expect(collected.routeObservationState).toBe("partial");
+      expect(collected.sources.every((source) => source.state === "available")).toBe(true);
+      expect(JSON.stringify(collected)).not.toContain("secret");
+    }
   });
 
   const qualifiedRoutePrivacyCases = JSON.parse(fixture("private-observed-route-ids.json")) as Array<{
@@ -410,12 +414,12 @@ describe("Olla fleet telemetry adapter", () => {
   }>;
 
   for (const privacyCase of qualifiedRoutePrivacyCases) {
-    it(`rejects credential assignments in ${privacyCase.label} before persistence`, async () => {
-      const result = collect({}, { observedRoutes: [privacyCase.route] });
-      await expect(result).rejects.toThrow("credential-like label value rejected");
-      await result.catch((error) => {
-        expect(JSON.stringify(error)).not.toContain(privacyCase.secret);
-      });
+    it(`marks credential assignments in ${privacyCase.label} partial before persistence`, async () => {
+      const collected = await collect({}, { observedRoutes: [privacyCase.route] });
+      expect(collected.observedRoutes).toEqual([]);
+      expect(collected.routeObservationState).toBe("partial");
+      expect(collected.sources.every((source) => source.state === "available")).toBe(true);
+      expect(JSON.stringify(collected)).not.toContain(privacyCase.secret);
     });
   }
 
@@ -525,6 +529,19 @@ describe("Olla fleet telemetry adapter", () => {
       requestId: "no-route",
       model: "qwen3.8:27b",
     })).toEqual({ state: "unmatched", key: null, snapshot: null });
+  });
+
+  it("marks privacy-rejected route observations partial without downgrading network sources", async () => {
+    const collected = await collect({}, {
+      observedRoutes: [{
+        runId: "ollama-agent:Bearer route-secret",
+        endpointId: "ml1-id",
+      }],
+    });
+
+    expect(collected.observedRoutes).toEqual([]);
+    expect(collected.routeObservationState).toBe("partial");
+    expect(collected.sources.every((source) => source.state === "available")).toBe(true);
   });
 
   it("matches exact observed request, run, and session routes without requiring an observed model", async () => {

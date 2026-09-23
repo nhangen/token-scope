@@ -138,6 +138,7 @@ describe("ollama run_id reuse (#37 post-merge audit)", () => {
     }
     expect(event?.runId).toBeNull();
     expect(event?.sessionId).toBeNull();
+    expect(event?.status).toBe("incomplete");
   });
 });
 
@@ -283,6 +284,7 @@ describe("provider correlation identity privacy", () => {
 
     for (const event of [claude, gemini, codex, opencode]) {
       expect(event.eventId).toMatch(/^[^:]+:opaque:[a-f0-9]{64}$/);
+      expect(event.status).toBe("incomplete");
     }
   });
 });

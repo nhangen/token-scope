@@ -20,6 +20,8 @@ export interface ProviderEvent {
   model: string | null;
   ts: string | null;
   status: "ok" | "error" | "incomplete";
+  /** True when source telemetry was retained after privacy-safe redaction. */
+  partial?: boolean;
   /** Set when this event is a retry of an earlier attempt. */
   retryOf: string | null;
   inputTokens: number | null;

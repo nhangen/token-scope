@@ -186,7 +186,8 @@ describe("fleet schema v1 contract", () => {
       provider: null,
       backend: null,
       model: null,
-      provenance: { source: "unknown", locator: null },
+      status: "incomplete",
+      provenance: { source: "unknown", locator: null, completeness: "partial" },
     });
     expect(JSON.stringify(parsed)).not.toContain(secret);
 
@@ -200,6 +201,10 @@ describe("fleet schema v1 contract", () => {
     }
     expect(parsedOperational.process_id).toBeNull();
     expect(parsedOperational.counters).toEqual({ requests: 18 });
+    expect(parsedOperational).toMatchObject({
+      status: "partial",
+      provenance: { completeness: "partial" },
+    });
   });
 
   it("keeps rejected record IDs distinct behind deterministic opaque hashes", () => {

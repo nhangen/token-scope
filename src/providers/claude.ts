@@ -65,6 +65,10 @@ export function claudeEventsFromTranscript(
     }
     const rejectedMessageId = typeof messageId === "string" && messageId.length > 0
       && safeMessageId === null;
+    const requestId = qualifiedProviderId("claude", messageId);
+    const sessionId = qualifiedProviderId("claude", rec.sessionId);
+    const rejectedSessionId = typeof rec.sessionId === "string" && rec.sessionId.length > 0
+      && sessionId === null;
     const model = msg.model ?? "unknown";
     const subscription = isAnthropicModel(model);
     events.push({
@@ -76,7 +80,8 @@ export function claudeEventsFromTranscript(
       modelProvider: subscription ? "anthropic" : "unknown",
       model,
       ts: rec.timestamp ?? null,
-      status: "ok",
+      status: rejectedMessageId || rejectedSessionId ? "incomplete" : "ok",
+      partial: rejectedMessageId || rejectedSessionId,
       retryOf: null,
       inputTokens: usage.input_tokens ?? null,
       outputTokens: usage.output_tokens ?? null,
@@ -85,9 +90,9 @@ export function claudeEventsFromTranscript(
       reasoningTokens: null,
       cashChargeUsd: null,
       provenance,
-      requestId: qualifiedProviderId("claude", messageId),
+      requestId,
       runId: null,
-      sessionId: qualifiedProviderId("claude", rec.sessionId),
+      sessionId,
     });
   }
   return events;

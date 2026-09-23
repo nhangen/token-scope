@@ -114,12 +114,12 @@ function usageRecord(
     backend: null,
     model: event.model,
     timestamp: canonicalTimestamp(event.ts),
-    status: event.status,
+    status: event.partial && event.status === "ok" ? "incomplete" : event.status,
     provenance: {
       source: `provider-${event.harness}`,
       locator: event.provenance,
       collected_at: collectedAt,
-      completeness: "complete",
+      completeness: event.partial || event.status === "incomplete" ? "partial" : "complete",
     },
     usage: {
       input_tokens: event.inputTokens,
@@ -229,7 +229,12 @@ function routeFor(
   if (joined.state === "unmatched") {
     const correlatedButIncomplete = joined.key !== null
       && olla.sources.some((source) => source.state === "partial" || source.state === "unavailable");
-    return { state: correlatedButIncomplete ? "partial" : "unmatched", snapshot: null };
+    return {
+      state: event.partial || correlatedButIncomplete || olla.routeObservationState === "partial"
+        ? "partial"
+        : "unmatched",
+      snapshot: null,
+    };
   }
   if (classifySnapshotFreshness(joined.snapshot, collectedAt) === "stale") {
     return { state: "stale", snapshot: joined.snapshot };

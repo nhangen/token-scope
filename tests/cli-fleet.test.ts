@@ -96,6 +96,7 @@ async function runFleet(options: {
   ledger?: string;
   orcaFixture?: string;
   opencodeDb?: string;
+  timezone?: string;
 } = {}) {
   const json = options.json ?? true;
   const server = servers[options.server ?? "matched"];
@@ -119,6 +120,7 @@ async function runFleet(options: {
       TOKEN_SCOPE_OLLA_URL: `http://127.0.0.1:${server.port}`,
       TOKEN_SCOPE_OLLA_ROUTES: join(FLEET_FX, options.routes ?? "olla-routes.json"),
       TOKEN_SCOPE_FLEET_COLLECTED_AT: options.collectedAt ?? "2026-09-22T14:05:01.000Z",
+      TZ: options.timezone ?? process.env.TZ,
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -231,6 +233,27 @@ describe("--fleet production CLI path", () => {
     expect(report.rows.every((row: any) => row.execution_host === null)).toBe(true);
   });
 
+  it("surfaces ambiguous duplicate Orca correlation as placement ambiguity", async () => {
+    const result = await runFleet({ orcaFixture: "orca-ambiguous-placement.json" });
+    expect(result.code).toBe(0);
+    const report = JSON.parse(result.out);
+    const claude = report.rows.find((row: any) => row.harness === "claude");
+    expect(claude?.placement_state).toBe("ambiguous");
+    expect(claude?.execution_host).toBeNull();
+  });
+
+  it("surfaces Orca placement outside the supported observation window as stale", async () => {
+    const result = await runFleet({
+      orcaFixture: "orca-stale-placement.json",
+      collectedAt: "2026-09-22T14:10:01.000Z",
+    });
+    expect(result.code).toBe(0);
+    const report = JSON.parse(result.out);
+    const claude = report.rows.find((row: any) => row.harness === "claude");
+    expect(claude?.placement_state).toBe("stale");
+    expect(claude?.execution_host).toBe("orca:ssh:gpu-box");
+  });
+
   it("surfaces unmatched, ambiguous, stale, partial, and unavailable Olla routes", async () => {
     const cases: Array<{
       name: string;
@@ -276,6 +299,19 @@ describe("--fleet production CLI path", () => {
     expect(boundaryRows[0].provenance[0].collected_at).toBe("2026-09-22T14:05:01.000Z");
   });
 
+  it("rejects a noncanonical collection timestamp in every host timezone", async () => {
+    for (const timezone of ["UTC", "America/Los_Angeles"]) {
+      const result = await runFleet({
+        collectedAt: "2026-09-22 14:05:01",
+        timezone,
+      });
+      expect(result.code, timezone).toBe(1);
+      expect(result.err, timezone).toContain(
+        "TOKEN_SCOPE_FLEET_COLLECTED_AT must be an RFC 3339 UTC timestamp",
+      );
+    }
+  });
+
   it("keeps unknown origin and private route input out of output", async () => {
     const result = await runFleet({
       routes: "olla-routes-private.json",
@@ -286,7 +322,7 @@ describe("--fleet production CLI path", () => {
     const report = JSON.parse(result.out);
     expect(report.rows.every((row: any) => row.prompt_origin_host === null)).toBe(true);
     const local = report.rows.find((row: any) => row.harness === "ollama-claude");
-    expect(local).toMatchObject({ route_state: "unavailable", request_id: null });
+    expect(local).toMatchObject({ route_state: "partial", request_id: null });
   });
 
   it("renders credential-like provider correlations as unknown without leaking the secret", async () => {
@@ -298,7 +334,13 @@ describe("--fleet production CLI path", () => {
     expect(jsonResult.code).toBe(0);
     expect(jsonResult.out).not.toContain("audit-secret");
     const local = JSON.parse(jsonResult.out).rows.find((row: any) => row.harness === "ollama-claude");
-    expect(local).toMatchObject({ run_id: null, session_id: null });
+    expect(local).toMatchObject({
+      run_id: null,
+      session_id: null,
+      status: "incomplete",
+      route_state: "partial",
+      provenance: [expect.objectContaining({ scope: "usage", completeness: "partial" })],
+    });
 
     const textResult = await runFleet({ ...options, json: false });
     expect(textResult.code).toBe(0);
@@ -346,8 +388,13 @@ describe("--fleet production CLI path", () => {
       model: null,
       request_id: null,
       session_id: null,
+      status: "incomplete",
       placement_state: "unmatched",
     });
+    expect(row.provenance).toContainEqual(expect.objectContaining({
+      scope: "usage",
+      completeness: "partial",
+    }));
     expect(row.event_id).toMatch(/^opencode:opaque:[a-f0-9]{64}$/);
   });
 

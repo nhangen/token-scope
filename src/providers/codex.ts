@@ -55,6 +55,9 @@ export function codexEventsFromRollout(
   const cached = last?.cached_input_tokens ?? null;
   const inputDisjoint =
     rawInput !== null && cached !== null ? Math.max(0, rawInput - cached) : rawInput;
+  const sessionId = qualifiedProviderId("codex", meta?.id);
+  const rejectedSessionId = typeof meta?.id === "string" && meta.id.length > 0
+    && sessionId === null;
   return [
     {
       eventId: privateSafeEventId("codex", meta?.id, provenance),
@@ -63,7 +66,8 @@ export function codexEventsFromRollout(
       modelProvider: provider,
       model: model ?? "unknown", // session_meta carries the provider, not the model
       ts: lastTs ?? meta?.timestamp ?? null,
-      status: sawTurnCap ? "incomplete" : "ok",
+      status: sawTurnCap || rejectedSessionId ? "incomplete" : "ok",
+      partial: rejectedSessionId,
       retryOf: null,
       inputTokens: inputDisjoint,
       outputTokens: last?.output_tokens ?? null,
@@ -74,7 +78,7 @@ export function codexEventsFromRollout(
       provenance,
       requestId: null,
       runId: null,
-      sessionId: qualifiedProviderId("codex", meta?.id),
+      sessionId,
     },
   ];
 }

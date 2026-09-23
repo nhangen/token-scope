@@ -213,6 +213,10 @@ export function geminiCliEventsFromTranscript(
     ) {
       partialRecords += 1;
     }
+    const requestId = qualifiedProviderId("gemini-cli", messageId);
+    const qualifiedSessionId = qualifiedProviderId("gemini-cli", sessionId);
+    const rejectedRequestId = messageId.length > 0 && requestId === null;
+    const rejectedSessionId = sessionId !== null && qualifiedSessionId === null;
 
     events.push({
       eventId: privateSafeEventId("gemini-cli", messageId),
@@ -221,7 +225,8 @@ export function geminiCliEventsFromTranscript(
       modelProvider: "google",
       model,
       ts: timestamp,
-      status: "ok",
+      status: rejectedRequestId || rejectedSessionId ? "incomplete" : "ok",
+      partial: rejectedRequestId || rejectedSessionId,
       retryOf: null,
       inputTokens: input,
       outputTokens: output,
@@ -230,9 +235,9 @@ export function geminiCliEventsFromTranscript(
       reasoningTokens: reasoning,
       cashChargeUsd: null,
       provenance,
-      requestId: qualifiedProviderId("gemini-cli", messageId),
+      requestId,
       runId: null,
-      sessionId: qualifiedProviderId("gemini-cli", sessionId),
+      sessionId: qualifiedSessionId,
     });
   }
 
