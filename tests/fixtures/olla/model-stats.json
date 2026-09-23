@@ -1,0 +1,58 @@
+{
+  "timestamp": "2026-09-22T14:05:00Z",
+  "endpoints": {
+    "ml1-5080": {
+      "endpoint_name": "ml1-5080",
+      "average_latency": "110ms",
+      "last_used": "1 minute ago",
+      "request_count": 40,
+      "success_rate": 97.5,
+      "consecutive_errors": 0
+    }
+  },
+  "models": [
+    {
+      "name": "qwen3.8:27b",
+      "success_rate": "96.0%",
+      "total_traffic": "64 MB",
+      "average_latency": "120ms",
+      "p95_latency": "240ms",
+      "p99_latency": "300ms",
+      "last_requested": "1 minute ago",
+      "total_requests": 50,
+      "successful_requests": 48,
+      "failed_requests": 2,
+      "unique_clients": 3,
+      "routing_hits": 44,
+      "routing_misses": 4,
+      "routing_fallbacks": 2,
+      "endpoint_breakdown": {
+        "ml1-5080": {
+          "endpoint_name": "ml1-5080",
+          "average_latency": "110ms",
+          "last_used": "1 minute ago",
+          "request_count": 40,
+          "success_rate": 97.5,
+          "consecutive_errors": 0
+        },
+        "ml2-5070": {
+          "endpoint_name": "ml2-5070",
+          "average_latency": "160ms",
+          "last_used": "2 minutes ago",
+          "request_count": 10,
+          "success_rate": 90,
+          "consecutive_errors": 2
+        }
+      }
+    }
+  ],
+  "summary": {
+    "overall_success_rate": "96.0%",
+    "total_traffic": "64 MB",
+    "most_popular_model": "qwen3.8:27b",
+    "least_popular_model": "qwen3.8:27b",
+    "total_models": 1,
+    "active_models": 1,
+    "total_requests": 50
+  }
+}

@@ -1,0 +1,23 @@
+# HELP olla_requests_total Total proxy requests processed
+# TYPE olla_requests_total counter
+olla_requests_total 50
+# TYPE olla_failures_total counter
+olla_failures_total 1
+# TYPE olla_avg_latency_ms gauge
+olla_avg_latency_ms 120
+# TYPE olla_endpoint_up gauge
+olla_endpoint_up{endpoint="ml1-5080",status="healthy"} 1
+olla_endpoint_up{endpoint="ml2-5070",status="offline"} 0
+# TYPE olla_endpoint_requests_total counter
+olla_endpoint_requests_total{endpoint="ml1-5080"} 40
+olla_endpoint_requests_total{endpoint="ml2-5070"} 10
+# TYPE olla_endpoint_avg_latency_ms gauge
+olla_endpoint_avg_latency_ms{endpoint="ml1-5080"} 110
+# TYPE olla_model_requests_total counter
+olla_model_requests_total{model="qwen3.8:27b"} 50
+# TYPE olla_model_avg_latency_ms gauge
+olla_model_avg_latency_ms{model="qwen3.8:27b"} 120
+# TYPE olla_model_routing_hits_total counter
+olla_model_routing_hits_total{model="qwen3.8:27b"} 44
+# TYPE olla_model_endpoint_requests_total counter
+olla_model_endpoint_requests_total{model="qwen3.8:27b",endpoint="ml1-5080"} 40
