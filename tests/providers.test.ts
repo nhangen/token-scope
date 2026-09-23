@@ -193,6 +193,50 @@ describe("partial aggregation (#37 post-merge audit)", () => {
   });
 });
 
+describe("provider model wire compatibility", () => {
+  it("keeps the existing unknown model sentinel across existing adapters", () => {
+    const claude = claudeEventsFromTranscript(JSON.stringify({
+      type: "assistant",
+      message: { id: "missing-model", usage: { input_tokens: 1, output_tokens: 1 } },
+    }), "claude.jsonl");
+    expect(claude[0]!.model).toBe("unknown");
+
+    const codex = codexEventsFromRollout([
+      JSON.stringify({ type: "session_meta", payload: { id: "missing-model", model_provider: "openai" } }),
+      JSON.stringify({ type: "event_msg", payload: { info: { total_token_usage: { input_tokens: 1, output_tokens: 1 } } } }),
+    ].join("\n"), "codex.jsonl");
+    expect(codex[0]!.model).toBe("unknown");
+
+    const ollama = ollamaEventsFromRuns([{
+      ts: "2026-09-23T00:00:00.000Z",
+      runId: "missing-model",
+      sessionId: null,
+      model: null,
+      taskName: "fixture",
+      cwd: null,
+      ollamaInputTokens: 1,
+      ollamaOutputTokens: 1,
+      turns: 1,
+      completed: true,
+      verified: true,
+      reason: "ok",
+    } as LedgerRun], "ledger");
+    expect(ollama[0]!.model).toBe("unknown");
+
+    const Database = require("bun:sqlite").Database;
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)");
+    db.run(
+      "INSERT INTO message (id, session_id, data) VALUES (?, ?, ?)",
+      "missing-model",
+      "session",
+      JSON.stringify({ role: "assistant", tokens: { input: 1, output: 1 } }),
+    );
+    expect(opencodeEventsFromDb(db)[0]!.model).toBe("unknown");
+    db.close();
+  });
+});
+
 describe("claude collector", () => {
   it("skips stray files in projects/ instead of losing the source (#37 live find)", () => {
     // .DS_Store next to project dirs made readdirSync throw ENOTDIR, which the
@@ -338,6 +382,7 @@ describe("dedup + report", () => {
       ledgerPath: join(dir, "ledger.jsonl"),
       codexHome: "/nonexistent",
       opencodeDb: "/nonexistent.db",
+      geminiRoot: "/nonexistent",
     });
     expect(c.partial["ollama-claude"]).toBe(2); // two real rows, zero events
     expect(c.unavailable).toEqual(["opencode"]);
@@ -349,6 +394,7 @@ describe("dedup + report", () => {
       ledgerPath: "/nonexistent-dir/ledger.jsonl",
       codexHome: "/nonexistent",
       opencodeDb: "/nonexistent.db",
+      geminiRoot: "/nonexistent",
     });
     expect(c.unavailable).toEqual(["opencode"]);
     expect(c.partial["ollama-claude"]).toBeUndefined();
@@ -360,6 +406,7 @@ describe("dedup + report", () => {
       ledgerPath: "/nonexistent.jsonl",
       codexHome: "/nonexistent",
       opencodeDb: "/nonexistent.db",
+      geminiRoot: "/nonexistent",
     });
     // Absent sources are legitimately empty (a machine without codex has zero
     // codex usage). Unavailable is reserved for present-but-unreadable sources
@@ -432,6 +479,7 @@ describe("collect integration over fixtures (#38 panel)", () => {
       ledgerPath: "/nonexistent.jsonl",
       codexHome: join(FX, "codex-home"),
       opencodeDb: "/nonexistent.db",
+      geminiRoot: "/nonexistent",
     });
     expect(c.partial["opencode"]).toBeUndefined();
     const ids = c.events.map((e) => e.eventId);

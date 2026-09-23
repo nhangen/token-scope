@@ -478,10 +478,21 @@ async function main() {
     const rows = providerRowsFiltered(collected, sinceMs);
     const untimed = untimedExcluded(collected, sinceMs);
     if (args.json) {
-      const payload = providerReportJson(rows, collected.unavailable, collected.partial, untimed);
+      const payload = providerReportJson(
+        rows,
+        collected.unavailable,
+        collected.partial,
+        untimed,
+        collected.unsupported ?? [],
+      );
       process.stdout.write(JSON.stringify(payload) + "\n");
     } else {
-      let out = renderProviderReport(rows, collected.unavailable, collected.partial);
+      let out = renderProviderReport(
+        rows,
+        collected.unavailable,
+        collected.partial,
+        collected.unsupported ?? [],
+      );
       if (untimed > 0) {
         out += `\n${untimed} event(s) outside --since only because they carry no timestamp`;
       }

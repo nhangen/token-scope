@@ -1,0 +1,2 @@
+{"sessionId":"outside-session","projectHash":"outside","startTime":"2026-09-23T15:00:00.000Z","lastUpdated":"2026-09-23T15:01:00.000Z","kind":"main"}
+{"id":"outside-response","timestamp":"2026-09-23T15:01:00.000Z","type":"gemini","content":"sanitized","model":"gemini-3-flash-preview","thoughts":[],"tokens":{"input":999999,"output":999999,"cached":0,"thoughts":0,"tool":0,"total":1999998}}

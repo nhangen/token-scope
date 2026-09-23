@@ -443,7 +443,7 @@ Optimal session length analysis — where the per-turn cost curve breaks.
 ```bash
 token-scope --credits --since 60d
   --providers             Cross-harness usage: Claude native, Claude over Ollama,
-                          Codex, and OpenCode normalized into one provider-neutral
+                          Codex, OpenCode, and Gemini CLI normalized into one provider-neutral
                           report (pairs with --since)
 token-scope --credits --cap 4.8B           # Max 20x instead of the 5x default
 ```
@@ -529,7 +529,7 @@ Per-file production cost: which artifacts (files written or edited) cost the mos
 
 ## Provider Report (`--providers`)
 
-`token-scope --providers --since 7d` normalizes the active coding harnesses into one provider-neutral table: per harness / billing route / model usage with nullable token classes (absent classes print `—`, never `0`), retry counts, and a measured-not-estimated footer. `--json` emits `{ rows, unavailable, measured }`.
+`token-scope --providers --since 7d` normalizes the active coding harnesses into one provider-neutral table: per harness / provider / billing route / model usage with nullable token classes (absent classes print `—`, never `0`), retry counts, and a measured-not-estimated footer. `--json` emits `{ rows, unavailable, unsupported, measured }`.
 
 ### Data sources and limitations
 
@@ -539,10 +539,14 @@ Per-file production cost: which artifacts (files written or edited) cost the mos
 | Claude over Ollama | `$XDG_STATE_HOME/ollama-agent/runs.jsonl` | One aggregate event per run: final cumulative input/output tokens; local route | No cache or reasoning classes (null); run-level, not per-request. Ledger `run_id`s identify tasks, not runs — event ids composite content so repeated ids with different totals stay distinct. The ledger records no attempt linkage, so `retryOf` stays null here. |
 | Codex | `~/.codex/sessions/**/*.jsonl` rollouts | Session-aggregate token totals; reasoning class where recorded | Billing route unknown (not in rollout records); aggregate events dated by the last token-count record, not session start. OpenAI-style `input_tokens` includes cached input — the adapter subtracts it so every source's columns are disjoint and summable. Model comes from turn-context records when present. Event ids are file-anchored because resumed rollouts can inherit a prior session_meta id. |
 | OpenCode | `$XDG_DATA_HOME/opencode/opencode.db` (defaulting to `~/.local/share`) | Per-message input/output/cache/reasoning, **measured cash cost** (`cost` → cash column, route `metered` when > 0), and error state (`error` → status) from message usage | Zero-value cost is genuinely zero on several routed providers; zero token classes can be absent or genuinely zero depending on the plugin. |
+| Gemini CLI session JSONL | `~/.gemini/tmp/<project>/chats/**/*.jsonl` | Gemini CLI `0.44.1` contract: the final `type: "gemini"` record for each durable message id. `tokens.input` is `promptTokenCount`, which already includes tool-use prompt tokens. Normalized disjoint input is `tokens.input - tokens.cached`; if either operand is unavailable, input remains null. `tokens.output`, `tokens.cached`, and `tokens.thoughts` map to output/cache-read/reasoning usage. Repeated append-log updates replace the same id, and imported copies retain that id so historical usage counts once. | Gemini CLI owns authentication. TokenScope rejects configured roots and discovered entries that are symlinks, reads only regular chat JSONL files whose resolved paths remain under the root, never reads `~/.gemini` credentials, and never calls a Google network API. This is a read-only containment check for a normal user-owned session tree, not a race-hardened boundary against a process concurrently replacing path components. A final message with missing/null `tokens` remains visible with null usage and partial provenance. The record does not identify Google sign-in vs API key vs Vertex, billing route, cash charge, or quota utilization, so those remain unknown/null. Missing model and cache-write remain null. |
+
+The first supported Google surface is specifically `gemini-cli-session-jsonl`, tested against Gemini CLI `0.44.1`. Google AI API/AI Studio (`google-ai-api`) and Vertex (`vertex-ai`) are separate unsupported surfaces and appear under `unsupported`; they are never folded into the Gemini CLI row. The adapter labels the model provider `google`, keeps the billing route `unknown`, and leaves cash charge null. Quota utilization remains a separate allowance concern, and counterfactual valuation remains a separate explicitly derived analysis; neither is inferred from Gemini token counts.
 
 Cross-cutting rules:
 
 - A source that exists but cannot be read is reported under **unavailable sources** — its volume is *unknown*, not zero. A source that reads partially names the skipped file count in the footer.
+- A source surface that has no adapter is reported under **unsupported sources**. Unsupported is not treated as zero usage and is distinct from an adapter failing to read an otherwise supported source.
 - Without `--since`, timestamp-less events count like any other. With `--since`, an undated event cannot be placed in the window: it is excluded and counted (`untimedExcluded` in JSON, footer line in text) rather than silently kept or dropped.
 - `--since` bounds the SCAN, not just aggregation: file sources prefilter by mtime and sqlite filters at the storage layer. Files actually touched inside the window must still be parsed — on a machine with days of in-window transcript volume, expect seconds, not milliseconds.
 - A token class that SOME events in a row report and others omit prints with its sum plus a named entry in the `partial` column: the aggregate covers reported events only and is not fully measured.

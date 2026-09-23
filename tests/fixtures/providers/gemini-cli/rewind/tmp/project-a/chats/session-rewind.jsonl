@@ -1,0 +1,4 @@
+{"sessionId":"session-rewind","projectHash":"project-a","startTime":"2026-09-23T14:00:00.000Z","lastUpdated":"2026-09-23T14:03:00.000Z","kind":"main"}
+{"id":"response-before-rewind","timestamp":"2026-09-23T14:01:00.000Z","type":"gemini","content":"sanitized","model":"gemini-3-flash-preview","thoughts":[],"tokens":{"input":1000,"output":100,"cached":100,"thoughts":10,"tool":0,"total":1110}}
+{"$rewindTo":"unknown-message-id"}
+{"id":"response-after-rewind","timestamp":"2026-09-23T14:03:00.000Z","type":"gemini","content":"sanitized","model":"gemini-3-flash-preview","thoughts":[],"tokens":{"input":400,"output":40,"cached":100,"thoughts":5,"tool":0,"total":445}}
