@@ -89,7 +89,9 @@ describe("codex resumed sessions (#37 post-merge audit)", () => {
     expect(skipped).toBe(0);
     const ids = new Set(events.map((e: any) => e.eventId));
     expect(ids.size).toBe(events.length); // no silent dedup of real sessions
-    expect(events.filter((e: any) => e.provenance.includes("resumed-copy")).length).toBe(1);
+    const resumed = events.filter((e: any) => e.codexThread?.threadId === "root-resumed");
+    expect(resumed.length).toBe(2);
+    expect(new Set(resumed.map((e) => e.eventId)).size).toBe(2);
   });
 });
 
@@ -252,17 +254,191 @@ describe("ollama adapter", () => {
 });
 
 describe("codex adapter", () => {
-  it("emits one aggregate event with final cumulative totals", () => {
-    const ev = codexEventsFromRollout(
-      readFileSync(join(FX, "codex-rollout.jsonl"), "utf8"),
-      "codex-rollout.jsonl",
-    );
-    expect(ev.length).toBe(1);
-    expect(ev[0]!.eventId.startsWith("codex:019e-codex")).toBe(true);
-    // OpenAI-style input includes cached; adapter emits the disjoint 750.
-    expect(ev[0]!.inputTokens).toBe(750);
-    expect(ev[0]!.cacheReadTokens).toBe(150);
-    expect(ev[0]!.reasoningTokens).toBe(40);
+  const rollout = readFileSync(join(FX, "codex-rollout.jsonl"), "utf8");
+
+  it("attributes each response and keeps token classes disjoint", () => {
+    const ev = codexEventsFromRollout(rollout, "codex-rollout.jsonl");
+    expect(ev.length).toBe(2);
+    expect(ev.map((event) => [event.model, event.reasoningEffort])).toEqual([
+      ["gpt-5.6-luna", "low"],
+      ["gpt-5.6-sol", "medium"],
+    ]);
+    for (const event of ev) {
+      expect(event.inputTokens).toBe(70);
+      expect(event.cacheReadTokens).toBe(20);
+      expect(event.cacheWriteTokens).toBe(10);
+      expect(event.outputTokens).toBe(40);
+      expect(event.reasoningTokens).toBe(10);
+      expect(event.malformed).toEqual([]);
+    }
+    expect(ev[0]!.inputTokens! + ev[0]!.cacheReadTokens! + ev[0]!.cacheWriteTokens!).toBe(100);
+    expect(ev[0]!.outputTokens! + ev[0]!.reasoningTokens!).toBe(50);
+  });
+
+  it("counts equal calls when totals advance and ignores unchanged snapshots", () => {
+    const ev = codexEventsFromRollout(rollout, "codex-rollout.jsonl");
+    expect(ev.map((event) => event.eventId)).toEqual([
+      "codex:codex-rollout.jsonl:ordinal-2",
+      "codex:codex-rollout.jsonl:ordinal-5",
+    ]);
+  });
+
+  it("keeps prior event ids when a rollout is appended", () => {
+    const before = codexEventsFromRollout(rollout, "codex-rollout.jsonl");
+    const appended = rollout + "\n" + [
+      JSON.stringify({ timestamp: "2026-09-20T11:00:06Z", type: "turn_context", payload: { model: "gpt-6-astra", effort: "high" } }),
+      JSON.stringify({ timestamp: "2026-09-20T11:00:07Z", ordinal: 7, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 5, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 2, reasoning_output_tokens: 0 }, total_token_usage: { input_tokens: 205, cached_input_tokens: 40, cache_write_input_tokens: 20, output_tokens: 102, reasoning_output_tokens: 20 } } } }),
+    ].join("\n");
+    const after = codexEventsFromRollout(appended, "codex-rollout.jsonl");
+    expect(after.slice(0, 2).map((event) => event.eventId)).toEqual(before.map((event) => event.eventId));
+    expect(after[2]!.eventId).toBe("codex:codex-rollout.jsonl:ordinal-7");
+  });
+
+  it("uses the line index when legacy records have no ordinal", () => {
+    const legacy = rollout.replace('"ordinal":2,', "");
+    const [event] = codexEventsFromRollout(legacy, "legacy.jsonl");
+    expect(event!.eventId).toBe("codex:legacy.jsonl:line-2");
+  });
+
+  it("marks impossible classes malformed instead of clamping", () => {
+    const text = [
+      JSON.stringify({ type: "session_meta", payload: { id: "bad", model_provider: "openai", source: "vscode" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "medium" } }),
+      JSON.stringify({ ordinal: 2, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 10, cached_input_tokens: 11, cache_write_input_tokens: 1, output_tokens: 4, reasoning_output_tokens: 5 }, total_token_usage: { input_tokens: 10, cached_input_tokens: 11, cache_write_input_tokens: 1, output_tokens: 4, reasoning_output_tokens: 5 } } } }),
+    ].join("\n");
+    const [event] = codexEventsFromRollout(text, "bad.jsonl");
+    expect(event!.inputTokens).toBeNull();
+    expect(event!.outputTokens).toBeNull();
+    expect(event!.malformed).toEqual(["input_token_classes", "output_token_classes"]);
+  });
+
+  it("resets missing turn context fields instead of inheriting the prior turn", () => {
+    const text = [
+      JSON.stringify({ type: "session_meta", payload: { id: "context-reset", model_provider: "openai", source: "vscode" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-6-astra", effort: "high" } }),
+      JSON.stringify({ ordinal: 2, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 }, total_token_usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } } } }),
+      JSON.stringify({ type: "turn_context", payload: {} }),
+      JSON.stringify({ ordinal: 4, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 2, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 2, reasoning_output_tokens: 0 }, total_token_usage: { input_tokens: 3, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 3, reasoning_output_tokens: 0 } } } }),
+    ].join("\n");
+    const events = codexEventsFromRollout(text, "context-reset.jsonl");
+    expect(events.map((event) => [event.model, event.reasoningEffort])).toEqual([
+      ["gpt-6-astra", "high"],
+      ["unknown", "unknown"],
+    ]);
+  });
+
+  it("does not overlap input classes when cache-write exists but cache-read is absent", () => {
+    const text = [
+      JSON.stringify({ type: "session_meta", payload: { id: "partial-cache", model_provider: "openai", source: "vscode" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "medium" } }),
+      JSON.stringify({ ordinal: 2, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 100, cache_write_input_tokens: 25, output_tokens: 10, reasoning_output_tokens: 2 }, total_token_usage: { input_tokens: 100, cache_write_input_tokens: 25, output_tokens: 10, reasoning_output_tokens: 2 } } } }),
+    ].join("\n");
+    const [event] = codexEventsFromRollout(text, "partial-cache.jsonl");
+    expect(event!.inputTokens).toBeNull();
+    expect(event!.cacheReadTokens).toBeNull();
+    expect(event!.cacheWriteTokens).toBe(25);
+    expect(event!.partial).toContain("input_token_classes");
+  });
+
+  it("does not relabel totals when cache or reasoning classes are absent", () => {
+    const text = [
+      JSON.stringify({ type: "session_meta", payload: { id: "partial-classes", model_provider: "openai", source: "vscode" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "medium" } }),
+      JSON.stringify({ ordinal: 2, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 100, cached_input_tokens: 25, output_tokens: 10 }, total_token_usage: { input_tokens: 100, cached_input_tokens: 25, output_tokens: 10 } } } }),
+    ].join("\n");
+    const [event] = codexEventsFromRollout(text, "partial-classes.jsonl");
+    expect(event!.inputTokens).toBeNull();
+    expect(event!.outputTokens).toBeNull();
+    expect(event!.cacheReadTokens).toBe(25);
+    expect(event!.cacheWriteTokens).toBeNull();
+    expect(event!.reasoningTokens).toBeNull();
+    expect(event!.partial).toEqual([
+      "cumulative_token_usage",
+      "input_token_classes",
+      "output_token_classes",
+    ]);
+  });
+
+  it("suppresses snapshots by canonical token tuple regardless of property order", () => {
+    const cumulativeA = { input_tokens: 10, cached_input_tokens: 2, cache_write_input_tokens: 1, output_tokens: 5, reasoning_output_tokens: 1 };
+    const cumulativeB = { reasoning_output_tokens: 1, output_tokens: 5, cache_write_input_tokens: 1, cached_input_tokens: 2, input_tokens: 10 };
+    const last = { input_tokens: 10, cached_input_tokens: 2, cache_write_input_tokens: 1, output_tokens: 5, reasoning_output_tokens: 1 };
+    const text = [
+      JSON.stringify({ type: "session_meta", payload: { id: "canonical", model_provider: "openai", source: "vscode" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "medium" } }),
+      JSON.stringify({ ordinal: 2, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: last, total_token_usage: cumulativeA } } }),
+      JSON.stringify({ ordinal: 3, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: last, total_token_usage: cumulativeB } } }),
+    ].join("\n");
+    expect(codexEventsFromRollout(text, "canonical.jsonl")).toHaveLength(1);
+  });
+
+  it("retains distinct responses when matching cumulative snapshots are incomplete", () => {
+    const cumulative = { input_tokens: 20, output_tokens: 8 };
+    const text = [
+      JSON.stringify({ type: "session_meta", payload: { id: "incomplete-snapshots", model_provider: "openai", source: "vscode" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "medium" } }),
+      JSON.stringify({ ordinal: 2, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 10, cached_input_tokens: 2, cache_write_input_tokens: 1, output_tokens: 5, reasoning_output_tokens: 1 }, total_token_usage: cumulative } } }),
+      JSON.stringify({ ordinal: 3, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 12, cached_input_tokens: 3, cache_write_input_tokens: 1, output_tokens: 6, reasoning_output_tokens: 2 }, total_token_usage: cumulative } } }),
+    ].join("\n");
+    const events = codexEventsFromRollout(text, "incomplete-snapshots.jsonl");
+    expect(events.map((event) => event.eventId)).toEqual([
+      "codex:incomplete-snapshots.jsonl:ordinal-2",
+      "codex:incomplete-snapshots.jsonl:ordinal-3",
+    ]);
+    expect(events.map((event) => event.inputTokens)).toEqual([7, 8]);
+    expect(events.every((event) => event.partial?.includes("cumulative_token_usage"))).toBe(true);
+  });
+
+  it("falls back to line ids for invalid and repeated ordinals", () => {
+    const usage = (n: number) => ({ last_token_usage: { input_tokens: n, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: n, reasoning_output_tokens: 0 }, total_token_usage: { input_tokens: n, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: n, reasoning_output_tokens: 0 } });
+    const text = [
+      JSON.stringify({ type: "session_meta", payload: { id: "bad-ordinals", model_provider: "openai", source: "vscode" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "medium" } }),
+      JSON.stringify({ ordinal: 2, type: "event_msg", payload: { type: "token_count", info: usage(1) } }),
+      JSON.stringify({ ordinal: 2, type: "event_msg", payload: { type: "token_count", info: usage(2) } }),
+      JSON.stringify({ ordinal: "2", type: "event_msg", payload: { type: "token_count", info: usage(3) } }),
+    ].join("\n");
+    expect(codexEventsFromRollout(text, "bad-ordinals.jsonl").map((event) => event.eventId)).toEqual([
+      "codex:bad-ordinals.jsonl:ordinal-2",
+      "codex:bad-ordinals.jsonl:line-3",
+      "codex:bad-ordinals.jsonl:line-4",
+    ]);
+  });
+
+  it("preserves malformed per-response observations and legacy cumulative fallback", () => {
+    const malformed = [
+      JSON.stringify({ type: "session_meta", payload: { id: "malformed", model_provider: "openai", source: "vscode" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "medium" } }),
+      JSON.stringify({ ordinal: 2, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: "bad" }, total_token_usage: { input_tokens: 10 } } } }),
+    ].join("\n");
+    const malformedEvents = codexEventsFromRollout(malformed, "malformed.jsonl");
+    expect(malformedEvents).toHaveLength(1);
+    expect(malformedEvents[0]!.usageSource).toBe("response");
+    expect(malformedEvents[0]!.malformed).toContain("input_tokens");
+
+    const legacy = [
+      JSON.stringify({ type: "session_meta", payload: { id: "legacy", model_provider: "openai", source: "vscode" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.2-codex", effort: "medium" } }),
+      JSON.stringify({ ordinal: 2, type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 10, cached_input_tokens: 2, output_tokens: 4, reasoning_output_tokens: 1 } } } }),
+      JSON.stringify({ ordinal: 3, type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 20, cached_input_tokens: 4, output_tokens: 8, reasoning_output_tokens: 2 } } } }),
+    ].join("\n");
+    const legacyEvents = codexEventsFromRollout(legacy, "legacy-cumulative.jsonl");
+    expect(legacyEvents).toHaveLength(1);
+    expect(legacyEvents[0]!.eventId).toBe("codex:legacy-cumulative.jsonl:ordinal-3");
+    expect(legacyEvents[0]!.usageSource).toBe("legacy-cumulative");
+    expect(legacyEvents[0]!.inputTokens).toBeNull();
+    expect(legacyEvents[0]!.outputTokens).toBe(6);
+    expect(legacyEvents[0]!.partial).toContain("response_attribution");
+  });
+
+  it("preserves the legacy prefix when an appended rollout switches schemas", () => {
+    const text = readFileSync(join(FX, "codex-integrity-rollout.jsonl"), "utf8");
+    const events = codexEventsFromRollout(text, "codex-integrity-rollout.jsonl");
+    expect(events).toHaveLength(3);
+    expect(events[0]!.usageSource).toBe("legacy-cumulative");
+    expect(events[0]!.model).toBe("unknown");
+    expect(events[0]!.partial).toContain("response_attribution");
+    expect(events.slice(1).map((event) => event.usageSource)).toEqual(["response", "response"]);
   });
 });
 
@@ -283,7 +459,7 @@ describe("dedup + report", () => {
 
   it("renders nulls as em-dashes and lists unavailable sources", () => {
     const out = renderProviderReport(
-      [{ harness: "x", billingRoute: "local", model: "m", events: 1, input: 5, output: null, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, cashUsd: null, partialClasses: [], provenance: ["a.jsonl"] }],
+      [{ harness: "x", billingRoute: "local", model: "m", events: 1, input: 5, output: null, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, malformedEvents: 0, partialEvents: 0, legacyCumulativeEvents: 0, cashUsd: null, partialClasses: [], provenance: ["a.jsonl"] }],
       ["opencode"],
     );
     expect(out).toContain("—");
@@ -319,12 +495,41 @@ describe("dedup + report", () => {
 
   it("sum() treats genuine zero as measured and all-null as unknown (#38 panel)", () => {
     const rows = renderProviderReport(
-      [{ harness: "x", billingRoute: "local", model: "m", events: 2, input: 7, output: 0, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, cashUsd: null, partialClasses: ["output"], provenance: ["a"] }],
+      [{ harness: "x", billingRoute: "local", model: "m", events: 2, input: 7, output: 0, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, malformedEvents: 0, partialEvents: 0, legacyCumulativeEvents: 0, cashUsd: null, partialClasses: ["output"], provenance: ["a"] }],
       [],
     );
     expect(rows).toContain("  0  "); // zero renders as 0, not an em-dash
     expect(rows.split("\n").some((l) => l.includes("—"))).toBe(true); // nulls still dash
     expect(rows).toContain("output"); // the partial class is named, not hidden
+  });
+
+  it("propagates malformed and legacy fallback counts without claiming completeness", () => {
+    const text = [
+      JSON.stringify({ type: "session_meta", payload: { id: "report-integrity", model_provider: "openai", source: "vscode" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "medium" } }),
+      JSON.stringify({ ordinal: 2, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: "bad" }, total_token_usage: { input_tokens: 10 } } } }),
+    ].join("\n");
+    const events = codexEventsFromRollout(text, "report-integrity.jsonl");
+    const rows = providerRows({ events, unavailable: [], partial: {} });
+    expect(rows[0]!.malformedEvents).toBe(1);
+    expect(rows[0]!.legacyCumulativeEvents).toBe(0);
+    expect(providerReportJson(rows, []).measured).toBe(false);
+    expect(renderProviderReport(rows, [])).toContain("measurement incomplete: 1 malformed event(s)");
+
+    const legacyText = [
+      JSON.stringify({ type: "session_meta", payload: { id: "legacy-report", model_provider: "openai", source: "vscode" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.2-codex", effort: "medium" } }),
+      JSON.stringify({ ordinal: 2, type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 10, cached_input_tokens: 2, output_tokens: 4, reasoning_output_tokens: 1 } } } }),
+    ].join("\n");
+    const legacyRows = providerRows({
+      events: codexEventsFromRollout(legacyText, "legacy-report.jsonl"),
+      unavailable: [],
+      partial: {},
+    });
+    expect(legacyRows[0]!.legacyCumulativeEvents).toBe(1);
+    expect(legacyRows[0]!.partialEvents).toBe(1);
+    expect(providerReportJson(legacyRows, []).measured).toBe(false);
+    expect(renderProviderReport(legacyRows, [])).toContain("legacy cumulative fallback: 1 aggregate event(s)");
   });
 
   it("present-but-unparseable ledger surfaces as partial, not silent zero (#37)", async () => {
@@ -396,15 +601,16 @@ describe("opencode adapter (#38 panel: was untested)", () => {
 describe("codex adapter (#38 panel findings)", () => {
   it("extracts the real model, disjoint input, end-of-usage timestamp", () => {
     const rollout = [
-      JSON.stringify({ type: "session_meta", payload: { id: "cx1", timestamp: "2026-08-20T00:00:00Z", model_provider: "openai" } }),
-      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.2-codex" } }),
-      JSON.stringify({ type: "event_msg", timestamp: "2026-08-21T12:00:00Z", payload: { info: { total_token_usage: { input_tokens: 100, cached_input_tokens: 40, output_tokens: 10, reasoning_output_tokens: 2 } } } }),
+      JSON.stringify({ type: "session_meta", payload: { id: "cx1", timestamp: "2026-08-20T00:00:00Z", model_provider: "openai", source: "vscode" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.2-codex", effort: "medium" } }),
+      JSON.stringify({ ordinal: 2, type: "event_msg", timestamp: "2026-08-21T12:00:00Z", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 100, cached_input_tokens: 40, cache_write_input_tokens: 0, output_tokens: 10, reasoning_output_tokens: 2 }, total_token_usage: { input_tokens: 100, cached_input_tokens: 40, cache_write_input_tokens: 0, output_tokens: 10, reasoning_output_tokens: 2 } } } }),
     ].join("\n");
     const ev = codexEventsFromRollout(rollout, "/x/codex.jsonl");
     expect(ev.length).toBe(1);
     expect(ev[0]!.model).toBe("gpt-5.2-codex"); // provider is not the model
     expect(ev[0]!.inputTokens).toBe(60); // cached subset removed: disjoint classes
     expect(ev[0]!.cacheReadTokens).toBe(40);
+    expect(ev[0]!.outputTokens).toBe(8);
     expect(ev[0]!.ts).toBe("2026-08-21T12:00:00Z"); // when usage accrued, not session start
   });
 });

@@ -69,6 +69,23 @@ describe("parseArgs mode-conflict guard", () => {
   });
 });
 
+describe("parseArgs --codex-experiment", () => {
+  beforeEach(installFakes);
+  afterEach(restoreFakes);
+
+  it("captures the persisted manifest path", () => {
+    const args = parseArgs(["--codex-experiment", "/tmp/experiment.json", "--json"]);
+    expect(args.mode).toBe("codex-experiment");
+    expect(args.codexExperimentManifest).toBe("/tmp/experiment.json");
+    expect(args.json).toBe(true);
+  });
+
+  it("rejects a missing manifest path", () => {
+    expect(() => parseArgs(["--codex-experiment", "--json"])).toThrow("__exit_1");
+    expect(stderrBuf).toContain("--codex-experiment requires a manifest path");
+  });
+});
+
 describe("parseArgs --savings", () => {
   beforeEach(installFakes);
   afterEach(restoreFakes);

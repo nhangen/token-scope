@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { parseSince } from "@/db";
+import { homedir } from "os";
 import { createReader } from "@/reader";
 import type { Reader } from "@/reader";
 import type { ArtifactFormat } from "@/artifacts";
@@ -64,6 +65,10 @@ REPORT MODES (mutually exclusive)
   --artifact-path <frag>  (with --artifacts) filter paths containing fragment
   --artifact-show <path>  Per-edit lifecycle for one artifact (full path, not fragment)
   --artifact-compare <md> MD vs sibling HTML cost (looks for &lt;dir&gt;/artifacts/&lt;slug&gt;.html)
+  --providers             Cross-harness provider usage by model and token class
+  --codex-experiment <manifest.json>
+                          Compare persisted Codex root-task experiments and their
+                          transitive descendants
 
 SPEND FLAGS (with --spend)
   --turns <N..M>          Isolate a task: 1-indexed inclusive turn slice within the
@@ -132,7 +137,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop" | "artifacts" | "artifact-show" | "artifact-compare" | "spend" | "savings" | "credits" | "providers";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop" | "artifacts" | "artifact-show" | "artifact-compare" | "spend" | "savings" | "credits" | "providers" | "codex-experiment";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -156,6 +161,7 @@ interface CliArgs {
   byLabel?: boolean;
   agentId?: string;
   pmAgentId?: string;
+  codexExperimentManifest?: string;
 }
 
 /** Parses a --turns value: "N", "N..M", "N..", "..M" (1-indexed, inclusive). */
@@ -291,6 +297,10 @@ export function parseArgs(argv: string[]): CliArgs {
       case "--budget": setMode("budget"); break;
       case "--credits": setMode("credits"); break;
       case "--providers": setMode("providers"); break;
+      case "--codex-experiment":
+        setMode("codex-experiment");
+        args.codexExperimentManifest = flagValue(argv, ++i, "--codex-experiment", "a manifest path");
+        break;
       case "--cap": {
         const raw = argv[++i];
         if (!raw) { process.stderr.write("Error: --cap requires a value.\n"); process.exit(1); }
@@ -486,6 +496,21 @@ async function main() {
         out += `\n${untimed} event(s) outside --since only because they carry no timestamp`;
       }
       process.stdout.write(out + "\n");
+    }
+    return;
+  }
+
+  if (args.mode === "codex-experiment") {
+    const { codexEvents } = await import("@/providers/codex");
+    const { readCodexExperimentManifest } = await import("@/codex-experiments");
+    const { codexExperimentReport, renderCodexExperimentReport } = await import("@/reports/codex-experiments");
+    const manifest = readCodexExperimentManifest(args.codexExperimentManifest!);
+    const collected = codexEvents(process.env.TOKEN_SCOPE_CODEX_HOME ?? homedir());
+    const report = codexExperimentReport(collected.events, manifest);
+    if (args.json) process.stdout.write(JSON.stringify(report) + "\n");
+    else process.stdout.write(renderCodexExperimentReport(report) + "\n");
+    if (collected.skipped > 0) {
+      process.stderr.write(`Warning: skipped ${collected.skipped} unreadable Codex rollout file(s).\n`);
     }
     return;
   }

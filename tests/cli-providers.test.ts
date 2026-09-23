@@ -51,6 +51,9 @@ describe("--providers production CLI path", () => {
       expect(Array.isArray(row.provenance)).toBe(true);
       expect(row.provenance.length).toBeGreaterThan(0);
       expect(Array.isArray(row.partialClasses)).toBe(true);
+      expect(typeof row.malformedEvents).toBe("number");
+      expect(typeof row.partialEvents).toBe("number");
+      expect(typeof row.legacyCumulativeEvents).toBe("number");
     }
   });
 
