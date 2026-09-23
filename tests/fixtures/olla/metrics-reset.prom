@@ -1,0 +1,6 @@
+# TYPE olla_requests_total counter
+olla_requests_total 3
+# TYPE olla_endpoint_requests_total counter
+olla_endpoint_requests_total{endpoint="ml1-5080"} 2
+# TYPE olla_model_requests_total counter
+olla_model_requests_total{model="qwen3.8:27b"} 3

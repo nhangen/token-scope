@@ -1,0 +1,33 @@
+{
+  "timestamp": "2026-09-22T14:05:00Z",
+  "endpoints": [],
+  "proxy": {
+    "engine": "olla",
+    "profile": "Bearer route-secret",
+    "balancer": "least-connections"
+  },
+  "security": {
+    "status": "normal",
+    "blocked_ips": 0,
+    "violations": {
+      "rate_limits": 0,
+      "size_limits": 0
+    }
+  },
+  "system": {
+    "status": "healthy",
+    "endpoints_up": "1/1",
+    "success_rate": "100.0%",
+    "avg_latency": "10ms",
+    "total_traffic": "1 KB",
+    "uptime": "1h5m",
+    "start_time": "2026-09-22T13:00:00Z",
+    "version": "0.1.0",
+    "commit": "abc123de",
+    "active_connections": 0,
+    "security_violations": 0,
+    "total_requests": 1,
+    "total_failures": 0,
+    "has_traffic": true
+  }
+}

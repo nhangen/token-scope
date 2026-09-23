@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-09-22T14:05:00Z",
+  "total_models": 1,
+  "total_families": 1,
+  "total_endpoints": 2,
+  "models_by_family": {
+    "qwen": ["qwen3.8:27b"]
+  },
+  "recent_models": [
+    {
+      "name": "qwen3.8:27b",
+      "type": "llm",
+      "family": "qwen",
+      "params": "27B",
+      "quant": "Q4_K_M",
+      "size": "16 GB",
+      "last_seen": "1 minute ago",
+      "last_seen_at": "2026-09-22T14:04:00Z",
+      "endpoints": ["ml1-5080", "ml2-5070"],
+      "endpoint_ids": ["ml1-id", "ml2-id"],
+      "aliases": ["qwen-coder"],
+      "capabilities": ["text_generation", "chat"]
+    }
+  ]
+}
