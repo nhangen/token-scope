@@ -5,6 +5,7 @@ import { claudeEvents, claudeEventsFromTranscript } from "@/providers/claude";
 import { geminiCliEventsFromTranscript } from "@/providers/gemini-cli";
 import { ollamaEvents, ollamaEventsFromRuns } from "@/providers/ollama";
 import { opencodeEventsFromDb } from "@/providers/opencode";
+import { ollamaRouteEvents } from "@/providers/ollama-route";
 import type { LedgerRun } from "@/ledger";
 import { codexEventsFromRollout } from "@/providers/codex";
 import { collectProviderEvents, dedupeEvents } from "@/providers";
@@ -139,6 +140,33 @@ describe("ollama run_id reuse (#37 post-merge audit)", () => {
     expect(event?.runId).toBeNull();
     expect(event?.sessionId).toBeNull();
     expect(event?.status).toBe("incomplete");
+  });
+});
+
+describe("Olla route telemetry", () => {
+  it("ingests measured usage and served route metadata while ignoring refusals", () => {
+    const route = ollamaRouteEvents(join(FX, "olla-routing.jsonl"));
+    expect(route.skippedLines).toBe(0);
+    expect(route.events).toHaveLength(1);
+    expect(route.events[0]).toMatchObject({
+      harness: "ollama-route",
+      model: "qwen3.8:27b",
+      requestId: "olla:gentle-galloping-9a2d",
+      endpointName: "ml1-5080",
+      inputTokens: 72,
+      outputTokens: 40,
+      totalLatencyMs: 12578,
+      status: "ok",
+    });
+    expect(route.events[0]!.decodeTps).toBeCloseTo(61132.07, 2);
+  });
+
+  it("does not retain private route identities", () => {
+    const route = ollamaRouteEvents(join(FX, "olla-routing-private.jsonl"));
+    expect(route.events).toHaveLength(1);
+    expect(route.events[0]!.requestId).toBeNull();
+    expect(route.events[0]!.status).toBe("incomplete");
+    expect(route.events[0]!.eventId).not.toContain("route-secret");
   });
 });
 
@@ -594,6 +622,20 @@ describe("dedup + report", () => {
     // Absent sources are legitimately empty (a machine without codex has zero
     // codex usage). Unavailable is reserved for present-but-unreadable sources
     // (locked/corrupt db) where volume is unknown rather than zero (#37).
+    expect(c.unavailable).toEqual(["opencode"]);
+  });
+
+  it("collects direct Olla route telemetry as provider usage", () => {
+    const c = collectProviderEvents({
+      claudeRoot: "/nonexistent",
+      ledgerPath: "/nonexistent.jsonl",
+      codexHome: "/nonexistent",
+      opencodeDb: "/nonexistent.db",
+      geminiRoot: "/nonexistent",
+      ollamaRoutingTelemetry: join(FX, "olla-routing.jsonl"),
+    });
+    const route = c.events.find((event) => event.harness === "ollama-route");
+    expect(route).toMatchObject({ model: "qwen3.8:27b", inputTokens: 72, outputTokens: 40 });
     expect(c.unavailable).toEqual(["opencode"]);
   });
 });

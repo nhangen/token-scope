@@ -352,6 +352,19 @@ function readOllaRoutes(path: string | undefined): OllaRouteObservation[] {
   return value as OllaRouteObservation[];
 }
 
+function observedRoutesFromProviders(providers: Collected): OllaRouteObservation[] {
+  return providers.events
+    .filter((event) => event.harness === "ollama-route")
+    .flatMap((event) => event.requestId !== null && event.endpointName !== null
+      ? [{
+          requestId: event.requestId,
+          endpointName: event.endpointName,
+          model: event.model ?? undefined,
+          timestamp: event.ts ?? undefined,
+        }]
+      : []);
+}
+
 export async function collectFleetReport(options: {
   window: string;
   sinceMs: number;
@@ -374,7 +387,10 @@ export async function collectFleetReport(options: {
       olla = await collectOllaTelemetry({
         baseUrl: ollaUrl,
         collectedAt,
-        observedRoutes: readOllaRoutes(process.env.TOKEN_SCOPE_OLLA_ROUTES),
+        observedRoutes: [
+          ...readOllaRoutes(process.env.TOKEN_SCOPE_OLLA_ROUTES),
+          ...observedRoutesFromProviders(providers),
+        ],
       });
       ollaState = { source: "olla", state: "available", reason: null };
     } catch (error) {

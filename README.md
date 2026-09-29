@@ -558,7 +558,7 @@ Cross-cutting rules:
 
 ## Fleet Report (`--fleet`)
 
-`token-scope --fleet --since 1h` joins provider events with current Orca placement and optional Olla route telemetry. Both text and JSON output show origin, execution host, router, backend host, harness, provider, model, source-qualified request/run/session IDs, run status, input/output tokens, billing route, measured cash charge, TTFT, decode TPS, total latency, placement/route state, and provenance. Unknown values are explicit and aggregate measurements are labeled.
+`token-scope --fleet --since 1h` joins provider events with current Orca placement and optional Olla route telemetry. Both text and JSON output show origin, execution host, router, backend host, harness, provider, model, source-qualified request/run/session IDs, run status, input/output tokens, billing route, measured cash charge, TTFT, decode TPS, total latency, placement/route state, and provenance. Unknown values are explicit and aggregate measurements are labeled. When `TOKEN_SCOPE_OLLAMA_ROUTING_TELEMETRY` exists, direct `ollama-route.sh` results supply measured tokens and served endpoint/model metadata; a hand-maintained route observation file is only needed for sources that do not emit route telemetry.
 
 Join states are explicit: `matched`, `unmatched`, `ambiguous`, `stale`, `partial`, and `unavailable`. Cloud-provider rows use `provider` for route state because no Olla join applies. Billing routes remain `local`, `subscription`, `metered`, or `unknown`; only a source-recorded request charge appears under `cash_charge_usd`.
 
@@ -724,6 +724,7 @@ the cap is denominated in.
 | `TOKEN_SCOPE_PROMPT_ORIGIN_HOST` | Explicit prompt-origin host label for `--fleet`; unset remains null |
 | `TOKEN_SCOPE_OLLA_URL` | Olla base URL used by `--fleet` |
 | `TOKEN_SCOPE_OLLA_ROUTES` | JSON file containing exact request/run/session-to-endpoint observations |
+| `TOKEN_SCOPE_OLLAMA_ROUTING_TELEMETRY` | Olla route JSONL written by llm-tools; defaults to the local routing telemetry path |
 | `TOKEN_SCOPE_FLEET_COLLECTED_AT` | Fixed RFC 3339 evaluation time anchoring collection and `--since` for reproducible exports/tests |
 | `TOKEN_SCOPE_CHECKPOINT_PCT` | Checkpoint at this % of the weekly cap (default `3.5`) |
 | `TOKEN_SCOPE_CHECKPOINT_TURNS` | Checkpoint at this turn count (default `50`) |

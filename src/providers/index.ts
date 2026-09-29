@@ -15,6 +15,7 @@ import { ollamaEvents } from "./ollama";
 import { codexEvents } from "./codex";
 import { opencodeEvents } from "./opencode";
 import { geminiCliEvents, UNSUPPORTED_GOOGLE_SURFACES } from "./gemini-cli";
+import { ollamaRouteEvents } from "./ollama-route";
 import type { ProviderEvent } from "./types";
 export type { ProviderEvent } from "./types";
 
@@ -46,6 +47,7 @@ export function collectProviderEvents(opts?: {
   codexHome?: string;
   opencodeDb?: string;
   geminiRoot?: string;
+  ollamaRoutingTelemetry?: string;
   sinceMs?: number;
 }): Collected {
   const unavailable: string[] = [];
@@ -59,6 +61,9 @@ export function collectProviderEvents(opts?: {
     opts?.opencodeDb ?? process.env.TOKEN_SCOPE_OPENCODE_DB ?? join(dataRoot, "opencode", "opencode.db");
   const geminiRoot =
     opts?.geminiRoot ?? process.env.TOKEN_SCOPE_GEMINI_ROOT ?? join(homedir(), ".gemini");
+  const ollamaRoutingTelemetry = opts?.ollamaRoutingTelemetry
+    ?? process.env.TOKEN_SCOPE_OLLAMA_ROUTING_TELEMETRY
+    ?? join(process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"), "ollama-agent", "routing.jsonl");
   const sinceMs = opts?.sinceMs;
   let events: ProviderEvent[] = [];
 
@@ -111,6 +116,11 @@ export function collectProviderEvents(opts?: {
   if (gemini.source.state === "partial") {
     partial["gemini-cli"] = gemini.affectedFiles;
   }
+
+  const route = ollamaRouteEvents(ollamaRoutingTelemetry, sinceMs);
+  events.push(...route.events);
+  if (route.readError !== null) unavailable.push("ollama-route");
+  if (route.skippedLines > 0) partial["ollama-route"] = route.skippedLines;
 
   return {
     events: dedupeEvents(events),
