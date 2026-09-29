@@ -1,0 +1,1 @@
+{"schema_version":1,"timestamp":"2026-09-22T14:03:00.000Z","event":"result","decision":"completed","request_id":"Bearer route-secret","olla_request_id":"Bearer route-secret","provider":"olla","model":"local-coder","model_served":"qwen3.8:27b","endpoint_served":"ml1-5080","prompt_tokens":72,"output_tokens":40,"exit_code":0}

@@ -89,6 +89,7 @@ async function runFleet(options: {
   json?: boolean;
   server?: OllaServerName;
   routes?: string;
+  routeTelemetry?: string;
   collectedAt?: string;
   promptOriginHost?: string | null;
   since?: string;
@@ -119,6 +120,7 @@ async function runFleet(options: {
         : join(FLEET_FX, options.orcaFixture ?? "orca.json"),
       TOKEN_SCOPE_OLLA_URL: `http://127.0.0.1:${server.port}`,
       TOKEN_SCOPE_OLLA_ROUTES: join(FLEET_FX, options.routes ?? "olla-routes.json"),
+      TOKEN_SCOPE_OLLAMA_ROUTING_TELEMETRY: options.routeTelemetry ?? join(FLEET_FX, "missing-routing.jsonl"),
       TOKEN_SCOPE_FLEET_COLLECTED_AT: options.collectedAt ?? "2026-09-22T14:05:01.000Z",
       TZ: options.timezone ?? process.env.TZ,
     },
@@ -216,6 +218,25 @@ describe("--fleet production CLI path", () => {
     expect(result.out).toContain("TTFT: unknown");
     expect(result.out).toContain("total latency: 110ms aggregate");
     expect(result.out).toContain("total latency: 1250ms request");
+  });
+
+  it("joins direct Olla route telemetry without a hand-maintained route file", async () => {
+    const result = await runFleet({
+      routes: "olla-routes-empty.json",
+      routeTelemetry: join(FX, "providers", "olla-routing.jsonl"),
+    });
+    expect(result.code).toBe(0);
+    const report = JSON.parse(result.out);
+    const local = report.rows.find((row: any) => row.harness === "ollama-route");
+    expect(local).toMatchObject({
+      request_id: "olla:gentle-galloping-9a2d",
+      model: "qwen3.8:27b",
+      backend_host: "ml1",
+      route_state: "matched",
+      input_tokens: 72,
+      output_tokens: 40,
+      total_latency: { value: 12578, unit: "ms", scope: "request" },
+    });
   });
 
   it("keeps unrelated Orca terminals unmatched despite matching harness and time", async () => {

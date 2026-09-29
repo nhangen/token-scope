@@ -13,7 +13,7 @@ import { PrivacyError, privateOpaqueId, privateSafeLabel } from "@/private-value
 export interface ProviderEvent {
   /** Source-qualified and deterministic: "<harness>:<stable local id>". */
   eventId: string;
-  harness: "claude" | "ollama-claude" | "codex" | "opencode" | "gemini-cli";
+  harness: "claude" | "ollama-claude" | "ollama-route" | "codex" | "opencode" | "gemini-cli";
   /** How the request was paid for: subscription | metered | local | unknown. */
   billingRoute: "subscription" | "metered" | "local" | "unknown";
   modelProvider: string;
@@ -38,6 +38,7 @@ export interface ProviderEvent {
   requestId?: string | null;
   runId?: string | null;
   sessionId?: string | null;
+  endpointName?: string | null;
   /** Request-level measurements only. Aggregate telemetry stays on snapshots. */
   ttftMs?: number | null;
   decodeTps?: number | null;
