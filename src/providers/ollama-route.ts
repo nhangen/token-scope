@@ -49,6 +49,7 @@ function readRecord(value: unknown, provenance: string, line: number): ProviderE
   const endpointName = privateSafeProviderIdentity(record.endpoint_served);
   const inputTokens = nonNegativeInteger(record.prompt_tokens);
   const outputTokens = nonNegativeInteger(record.output_tokens);
+  const promptDurationNs = nonNegativeInteger(record.prompt_duration_ns);
   const decodeDurationNs = nonNegativeInteger(record.output_duration_ns);
   const totalDurationNs = nonNegativeInteger(record.total_duration_ns);
   const totalLatencyMs = nonNegativeNumber(record.response_time_ms)
@@ -83,6 +84,7 @@ function readRecord(value: unknown, provenance: string, line: number): ProviderE
     runId: null,
     sessionId: null,
     endpointName,
+    ttftMs: promptDurationNs === null ? null : promptDurationNs / 1_000_000,
     totalLatencyMs,
     decodeTps,
   };

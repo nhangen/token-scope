@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { readFileSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 import { claudeEvents, claudeEventsFromTranscript } from "@/providers/claude";
 import { geminiCliEventsFromTranscript } from "@/providers/gemini-cli";
@@ -155,6 +156,7 @@ describe("Olla route telemetry", () => {
       endpointName: "ml1-5080",
       inputTokens: 72,
       outputTokens: 40,
+      ttftMs: 987.654321,
       totalLatencyMs: 12578,
       status: "ok",
     });
@@ -167,6 +169,44 @@ describe("Olla route telemetry", () => {
     expect(route.events[0]!.requestId).toBeNull();
     expect(route.events[0]!.status).toBe("incomplete");
     expect(route.events[0]!.eventId).not.toContain("route-secret");
+  });
+
+  it("surfaces malformed route telemetry as partial", () => {
+    const dir = mkdtempSync(join(tmpdir(), "token-scope-olla-route-"));
+    const path = join(dir, "routing.jsonl");
+    writeFileSync(path, "not json\n");
+    try {
+      const collected = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: "/nonexistent",
+        ollamaRoutingTelemetry: path,
+      });
+      expect(collected.partial["ollama-route"]).toBe(1);
+      expect(collected.unavailable).toEqual(["opencode"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces an unreadable route telemetry source as unavailable", () => {
+    const dir = mkdtempSync(join(tmpdir(), "token-scope-olla-route-"));
+    try {
+      const collected = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: "/nonexistent",
+        ollamaRoutingTelemetry: dir,
+      });
+      expect(collected.unavailable).toContain("ollama-route");
+      expect(collected.unavailable).toContain("opencode");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
