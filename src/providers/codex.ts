@@ -180,12 +180,33 @@ function validOrdinal(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
+interface ParsedRollout {
+  events: ProviderEvent[];
+  threadId: string | null;
+  forkedFrom: string | null;
+  /** Raw (last, total) usage pair of every token_count record in the file. */
+  usageKeys: Set<string>;
+  eventUsageKeys: Map<ProviderEvent, string>;
+}
+
+function usageRecordKey(info: any): string {
+  const tuple = (value: any) => TOKEN_KEYS.map((key) => value?.[key] ?? null);
+  return JSON.stringify([tuple(info?.last_token_usage), tuple(info?.total_token_usage)]);
+}
+
+/** Single-rollout parse. A forked child's replayed parent history is only
+ * removed by codexEvents, which can see the parent's rollout. */
 export function codexEventsFromRollout(
   text: string,
   provenance: string,
 ): ProviderEvent[] {
+  return parseRollout(text, provenance).events;
+}
+
+function parseRollout(text: string, provenance: string): ParsedRollout {
   let meta: any = null;
-  let historyStart: number | null = null;
+  const usageKeys = new Set<string>();
+  const eventUsageKeys = new Map<ProviderEvent, string>();
   let model: string | null = null;
   let effort: string | null = null;
   let previousCumulative: string | null = null;
@@ -208,20 +229,13 @@ export function codexEventsFromRollout(
     const recordKey = useOrdinal ? `ordinal-${rec.ordinal}` : `line-${lineIndex}`;
     // Forked children also carry the parent's session_meta after their own;
     // the first one identifies this rollout.
-    if (rec.type === "session_meta" && meta === null) {
-      meta = rec.payload ?? null;
-      if (validOrdinal(meta?.subagent_history_start_ordinal)) historyStart = meta.subagent_history_start_ordinal;
-    }
-    // A forked child replays its parent's records below this ordinal; that
-    // usage belongs to the parent's rollout and is counted there.
-    const replayed = historyStart !== null && validOrdinal(rec.ordinal) && rec.ordinal < historyStart;
+    if (rec.type === "session_meta" && meta === null) meta = rec.payload ?? null;
     const p = rec.payload ?? rec;
     if (rec.type === "turn_context" || p?.type === "turn_context") {
       model = typeof p?.model === "string" && p.model ? p.model : null;
       effort = typeof p?.effort === "string" && p.effort ? p.effort : null;
     }
     if (p?.type === "turn_aborted") {
-      if (replayed) continue;
       const last = events[events.length - 1] ?? legacyCandidate;
       if (last) {
         last.status = "incomplete";
@@ -232,6 +246,8 @@ export function codexEventsFromRollout(
     const info = p?.info;
     if (p?.type !== "token_count" || !info || typeof info !== "object") continue;
 
+    const usageKey = usageRecordKey(info);
+    usageKeys.add(usageKey);
     const cumulative = info?.total_token_usage;
     const cumulativeKey = canonicalCompleteTokenTuple(cumulative);
     const repeatedSnapshot = cumulativeKey !== null && cumulativeKey === previousCumulative;
@@ -249,7 +265,6 @@ export function codexEventsFromRollout(
     const usage = disjointUsage(raw);
     if (repeatedSnapshot && usage.malformed.length === 0) continue;
     if (!hasUsage(raw, usage)) continue;
-    if (replayed) continue;
 
     const event: ProviderEvent = {
       eventId: stableId("codex", provenance, recordKey),
@@ -277,6 +292,7 @@ export function codexEventsFromRollout(
       ])].sort(),
       usageSource: hasLastUsage ? "response" : "legacy-cumulative",
     };
+    eventUsageKeys.set(event, usageKey);
     if (hasLastUsage) events.push(event);
     else if (sawLastUsage) {
       // A cumulative total after per-response records overlaps usage already
@@ -295,7 +311,42 @@ export function codexEventsFromRollout(
     }
   }
   if (!sawLastUsage && legacyCandidate) events.push(legacyCandidate);
-  return events;
+  const threadId = typeof meta?.id === "string" && meta.id ? meta.id : null;
+  const forkedFrom = typeof meta?.forked_from_id === "string" && meta.forked_from_id
+    ? meta.forked_from_id : null;
+  return { events, threadId, forkedFrom, usageKeys, eventUsageKeys };
+}
+
+/** A forked child copies its parent's records, with new timestamps, before
+ * its own work. A copied record carries the parent's exact (last, total)
+ * usage pair; that usage is counted in the parent's rollout, not here. When
+ * the parent rollout is absent the copy cannot be told apart, so the child's
+ * events are marked partial. */
+function removeForkReplays(rollouts: ParsedRollout[]): ProviderEvent[] {
+  const keysByThread = new Map<string, Set<string>>();
+  for (const rollout of rollouts) {
+    if (rollout.threadId === null) continue;
+    const keys = keysByThread.get(rollout.threadId) ?? new Set<string>();
+    for (const key of rollout.usageKeys) keys.add(key);
+    keysByThread.set(rollout.threadId, keys);
+  }
+  const out: ProviderEvent[] = [];
+  for (const rollout of rollouts) {
+    if (rollout.forkedFrom === null) {
+      out.push(...rollout.events);
+      continue;
+    }
+    const parentKeys = keysByThread.get(rollout.forkedFrom);
+    for (const event of rollout.events) {
+      if (parentKeys === undefined) {
+        event.partial = [...new Set([...(event.partial ?? []), "fork_history_unverified"])].sort();
+        out.push(event);
+      } else if (!parentKeys.has(rollout.eventUsageKeys.get(event)!)) {
+        out.push(event);
+      }
+    }
+  }
+  return out;
 }
 
 export function codexEvents(
@@ -304,7 +355,7 @@ export function codexEvents(
 ): { events: ProviderEvent[]; skipped: number } {
   const sessionsDir = join(root, ".codex", "sessions");
   if (!existsSync(sessionsDir)) return { events: [], skipped: 0 };
-  const out: ProviderEvent[] = [];
+  const rollouts: ParsedRollout[] = [];
   let skipped = 0;
   const walk = (dir: string) => {
     let entries;
@@ -326,7 +377,7 @@ export function codexEvents(
           }
         }
         try {
-          out.push(...codexEventsFromRollout(readFileSync(p, "utf8"), p));
+          rollouts.push(parseRollout(readFileSync(p, "utf8"), p));
         } catch {
           skipped += 1;
         }
@@ -334,5 +385,5 @@ export function codexEvents(
     }
   };
   walk(sessionsDir);
-  return { events: out, skipped };
+  return { events: removeForkReplays(rollouts), skipped };
 }

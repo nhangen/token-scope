@@ -61,6 +61,7 @@ describe("Codex root-task experiments", () => {
     expect(thread("/root/a/b", 1)?.role).toBe("unknown");
     expect(thread("/root/a/b", 1)?.claimedParentThreadId).toBe("root");
     expect(thread("/other/a")?.role).toBe("unknown");
+    expect(thread("/other", 1)?.role).toBe("unknown");
     expect(thread(42)?.role).toBe("unknown");
     expect(thread(null, 0)).toMatchObject({ role: "unknown", claimedParentThreadId: "root" });
   });
@@ -112,7 +113,23 @@ describe("Codex root-task experiments", () => {
     expect(unrelated!.integrity).toBe("ok");
   });
 
+  it("keeps a forked child's usage and marks it when the parent rollout is absent", () => {
+    const home = mkdtempSync(join(tmpdir(), "codex-fork-"));
+    try {
+      const sessions = join(home, ".codex", "sessions");
+      mkdirSync(sessions, { recursive: true });
+      copyFileSync(join(CODEX_HOME, ".codex", "sessions", "forked-child.jsonl"), join(sessions, "forked-child.jsonl"));
+      const { events } = codexEvents(home);
+      expect(events.map((event) => event.inputTokens)).toEqual([999, 20]);
+      expect(events.every((event) => event.partial?.includes("fork_history_unverified"))).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("does not count a forked child's replayed parent history as its own usage", () => {
+    // Codex rewrites replayed timestamps and sets subagent_history_start_ordinal
+    // past the child's own records, so only the parent's usage pair identifies a copy.
     const { events } = codexEvents(CODEX_HOME);
     const forked = events.filter((event) => event.provenance.endsWith("forked-child.jsonl"));
     expect(forked.map((event) => [event.inputTokens, event.reasoningEffort])).toEqual([[20, "medium"]]);
