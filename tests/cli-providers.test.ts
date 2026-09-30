@@ -41,7 +41,12 @@ describe("--providers production CLI path", () => {
     const { code, out } = runProviders(["--json", "--since", "10000d"]);
     expect(code).toBe(0);
     const parsed = JSON.parse(out);
-    expect(parsed.measured).toBe(true);
+    // The codex-home fixture includes partial and cumulative-only sessions, so
+    // an all-time window must not claim complete measurement.
+    expect(parsed.measured).toBe(false);
+    expect(
+      parsed.rows.some((row: { partialEvents: number }) => row.partialEvents > 0),
+    ).toBe(true);
     expect(Array.isArray(parsed.rows)).toBe(true);
     expect(parsed.rows.length).toBeGreaterThan(0);
     expect(typeof parsed.untimedExcluded).toBe("number");
@@ -51,6 +56,9 @@ describe("--providers production CLI path", () => {
       expect(Array.isArray(row.provenance)).toBe(true);
       expect(row.provenance.length).toBeGreaterThan(0);
       expect(Array.isArray(row.partialClasses)).toBe(true);
+      expect(typeof row.malformedEvents).toBe("number");
+      expect(typeof row.partialEvents).toBe("number");
+      expect(typeof row.legacyCumulativeEvents).toBe("number");
     }
   });
 
