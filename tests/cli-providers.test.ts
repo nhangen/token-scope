@@ -38,7 +38,7 @@ describe("--providers production CLI path", () => {
   });
 
   it("emits valid JSON with the documented shape under --json", () => {
-    const { code, out } = runProviders(["--json"]);
+    const { code, out } = runProviders(["--json", "--since", "10000d"]);
     expect(code).toBe(0);
     const parsed = JSON.parse(out);
     expect(parsed.measured).toBe(true);
