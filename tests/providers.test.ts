@@ -329,6 +329,21 @@ describe("codex adapter", () => {
     expect(events[1]!.partial).toContain("response_attribution");
   });
 
+  it("an aborted turn makes its response incomplete in every report", () => {
+    const text = [
+      JSON.stringify({ type: "session_meta", payload: { id: "aborted", model_provider: "openai", source: "vscode" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "high" } }),
+      JSON.stringify({ ordinal: 2, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 4, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 2, reasoning_output_tokens: 0 }, total_token_usage: { input_tokens: 4, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 2, reasoning_output_tokens: 0 } } } }),
+      JSON.stringify({ ordinal: 3, type: "event_msg", payload: { type: "turn_aborted", reason: "interrupted" } }),
+    ].join("\n");
+    const events = codexEventsFromRollout(text, "aborted.jsonl");
+    expect(events).toHaveLength(1);
+    expect(events[0]!.status).toBe("incomplete");
+    expect(events[0]!.partial).toContain("turn_aborted");
+    const json = providerReportJson(providerRows({ events, unavailable: [], partial: {} }), []);
+    expect(json.measured).toBe(false);
+  });
+
   it("marks usage before any turn_context, or without an effort, as partially attributed", () => {
     const usage = (ordinal: number, total: number) => JSON.stringify({ ordinal, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 }, total_token_usage: { input_tokens: total, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: total, reasoning_output_tokens: 0 } } } });
     const text = [

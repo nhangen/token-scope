@@ -213,7 +213,10 @@ export function codexEventsFromRollout(
     }
     if (p?.type === "turn_aborted") {
       const last = events[events.length - 1] ?? legacyCandidate;
-      if (last) last.status = "incomplete";
+      if (last) {
+        last.status = "incomplete";
+        last.partial = [...new Set([...(last.partial ?? []), "turn_aborted"])].sort();
+      }
       continue;
     }
     const info = p?.info;
