@@ -519,6 +519,10 @@ describe("Gemini CLI source contract", () => {
       cashUsd: null,
     });
     expect(collected.unsupported).toEqual([...UNSUPPORTED_GOOGLE_SURFACES]);
+    // The success fixture carries logs.json and checkpoints/ beside chats/,
+    // as a real install does; they are not chat sources and not unsafe paths.
+    expect(collected.partial["gemini-cli"]).toBeUndefined();
+    expect(geminiCliEvents(join(FX, "success")).source).toMatchObject({ state: "available", reason: null });
   });
 });
 
