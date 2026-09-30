@@ -215,12 +215,35 @@ const CREDENTIAL_PARAM_SEGMENTS = new Set([
   "signature",
   "token",
 ]);
+// Unseparated compounds (apitoken, sessionToken, privateKey) have no segment
+// boundary to split on, so a denylist of whole segments alone fails open on them.
+const CREDENTIAL_PARAM_SUFFIXES = [
+  "accesskey",
+  "apikey",
+  "authkey",
+  "credential",
+  "credentials",
+  "passwd",
+  "password",
+  "privatekey",
+  "secret",
+  "secretkey",
+  "signature",
+  "token",
+];
 
 function isCredentialParam(name: string): boolean {
   return name
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .some((segment) => CREDENTIAL_PARAM_SEGMENTS.has(segment));
+    .some((segment) =>
+      CREDENTIAL_PARAM_SEGMENTS.has(segment) ||
+      CREDENTIAL_PARAM_SUFFIXES.some((suffix) => segment.endsWith(suffix))
+    );
+}
+
+function paramKeys(part: string): string[] {
+  return [...new URLSearchParams(part.replaceAll(";", "&")).keys()];
 }
 
 function locatorParams(locator: string): string[] {
@@ -229,10 +252,7 @@ function locatorParams(locator: string): string[] {
   const fragment = hashStart === -1 ? "" : locator.slice(hashStart + 1);
   const queryStart = beforeHash.indexOf("?");
   const query = queryStart === -1 ? "" : beforeHash.slice(queryStart + 1);
-  return [
-    ...new URLSearchParams(query).keys(),
-    ...new URLSearchParams(fragment).keys(),
-  ];
+  return [...paramKeys(query), ...paramKeys(fragment)];
 }
 
 function locatorValue(value: unknown): string | null {

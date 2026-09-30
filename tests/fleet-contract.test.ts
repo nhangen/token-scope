@@ -221,6 +221,12 @@ describe("fleet schema v1 contract", () => {
       "http://ml1/metrics?apiKey=FAKE-EXAMPLE",
       "http://ml1/metrics?pwd=FAKE-EXAMPLE",
       "http://ml1/metrics?X-Amz-Signature=FAKE-EXAMPLE",
+      "http://ml1/metrics?apitoken=FAKE-EXAMPLE",
+      "http://ml1/metrics?sessionToken=FAKE-EXAMPLE",
+      "http://ml1/metrics?privateKey=FAKE-EXAMPLE",
+      "http://ml1/metrics?dbPassword=FAKE-EXAMPLE",
+      "http://ml1/metrics?client-secret=FAKE-EXAMPLE",
+      "http://ml1/metrics?window=5m;token=FAKE-EXAMPLE",
     ]) {
       expect(() => parseFleetRecord(withLocator(locator)))
         .toThrow("provenance.locator cannot contain credential query parameters");
