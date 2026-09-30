@@ -243,7 +243,7 @@ function isCredentialParam(name: string): boolean {
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .map((segment) => segment.replace(/\d+$/, ""))
+    .map((segment) => segment.replace(/(?<!\d)\d+$/, ""))
     .some((segment) =>
       CREDENTIAL_PARAM_SEGMENTS.has(segment) ||
       CREDENTIAL_PARAM_STEMS.some((stem) => segment.includes(stem)) ||

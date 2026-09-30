@@ -305,6 +305,13 @@ describe("fleet schema v1 contract", () => {
     ])("accepts ordinary telemetry locator %s", (locator) => {
       expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);
     });
+
+    it("checks a long digit run in a name in linear time", () => {
+      const locator = `http://ml1/metrics?a${"1".repeat(100_000)}x=1`;
+      const started = performance.now();
+      expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);
+      expect(performance.now() - started).toBeLessThan(500);
+    });
   });
 
   it("rejects unsupported and missing envelope fields", () => {
