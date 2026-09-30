@@ -118,23 +118,39 @@ function source(
   };
 }
 
-function applyMessages(messages: Map<string, Record<string, unknown>>, value: unknown): void {
-  if (!Array.isArray(value)) return;
-  messages.clear();
-  for (const message of value) {
-    if (typeof message !== "object" || message === null || Array.isArray(message)) continue;
-    const record = message as Record<string, unknown>;
-    if (typeof record.id === "string" && record.id) messages.set(record.id, record);
-  }
-}
-
 export function geminiCliEventsFromTranscript(
   text: string,
   provenance: string,
 ): GeminiCliTranscriptResult {
-  const messages = new Map<string, Record<string, unknown>>();
+  // A usage ledger, not the live conversation: $rewindTo and $set.messages
+  // rewrite history over responses whose tokens were already spent, so a
+  // response stays counted once seen. The id key keeps resumes and imported
+  // copies from double counting.
+  const ledger = new Map<string, Record<string, unknown>>();
+  const seenIds = new Set<string>();
   let sessionId: string | null = null;
   let errors = 0;
+
+  const observe = (value: unknown, fromSnapshot: boolean): void => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      errors += 1;
+      return;
+    }
+    const record = value as Record<string, unknown>;
+    if (typeof record.id !== "string" || !record.id) {
+      if (record.type === "gemini") errors += 1;
+      return;
+    }
+    seenIds.add(record.id);
+    if (record.type !== "gemini") return;
+    // Gemini CLI rebuilds history turns it has not recorded as fresh
+    // token-less gemini messages; they are not API responses.
+    if (fromSnapshot && (record.tokens === undefined || record.tokens === null)) return;
+    ledger.set(record.id, record);
+  };
+  const observeAll = (value: unknown): void => {
+    if (Array.isArray(value)) for (const message of value) observe(message, true);
+  };
 
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
@@ -153,37 +169,28 @@ export function geminiCliEventsFromTranscript(
 
     if (typeof record.sessionId === "string" && record.sessionId) {
       sessionId = record.sessionId;
-      applyMessages(messages, record.messages);
+      observeAll(record.messages);
     }
 
     if (typeof record.$rewindTo === "string") {
-      let found = false;
-      let remove = false;
-      for (const id of [...messages.keys()]) {
-        if (id === record.$rewindTo) {
-          found = true;
-          remove = true;
-        }
-        if (remove) messages.delete(id);
-      }
-      if (!found) messages.clear();
+      // Gemini CLI only writes a rewind whose target it holds.
+      if (!seenIds.has(record.$rewindTo)) errors += 1;
       continue;
     }
 
     if (typeof record.$set === "object" && record.$set !== null && !Array.isArray(record.$set)) {
-      applyMessages(messages, (record.$set as Record<string, unknown>).messages);
+      observeAll((record.$set as Record<string, unknown>).messages);
       continue;
     }
 
-    if (typeof record.id === "string" && record.id) messages.set(record.id, record);
+    if ("id" in record || record.type === "gemini") observe(record, false);
   }
 
   if (sessionId === null) errors += 1;
 
   const events: ProviderEvent[] = [];
   let partialRecords = 0;
-  for (const [messageId, message] of messages) {
-    if (message.type !== "gemini") continue;
+  for (const [messageId, message] of ledger) {
     const missingTokens = message.tokens === undefined || message.tokens === null;
     if (!missingTokens && (typeof message.tokens !== "object" || Array.isArray(message.tokens))) {
       errors += 1;

@@ -91,7 +91,7 @@ describe("Gemini CLI source contract", () => {
     });
   });
 
-  it("replaces the live message set when a $set.messages snapshot arrives", () => {
+  it("keeps responses a $set.messages snapshot drops from the live conversation", () => {
     const parsed = geminiCliEventsFromTranscript([
       JSON.stringify({
         sessionId: "session-set",
@@ -123,18 +123,48 @@ describe("Gemini CLI source contract", () => {
       }),
     ].join("\n"), "set.jsonl");
 
+    expect(parsed.errors).toBe(0);
+    expect(parsed.events.map((event) => ({
+      eventId: event.eventId,
+      inputTokens: event.inputTokens,
+    }))).toEqual([
+      { eventId: "gemini-cli:response-from-session", inputTokens: 200 },
+      { eventId: "gemini-cli:response-before-set", inputTokens: 300 },
+      { eventId: "gemini-cli:response-from-set", inputTokens: 654 },
+    ]);
+  });
+
+  it("skips token-less gemini turns a snapshot rebuilds from history", () => {
+    const parsed = geminiCliEventsFromTranscript([
+      JSON.stringify({ sessionId: "session-compressed", messages: [] }),
+      JSON.stringify({
+        id: "response-billed",
+        timestamp: "2026-09-23T11:01:00.000Z",
+        type: "gemini",
+        model: "gemini-billed",
+        tokens: { input: 320, output: 32, cached: 20, thoughts: 3 },
+      }),
+      JSON.stringify({
+        $set: {
+          messages: [
+            { id: "response-billed", type: "gemini", model: "gemini-billed" },
+            { id: "synthetic-history-turn", type: "gemini", content: "compressed" },
+          ],
+        },
+      }),
+    ].join("\n"), "compressed.jsonl");
+
+    expect(parsed.errors).toBe(0);
+    expect(parsed.partialRecords).toBe(0);
     expect(parsed.events).toHaveLength(1);
     expect(parsed.events[0]).toMatchObject({
-      eventId: "gemini-cli:response-from-set",
-      model: "gemini-set",
-      inputTokens: 654,
-      outputTokens: 54,
-      cacheReadTokens: 111,
-      reasoningTokens: 8,
+      eventId: "gemini-cli:response-billed",
+      inputTokens: 300,
+      outputTokens: 32,
     });
   });
 
-  it("removes a known rewind target and every message after it", () => {
+  it("keeps rewound responses because their tokens were already spent", () => {
     const parsed = geminiCliEventsFromTranscript([
       JSON.stringify({ sessionId: "session-known-rewind", messages: [] }),
       JSON.stringify({
@@ -168,12 +198,15 @@ describe("Gemini CLI source contract", () => {
       }),
     ].join("\n"), "known-rewind.jsonl");
 
+    expect(parsed.errors).toBe(0);
     expect(parsed.events.map((event) => ({
       eventId: event.eventId,
       inputTokens: event.inputTokens,
       outputTokens: event.outputTokens,
     }))).toEqual([
       { eventId: "gemini-cli:response-kept", inputTokens: 400, outputTokens: 43 },
+      { eventId: "gemini-cli:response-rewind-target", inputTokens: 500, outputTokens: 54 },
+      { eventId: "gemini-cli:response-after-target", inputTokens: 600, outputTokens: 65 },
       { eventId: "gemini-cli:response-after-rewind", inputTokens: 800, outputTokens: 76 },
     ]);
   });
@@ -221,12 +254,51 @@ describe("Gemini CLI source contract", () => {
     expect(renderProviderReport(rows, [])).toContain("—");
   });
 
-  it("clears live messages when rewind target is unknown", () => {
+  it("keeps usage and flags the file when a rewind target is unknown", () => {
     const result = geminiCliEvents(join(FX, "rewind"));
 
-    expect(result.events).toHaveLength(1);
-    expect(result.events[0]!.eventId).toContain("response-after-rewind");
-    expect(result.events[0]!.inputTokens).toBe(300);
+    expect(result.source).toMatchObject({ state: "partial", reason: "malformed" });
+    expect(result.events.map((event) => [event.eventId, event.inputTokens])).toEqual([
+      ["gemini-cli:response-before-rewind", 900],
+      ["gemini-cli:response-after-rewind", 300],
+    ]);
+  });
+
+  it("counts id-less gemini records and non-object message entries as errors", () => {
+    const parsed = geminiCliEventsFromTranscript([
+      JSON.stringify({ sessionId: "session-idless", messages: ["junk", null] }),
+      JSON.stringify({
+        timestamp: "2026-09-23T11:01:00.000Z",
+        type: "gemini",
+        tokens: { input: 10, output: 1, cached: 0, thoughts: 0 },
+      }),
+      JSON.stringify({ $set: { messages: [{ type: "gemini", tokens: { input: 1 } }] } }),
+    ].join("\n"), "idless.jsonl");
+
+    expect(parsed.events).toEqual([]);
+    expect(parsed.errors).toBe(4);
+  });
+
+  it("does not count user or info records as usage", () => {
+    const parsed = geminiCliEventsFromTranscript([
+      JSON.stringify({
+        sessionId: "session-types",
+        messages: [{ id: "user-from-header", type: "user", content: "sanitized" }],
+      }),
+      JSON.stringify({ id: "user-1", timestamp: "2026-09-23T11:00:00.000Z", type: "user", content: "sanitized" }),
+      JSON.stringify({ id: "info-1", timestamp: "2026-09-23T11:00:01.000Z", type: "info", content: "sanitized" }),
+      JSON.stringify({
+        id: "response-1",
+        timestamp: "2026-09-23T11:00:02.000Z",
+        type: "gemini",
+        model: "gemini-3-flash-preview",
+        tokens: { input: 10, output: 1, cached: 0, thoughts: 0 },
+      }),
+    ].join("\n"), "types.jsonl");
+
+    expect(parsed.errors).toBe(0);
+    expect(parsed.partialRecords).toBe(0);
+    expect(parsed.events.map((event) => event.eventId)).toEqual(["gemini-cli:response-1"]);
   });
 
   it("does not follow a chat-file symlink outside the Gemini root", () => {
