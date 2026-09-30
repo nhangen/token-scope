@@ -12,8 +12,9 @@ import { tsMs } from "@/providers/types";
 
 export interface ProviderRow {
   harness: string;
+  provider?: string;
   billingRoute: string;
-  model: string;
+  model: string | null;
   events: number;
   input: number | null;
   output: number | null;
@@ -61,19 +62,28 @@ export function providerRows(collected: Collected, sinceMs?: number): ProviderRo
         return ms !== null && ms >= sinceMs;
       })
     : collected.events;
-  const groups = new Map<string, ProviderEvent[]>();
+  const groups = new Map<string, {
+    harness: string;
+    billingRoute: string;
+    provider: string;
+    model: string | null;
+    events: ProviderEvent[];
+  }>();
   for (const e of filtered) {
-    const key = `${e.harness}|${e.billingRoute}|${e.modelProvider}|${e.model}`;
-    const list = groups.get(key) ?? [];
-    list.push(e);
-    groups.set(key, list);
+    const key = JSON.stringify([e.harness, e.billingRoute, e.modelProvider, e.model]);
+    const group = groups.get(key) ?? {
+      harness: e.harness,
+      billingRoute: e.billingRoute,
+      provider: e.modelProvider,
+      model: e.model,
+      events: [],
+    };
+    group.events.push(e);
+    groups.set(key, group);
   }
   const rows: ProviderRow[] = [];
-  for (const [key, evs] of [...groups.entries()].sort()) {
-    const parts = key.split("|");
-    const harness = parts[0] ?? "";
-    const billingRoute = parts[1] ?? "unknown";
-    const model = parts[3] ?? parts[2] ?? "unknown";
+  for (const [, group] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const evs = group.events;
     const classes: Array<[string, ClassAgg]> = [
       ["input", agg(evs.map((e) => e.inputTokens))],
       ["output", agg(evs.map((e) => e.outputTokens))],
@@ -88,9 +98,10 @@ export function providerRows(collected: Collected, sinceMs?: number): ProviderRo
       .map((e) => e.cashChargeUsd)
       .filter((v): v is number => v !== null);
     rows.push({
-      harness,
-      billingRoute,
-      model,
+      harness: group.harness,
+      provider: group.provider,
+      billingRoute: group.billingRoute,
+      model: group.model,
       events: evs.length,
       input: classes[0]![1].value,
       output: classes[1]![1].value,
@@ -120,12 +131,14 @@ export function untimedExcluded(collected: Collected, sinceMs?: number): number 
 export interface ProviderReportJson {
   rows: ProviderRow[];
   unavailable: string[];
-  /** Files that existed but failed to read, by harness. */
+  /** Files that were skipped or contained partial records, by harness. */
   partial: Record<string, number>;
   /** Events outside --since only because they carry no timestamp. */
   untimedExcluded: number;
   /** False when source records have malformed or incomplete observations. */
   measured: boolean;
+  /** Source surfaces intentionally excluded rather than conflated. */
+  unsupported: string[];
 }
 
 const dash = (v: number | null): string => (v === null ? "—" : String(v));
@@ -137,22 +150,24 @@ export function renderProviderReport(
   rows: ProviderRow[],
   unavailable: string[],
   partial: Record<string, number> = {},
+  unsupported: string[] = [],
 ): string {
   const lines: string[] = [];
-  lines.push("provider usage by harness / billing route / model");
+  lines.push("provider usage by harness / provider / billing route / model");
   lines.push("");
   if (rows.length === 0) {
     lines.push("  (no timestamped provider events in range)");
   } else {
     lines.push(
-      "harness        route         model                      events   input       output     cache-r    cache-w    reasoning     cash     partial",
+      "harness        provider      route         model                      events   input       output     cache-r    cache-w    reasoning     cash     partial",
     );
     for (const r of rows) {
       lines.push(
         [
           r.harness.padEnd(14),
+          (r.provider ?? "unknown").padEnd(13),
           r.billingRoute.padEnd(13),
-          r.model.slice(0, 26).padEnd(26),
+          (r.model === null ? "—" : r.model.slice(0, 26)).padEnd(26),
           String(r.events).padStart(6),
           dash(r.input).padStart(11),
           dash(r.output).padStart(10),
@@ -182,11 +197,14 @@ export function renderProviderReport(
     lines.push("all values measured from source records; no estimates");
   }
   if (Object.keys(partial).length > 0) {
-    const parts = Object.entries(partial).map(([h, n]) => `${h}: ${n} file(s) skipped`);
-    lines.push(`partially read (${parts.join(", ")}) — skipped volume unknown`);
+    const parts = Object.entries(partial).map(([h, n]) => `${h}: ${n} affected file(s)`);
+    lines.push(`partially read (${parts.join(", ")}); unreported volume unknown`);
   }
   if (unavailable.length > 0) {
     lines.push(`unavailable sources (volume unknown, not zero): ${unavailable.join(", ")}`);
+  }
+  if (unsupported.length > 0) {
+    lines.push(`unsupported sources (not ingested): ${unsupported.join(", ")}`);
   }
   return lines.join("\n");
 }
@@ -196,6 +214,7 @@ export function providerReportJson(
   unavailable: string[],
   partial: Record<string, number> = {},
   untimedExcluded = 0,
+  unsupported: string[] = [],
 ): ProviderReportJson {
   return {
     rows,
@@ -205,5 +224,6 @@ export function providerReportJson(
     measured: rows.every((row) => row.malformedEvents === 0
       && row.partialEvents === 0
       && row.legacyCumulativeEvents === 0),
+    unsupported,
   };
 }
