@@ -251,17 +251,38 @@ function isCredentialParam(name: string): boolean {
     );
 }
 
-function paramKeys(part: string): string[] {
-  return [...new URLSearchParams(part.replaceAll(";", "&")).keys()];
+function decodeOnce(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text.replace(/%([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+  }
 }
 
+// Decoding before splitting keeps an encoded separator (%3B, %26, %2574) from
+// hiding a name; NFKC and dropping format/control characters keep fullwidth
+// letters, zero-width spaces, and NUL from disguising or splitting one.
+function decodeLocator(locator: string): string {
+  let decoded = locator;
+  for (let pass = 0; pass < 3; pass++) {
+    const next = decodeOnce(decoded);
+    if (next === decoded) break;
+    decoded = next;
+  }
+  return decoded.normalize("NFKC").replace(/[\p{Cc}\p{Cf}]/gu, "");
+}
+
+// Scans the whole locator, not just the query: matrix params (;jsessionid=),
+// name=value path segments, and values that embed another query all carry
+// names. A bare name counts only where a query, fragment, or matrix param starts.
+const LOCATOR_PARAM = /(^|[\s/;?&#,|])([^\s/;?&#,|=]+)(=?)/g;
+
 function locatorParams(locator: string): string[] {
-  const hashStart = locator.indexOf("#");
-  const beforeHash = hashStart === -1 ? locator : locator.slice(0, hashStart);
-  const fragment = hashStart === -1 ? "" : locator.slice(hashStart + 1);
-  const queryStart = beforeHash.indexOf("?");
-  const query = queryStart === -1 ? "" : beforeHash.slice(queryStart + 1);
-  return [...paramKeys(query), ...paramKeys(fragment)];
+  const names: string[] = [];
+  for (const [, delimiter = "", name = "", equals = ""] of decodeLocator(locator).matchAll(LOCATOR_PARAM)) {
+    if (equals || (delimiter !== "" && "?&;#".includes(delimiter))) names.push(name);
+  }
+  return names;
 }
 
 function locatorValue(value: unknown): string | null {

@@ -268,6 +268,25 @@ describe("fleet schema v1 contract", () => {
     });
 
     it.each([
+      "http://ml1/metrics;token=FAKE-EXAMPLE",
+      "http://ml1/app;jsessionid=FAKE-EXAMPLE",
+      "http://ml1/metrics/api_key=FAKE-EXAMPLE/data",
+      "token=FAKE-EXAMPLE",
+      "sessions/run-3.jsonl token=FAKE-EXAMPLE",
+      "http://ml1/metrics?window=5m%3Btoken=FAKE-EXAMPLE",
+      "http://ml1/metrics?window=5m%26token=FAKE-EXAMPLE",
+      "http://ml1/metrics?next=%3Ftoken%3DFAKE-EXAMPLE",
+      "http://ml1/metrics?%2574oken=FAKE-EXAMPLE",
+      "http://ml1/metrics?window=5m,token=FAKE-EXAMPLE",
+      "http://ml1/metrics?\uFF34\uFF2F\uFF2B\uFF25\uFF2E=FAKE-EXAMPLE",
+      "http://ml1/metrics?tok\u200Ben=FAKE-EXAMPLE",
+      "http://ml1/metrics?tok\u00ADen=FAKE-EXAMPLE",
+      "http://ml1/metrics?t%00oken=FAKE-EXAMPLE",
+    ])("rejects credential name outside the plain query in %s", (locator) => {
+      expect(() => parseFleetRecord(withLocator(locator))).toThrow(rejected);
+    });
+
+    it.each([
       "http://ml1/metrics?input_tokens=1&tokenizer=bpe&maxTokens=2&window=5m",
       "http://ml1/metrics?keyboard=us&sortkey=a&primarykey=b&secretary=c",
       "http://ml1/metrics?session_id=run-3&sessionId=run-4&keyword=k&authority=a",
