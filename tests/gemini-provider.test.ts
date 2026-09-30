@@ -19,7 +19,7 @@ import {
   geminiCliEventsFromTranscript,
 } from "@/providers/gemini-cli";
 import { collectProviderEvents } from "@/providers";
-import { providerRows, renderProviderReport } from "@/reports/providers";
+import { providerReportJson, providerRows, renderProviderReport } from "@/reports/providers";
 
 const FX = join(import.meta.dir, "fixtures", "providers", "gemini-cli");
 
@@ -447,5 +447,83 @@ describe("Gemini CLI source contract", () => {
       cashUsd: null,
     });
     expect(collected.unsupported).toEqual([...UNSUPPORTED_GOOGLE_SURFACES]);
+  });
+});
+
+describe("Gemini CLI measurement completeness", () => {
+  function report(root: string) {
+    const collected = collectProviderEvents({
+      claudeRoot: "/nonexistent",
+      ledgerPath: "/nonexistent.jsonl",
+      codexHome: "/nonexistent",
+      opencodeDb: "/nonexistent.db",
+      geminiRoot: root,
+    });
+    const rows = providerRows(collected);
+    return {
+      rows,
+      json: providerReportJson(rows, collected.unavailable, collected.partial),
+      text: renderProviderReport(rows, collected.unavailable, collected.partial),
+    };
+  }
+
+  it("does not claim complete measurement for records missing token classes", () => {
+    for (const fixture of ["partial", "missing-null"]) {
+      const { rows, json, text } = report(join(FX, fixture));
+      expect(json.measured).toBe(false);
+      expect(rows.reduce((sum, row) => sum + row.partialEvents, 0)).toBeGreaterThan(0);
+      expect(text).toContain("measurement incomplete");
+      expect(text).not.toContain("all values measured from source records");
+    }
+  });
+
+  it("still claims complete measurement for fully reported records", () => {
+    expect(report(join(FX, "success")).json.measured).toBe(true);
+  });
+
+  it("marks model or timestamp gaps partial even when every token class is present", () => {
+    const parsed = geminiCliEventsFromTranscript([
+      JSON.stringify({ sessionId: "session-attribution", messages: [] }),
+      JSON.stringify({
+        id: "response-no-model",
+        timestamp: "2026-09-23T10:01:00.000Z",
+        type: "gemini",
+        tokens: { input: 10, output: 2, cached: 0, thoughts: 0 },
+      }),
+      JSON.stringify({
+        id: "response-no-timestamp",
+        type: "gemini",
+        model: "gemini-3-flash-preview",
+        tokens: { input: 10, output: 2, cached: 0, thoughts: 0 },
+      }),
+    ].join("\n"), "attribution.jsonl");
+
+    expect(parsed.events.map((event) => event.partial)).toEqual([
+      ["response_attribution"],
+      ["response_attribution"],
+    ]);
+  });
+
+  it("marks cached tokens above prompt tokens malformed instead of emitting negative input", () => {
+    const parsed = geminiCliEventsFromTranscript([
+      JSON.stringify({ sessionId: "session-contradiction", messages: [] }),
+      JSON.stringify({
+        id: "response-contradiction",
+        timestamp: "2026-09-23T10:01:00.000Z",
+        type: "gemini",
+        model: "gemini-3-flash-preview",
+        tokens: { input: 5, output: 2, cached: 9, thoughts: 0 },
+      }),
+    ].join("\n"), "contradiction.jsonl");
+
+    expect(parsed.errors).toBe(1);
+    expect(parsed.events).toHaveLength(1);
+    expect(parsed.events[0]).toMatchObject({
+      inputTokens: null,
+      cacheReadTokens: 9,
+      malformed: ["input_token_classes"],
+    });
+    const rows = providerRows({ events: parsed.events, unavailable: [], partial: {} });
+    expect(providerReportJson(rows, []).measured).toBe(false);
   });
 });

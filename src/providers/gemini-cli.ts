@@ -196,23 +196,27 @@ export function geminiCliEventsFromTranscript(
     const output = token(tokens?.output);
     const reasoning = token(tokens?.thoughts);
 
+    const malformed: string[] = [];
+    const partial: string[] = [];
     let input: number | null = null;
     if (promptInput !== null && cached !== null) {
       const disjointInput = promptInput - cached;
       if (cached <= promptInput && Number.isSafeInteger(disjointInput)) input = disjointInput;
-      else errors += 1;
+      else {
+        errors += 1;
+        malformed.push("input_token_classes");
+      }
+    } else {
+      partial.push("input_token_classes");
     }
+    if (output === null || reasoning === null) partial.push("output_token_classes");
 
     const model = typeof message.model === "string" && message.model ? message.model : null;
     const timestamp = typeof message.timestamp === "string" && message.timestamp
       ? message.timestamp
       : null;
-    if (
-      input === null || cached === null || output === null || reasoning === null ||
-      model === null || timestamp === null
-    ) {
-      partialRecords += 1;
-    }
+    if (model === null || timestamp === null) partial.push("response_attribution");
+    if (partial.length > 0) partialRecords += 1;
 
     events.push({
       eventId: stableId("gemini-cli", messageId),
@@ -230,6 +234,8 @@ export function geminiCliEventsFromTranscript(
       reasoningTokens: reasoning,
       cashChargeUsd: null,
       provenance,
+      malformed,
+      partial,
     });
   }
 
