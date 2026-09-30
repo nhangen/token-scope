@@ -178,7 +178,7 @@ function nullableMeasurement(value: unknown, name: string): number | null {
   return value;
 }
 
-function nullableTokenCount(value: unknown, name: string): number | null {
+function nullableInteger(value: unknown, name: string): number | null {
   if (value === null) return null;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new Error(`${name} must be a non-negative integer or null`);
@@ -267,11 +267,11 @@ export function parseFleetRecord(value: unknown): FleetRecord {
       record_type: "usage_event",
       timestamp: record.timestamp === null ? null : timestampValue(record.timestamp, "timestamp"),
       usage: {
-        input_tokens: nullableTokenCount(usage.input_tokens, "usage.input_tokens"),
-        output_tokens: nullableTokenCount(usage.output_tokens, "usage.output_tokens"),
-        cache_read_tokens: nullableTokenCount(usage.cache_read_tokens, "usage.cache_read_tokens"),
-        cache_write_tokens: nullableTokenCount(usage.cache_write_tokens, "usage.cache_write_tokens"),
-        reasoning_tokens: nullableTokenCount(usage.reasoning_tokens, "usage.reasoning_tokens"),
+        input_tokens: nullableInteger(usage.input_tokens, "usage.input_tokens"),
+        output_tokens: nullableInteger(usage.output_tokens, "usage.output_tokens"),
+        cache_read_tokens: nullableInteger(usage.cache_read_tokens, "usage.cache_read_tokens"),
+        cache_write_tokens: nullableInteger(usage.cache_write_tokens, "usage.cache_write_tokens"),
+        reasoning_tokens: nullableInteger(usage.reasoning_tokens, "usage.reasoning_tokens"),
         cash_charge_usd: nullableMeasurement(usage.cash_charge_usd, "usage.cash_charge_usd"),
       },
     };
@@ -310,7 +310,7 @@ export function parseFleetRecord(value: unknown): FleetRecord {
       timestamp,
       window: { start, end },
       process_id: qualifiedId(record.process_id, "process_id"),
-      stale_after_ms: nullableMeasurement(record.stale_after_ms, "stale_after_ms"),
+      stale_after_ms: nullableInteger(record.stale_after_ms, "stale_after_ms"),
       counters: parsedCounters,
     };
   }

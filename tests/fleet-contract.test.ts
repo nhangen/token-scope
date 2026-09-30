@@ -63,6 +63,11 @@ describe("fleet schema v1 contract", () => {
     expect(withDecimalCost.usage.cash_charge_usd).toBe(0.0125);
   });
 
+  it("requires an integer stale threshold", () => {
+    expect(() => parseFleetRecord({ ...fixture.operational_snapshot, stale_after_ms: 1.5 }))
+      .toThrow("stale_after_ms must be a non-negative integer or null");
+  });
+
   it("uses deterministic qualified join keys and half-open snapshot windows", () => {
     expect(correlationKeys(usage)).toEqual([
       "request_id=openai:req-7",
