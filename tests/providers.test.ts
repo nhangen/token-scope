@@ -579,7 +579,9 @@ describe("dedup + report", () => {
     expect(legacyRows[0]!.legacyCumulativeEvents).toBe(1);
     expect(legacyRows[0]!.partialEvents).toBe(1);
     expect(providerReportJson(legacyRows, []).measured).toBe(false);
-    expect(renderProviderReport(legacyRows, [])).toContain("legacy cumulative fallback: 1 aggregate event(s)");
+    const legacyReport = renderProviderReport(legacyRows, []);
+    expect(legacyReport).toContain("1 legacy aggregate event(s) without per-response attribution");
+    expect(legacyReport.match(/legacy/g)).toHaveLength(1);
   });
 
   it("present-but-unparseable ledger surfaces as partial, not silent zero (#37)", async () => {

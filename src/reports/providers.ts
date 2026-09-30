@@ -175,14 +175,11 @@ export function renderProviderReport(
     const issues = [
       malformed > 0 ? `${malformed} malformed event(s)` : null,
       partialEvents > 0 ? `${partialEvents} partial event(s)` : null,
-      legacy > 0 ? `${legacy} legacy aggregate event(s)` : null,
+      legacy > 0 ? `${legacy} legacy aggregate event(s) without per-response attribution` : null,
     ].filter((issue): issue is string => issue !== null);
     lines.push(`measurement incomplete: ${issues.join(", ")}; reported values are source-recorded, not estimated`);
   } else {
     lines.push("all values measured from source records; no estimates");
-  }
-  if (legacy > 0) {
-    lines.push(`legacy cumulative fallback: ${legacy} aggregate event(s) lack per-response attribution`);
   }
   if (Object.keys(partial).length > 0) {
     const parts = Object.entries(partial).map(([h, n]) => `${h}: ${n} file(s) skipped`);
