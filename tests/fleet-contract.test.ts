@@ -63,6 +63,15 @@ describe("fleet schema v1 contract", () => {
     expect(withDecimalCost.usage.cash_charge_usd).toBe(0.0125);
   });
 
+  it("orders counter names by code unit, independent of locale", () => {
+    const parsed = parseFleetRecord({
+      ...fixture.operational_snapshot,
+      counters: { a: 1, B: 2 },
+    });
+    if (parsed.record_type !== "operational_snapshot") throw new Error("wrong fixture type");
+    expect(Object.keys(parsed.counters)).toEqual(["B", "a"]);
+  });
+
   it("requires an integer stale threshold", () => {
     expect(() => parseFleetRecord({ ...fixture.operational_snapshot, stale_after_ms: 1.5 }))
       .toThrow("stale_after_ms must be a non-negative integer or null");
@@ -115,8 +124,13 @@ describe("fleet schema v1 contract", () => {
   });
 
   it("deduplicates identical records but surfaces record-id collisions", () => {
-    expect(dedupeFleetRecords([snapshot, usage, usage])).toEqual({
+    expect(dedupeFleetRecords([usage, snapshot, usage])).toEqual({
       records: [snapshot, usage],
+      conflicts: [],
+    });
+    const reordered = Object.fromEntries(Object.entries(usage).reverse()) as typeof usage;
+    expect(dedupeFleetRecords([usage, reordered])).toEqual({
+      records: [usage],
       conflicts: [],
     });
     const conflict = { ...usage, model: "different-model" };

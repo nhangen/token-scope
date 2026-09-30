@@ -108,6 +108,10 @@ function objectValue(value: unknown, name: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function compareCodeUnits(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function assertExactKeys(
   value: Record<string, unknown>,
   expected: readonly string[],
@@ -292,7 +296,7 @@ export function parseFleetRecord(value: unknown): FleetRecord {
     }
     const counters = objectValue(record.counters, "counters");
     const parsedCounters: Record<string, number | null> = Object.create(null);
-    for (const [name, counter] of Object.entries(counters).sort(([a], [b]) => a.localeCompare(b))) {
+    for (const [name, counter] of Object.entries(counters).sort(([a], [b]) => compareCodeUnits(a, b))) {
       if (!name) throw new Error("counter names cannot be empty");
       parsedCounters[name] = nullableMeasurement(counter, `counters.${name}`);
     }
@@ -371,7 +375,7 @@ function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (typeof value !== "object" || value === null) return JSON.stringify(value);
   return `{${Object.entries(value)
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => compareCodeUnits(a, b))
     .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`)
     .join(",")}}`;
 }
@@ -388,7 +392,7 @@ export function dedupeFleetRecords(records: FleetRecord[]): {
   }
   const deduped: FleetRecord[] = [];
   const conflicts: string[] = [];
-  for (const id of [...byId.keys()].sort()) {
+  for (const id of [...byId.keys()].sort(compareCodeUnits)) {
     const variants = byId.get(id)!;
     if (variants.size === 1) deduped.push(variants.values().next().value!);
     else conflicts.push(id);
