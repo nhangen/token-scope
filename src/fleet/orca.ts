@@ -117,7 +117,6 @@ export interface OrcaPlacementCollection {
 
 export interface CollectOrcaPlacementOptions {
   collectedAt?: string;
-  executable?: string;
   runner?: OrcaCommandRunner;
 }
 

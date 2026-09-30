@@ -162,6 +162,7 @@ describe("Orca fleet placement adapter", () => {
     await collectOrcaPlacement({
       collectedAt: COLLECTED_AT,
       runner,
+      // @ts-expect-error the executable is fixed and not a caller option
       executable: "orca open --json",
     });
 
