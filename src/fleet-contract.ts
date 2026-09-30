@@ -288,7 +288,10 @@ function locatorParams(locator: string): string[] {
 function locatorValue(value: unknown): string | null {
   const locator = nullableString(value, "provenance.locator");
   if (locator === null) return null;
-  if (URL_USERINFO.test(locator) || BARE_USERINFO.test(locator)) {
+  // WHATWG URL parsing treats "\\" as "/" and ignores leading whitespace and
+  // control characters, so "https:/\\user:pw@host" still carries userinfo.
+  const authority = locator.replace(/[\p{Cc}\p{Cf}]/gu, "").trim().replaceAll("\\", "/");
+  if (URL_USERINFO.test(authority) || BARE_USERINFO.test(authority)) {
     throw new Error("provenance.locator cannot contain URL credentials");
   }
   if (locatorParams(locator).some(isCredentialParam)) {

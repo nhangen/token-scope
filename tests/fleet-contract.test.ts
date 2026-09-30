@@ -287,6 +287,14 @@ describe("fleet schema v1 contract", () => {
     });
 
     it.each([
+      "https:/\\user:FAKE-EXAMPLE@ml1/metrics",
+      " https://user:FAKE-EXAMPLE@ml1/metrics",
+    ])("rejects disguised URL credentials in %s", (locator) => {
+      expect(() => parseFleetRecord(withLocator(locator)))
+        .toThrow("provenance.locator cannot contain URL credentials");
+    });
+
+    it.each([
       "http://ml1/metrics?input_tokens=1&tokenizer=bpe&maxTokens=2&window=5m",
       "http://ml1/metrics?keyboard=us&sortkey=a&primarykey=b&secretary=c",
       "http://ml1/metrics?session_id=run-3&sessionId=run-4&keyword=k&authority=a",
