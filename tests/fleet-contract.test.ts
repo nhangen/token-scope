@@ -289,6 +289,10 @@ describe("fleet schema v1 contract", () => {
     it.each([
       "https:/\\user:FAKE-EXAMPLE@ml1/metrics",
       " https://user:FAKE-EXAMPLE@ml1/metrics",
+      "ht\ntps://user:FAKE-EXAMPLE@ml1/metrics",
+      "https:/user:FAKE-EXAMPLE@ml1/metrics",
+      "https:///user:FAKE-EXAMPLE@ml1/metrics",
+      "https:\\\\\\user:FAKE-EXAMPLE@ml1/metrics",
     ])("rejects disguised URL credentials in %s", (locator) => {
       expect(() => parseFleetRecord(withLocator(locator)))
         .toThrow("provenance.locator cannot contain URL credentials");
@@ -300,6 +304,7 @@ describe("fleet schema v1 contract", () => {
       "http://ml1/metrics?session_id=run-3&sessionId=run-4&keyword=k&authority=a",
       "http://ml1/metrics?model=qwen3.8:27b&q=100%",
       "C:\\Users\\n\\sessions\\run-3.jsonl",
+      "C:\\Users\\n@work\\sessions\\run-3.jsonl",
       "s3://bucket/date=2026-09-22/run-3.jsonl",
       "file:///home/n/sessions/run-3.jsonl#L10",
     ])("accepts ordinary telemetry locator %s", (locator) => {

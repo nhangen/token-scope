@@ -292,13 +292,24 @@ function locatorParams(decoded: string): string[] {
   return names;
 }
 
+// WHATWG URL parsing skips leading whitespace and control characters, treats
+// "\\" as "/", and accepts any number of slashes after a special scheme, so
+// "https:/user:pw@host" still carries userinfo the regexes alone miss.
+function hasUserinfo(locator: string): boolean {
+  const authority = locator.replace(/[\p{Cc}\p{Cf}]/gu, "").trim().replaceAll("\\", "/");
+  if (URL_USERINFO.test(authority) || BARE_USERINFO.test(authority)) return true;
+  try {
+    const url = new URL(authority);
+    return url.username !== "" || url.password !== "";
+  } catch {
+    return false;
+  }
+}
+
 function locatorValue(value: unknown): string | null {
   const locator = nullableString(value, "provenance.locator");
   if (locator === null) return null;
-  // WHATWG URL parsing treats "\\" as "/" and ignores leading whitespace and
-  // control characters, so "https:/\\user:pw@host" still carries userinfo.
-  const authority = locator.replace(/[\p{Cc}\p{Cf}]/gu, "").trim().replaceAll("\\", "/");
-  if (URL_USERINFO.test(authority) || BARE_USERINFO.test(authority)) {
+  if (hasUserinfo(locator)) {
     throw new Error("provenance.locator cannot contain URL credentials");
   }
   const decoded = decodeLocator(locator);
