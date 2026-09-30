@@ -322,6 +322,45 @@ export function hasUserinfo(locator: string): boolean {
   }
 }
 
+export class PrivacyError extends Error {}
+
+// Header-style "name: value" and spaced "name = value" pairs are not locator
+// params, so they get their own pass over the fleet contract's credential names.
+// An unspaced colon before a bare number, model size, or date is part of a
+// qualified ID (auth-gw:40114, secret-model:7b, olla:auth-gw:2026-09-22...),
+// not a name: value pair. Any other unspaced value still counts.
+const SPACED_ASSIGNMENT = new RegExp(
+  String.raw`([^\s/;?&#,|=:]+)\s*(?:=(?=\s*\S)|:(?=\s+\S|(?!\d+(?:\.\d+)*[bBkKmM]?(?:$|[\s/:?#,;&|=-]))\S))`,
+  "g",
+);
+const EMBEDDED_USERINFO = /(?:^|[\s/])[^/?#@\s:]+:[^/?#@\s]*@/;
+const BARE_CREDENTIAL = new RegExp([
+  String.raw`\b(?:bearer|basic)[\s+]+\S`,
+  String.raw`\beyJ[\w-]{8,}\.[\w-]{8,}`,
+  String.raw`(?:^|[^a-z0-9])sk-[\w-]{16,}`,
+  String.raw`\b(?:sk|rk|pk)_(?:live|test)_\w{8,}`,
+  String.raw`\bgh[pousr]_\w{20,}`,
+  String.raw`\bgithub_pat_\w{20,}`,
+  String.raw`\bglpat-[\w-]{20,}`,
+  String.raw`\bxox[abposr]-[\w-]{10,}`,
+  String.raw`\bAKIA[0-9A-Z]{16}\b`,
+].join("|"), "i");
+
+export function assertSafeLabelValue(value: string): void {
+  const decoded = decodeLocator(value);
+  if (
+    decoded === null
+    || hasUserinfo(decoded)
+    || EMBEDDED_USERINFO.test(decoded)
+    || BARE_CREDENTIAL.test(decoded)
+    || locatorParams(decoded).some(isCredentialParam)
+    || [...decoded.matchAll(SPACED_ASSIGNMENT)]
+      .some((match) => isCredentialParam(match[1]!))
+  ) {
+    throw new PrivacyError("credential-like label value rejected");
+  }
+}
+
 function locatorValue(value: unknown): string | null {
   const locator = nullableString(value, "provenance.locator");
   if (locator === null) return null;

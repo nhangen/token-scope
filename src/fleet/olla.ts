@@ -1,12 +1,11 @@
 import {
-  decodeLocator,
+  assertSafeLabelValue,
   FLEET_SCHEMA_VERSION,
   hasUserinfo,
-  isCredentialParam,
-  locatorParams,
   objectValue,
   parseFleetRecord,
   PRIVATE_KEYS,
+  PrivacyError,
   type FleetOperationalSnapshot,
   type FleetProvenance,
   type FleetRecordStatus,
@@ -108,7 +107,6 @@ export type OllaRouteCorrelationResult =
   | { state: "unmatched"; key: string | null; snapshot: null }
   | { state: "ambiguous"; key: string; snapshot: null; provenance: FleetProvenance[] };
 
-class PrivacyError extends Error {}
 
 function arrayValue(value: unknown, name: string): unknown[] {
   if (!Array.isArray(value)) throw new Error(`${name} must be an array`);
@@ -160,41 +158,6 @@ function assertNoPrivateFields(value: unknown): void {
 
 function safeLabel(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 256);
-}
-
-// Header-style "name: value" and spaced "name = value" pairs are not locator
-// params, so they get their own pass over the fleet contract's credential names.
-// An unspaced colon before a bare number, model size, or date is part of a
-// qualified ID (auth-gw:40114, secret-model:7b, olla:auth-gw:2026-09-22...),
-// not a name: value pair. Any other unspaced value still counts.
-const SPACED_ASSIGNMENT = new RegExp(
-  String.raw`([^\s/;?&#,|=:]+)\s*(?:=(?=\s*\S)|:(?=\s+\S|(?!\d+(?:\.\d+)*[bBkKmM]?(?:$|[\s/:?#,;&|=-]))\S))`,
-  "g",
-);
-const EMBEDDED_USERINFO = /(?:^|[\s/])[^/?#@\s:]+:[^/?#@\s]*@/;
-const BARE_CREDENTIAL = new RegExp([
-  String.raw`\b(?:bearer|basic)[\s+]+\S`,
-  String.raw`\beyJ[\w-]{8,}\.[\w-]{8,}`,
-  String.raw`(?:^|[^a-z0-9])sk-[\w-]{16,}`,
-  String.raw`\b(?:sk|rk|pk)_(?:live|test)_\w{8,}`,
-  String.raw`\bgh[pousr]_\w{20,}`,
-  String.raw`\bxox[abposr]-[\w-]{10,}`,
-  String.raw`\bAKIA[0-9A-Z]{16}\b`,
-].join("|"), "i");
-
-function assertSafeLabelValue(value: string): void {
-  const decoded = decodeLocator(value);
-  if (
-    decoded === null
-    || hasUserinfo(decoded)
-    || EMBEDDED_USERINFO.test(decoded)
-    || BARE_CREDENTIAL.test(decoded)
-    || locatorParams(decoded).some(isCredentialParam)
-    || [...decoded.matchAll(SPACED_ASSIGNMENT)]
-      .some((match) => isCredentialParam(match[1]!))
-  ) {
-    throw new PrivacyError("credential-like label value rejected");
-  }
 }
 
 function privateSafeLabel(value: string): string {

@@ -1,0 +1,19 @@
+{
+  "id": "worktrees-duplicate-pane-agents",
+  "ok": true,
+  "result": {
+    "worktrees": [
+      {
+        "worktreeId": "repo-token::/Users/alice/token-scope",
+        "hostId": "local",
+        "agents": [
+          { "paneKey": "tab-local:leaf-local", "agentType": "codex" },
+          { "paneKey": "tab-local:leaf-local", "agentType": "claude" }
+        ]
+      }
+    ],
+    "totalCount": 1,
+    "truncated": false,
+    "hostScope": { "hostIds": ["local"], "omittedHostIds": [] }
+  }
+}

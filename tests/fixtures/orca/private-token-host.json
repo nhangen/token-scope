@@ -1,0 +1,14 @@
+{
+  "id": "hosts-private-token",
+  "ok": true,
+  "result": {
+    "hosts": [
+      {
+        "kind": "local",
+        "name": "ghp_0123456789abcdefghijklmnopqrstuv",
+        "id": "local",
+        "platform": "darwin"
+      }
+    ]
+  }
+}

@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
+  assertSafeLabelValue,
   FLEET_SCHEMA_VERSION,
+  PrivacyError,
   classifySnapshotFreshness,
   correlationKeys,
   dedupeFleetRecords,
@@ -422,5 +424,20 @@ describe("fleet schema v1 contract", () => {
       { ...next, process_id: "olla:ml1:pid-43", counters: { requests: 2 } },
       "requests",
     )).toEqual({ state: "restart", value: null });
+  });
+});
+
+describe("shared label privacy check", () => {
+  it("rejects GitHub fine-grained and GitLab personal token shapes", () => {
+    for (const value of [
+      "github_pat_FAKE_EXAMPLE_000000000000",
+      "host-glpat-FAKE-EXAMPLE-0000000000000",
+    ]) {
+      expect(() => assertSafeLabelValue(value)).toThrow(PrivacyError);
+    }
+  });
+
+  it("accepts ordinary qualified labels", () => {
+    expect(() => assertSafeLabelValue("olla:auth-gw:40114")).not.toThrow();
   });
 });

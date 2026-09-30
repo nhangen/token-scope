@@ -1,0 +1,91 @@
+{
+  "status": {
+    "id": "status-local",
+    "ok": true,
+    "result": {
+      "app": { "running": true, "pid": 4412 },
+      "runtime": {
+        "state": "ready",
+        "reachable": true,
+        "runtimeId": "runtime-local",
+        "appVersion": "1.4.162"
+      },
+      "graph": { "state": "ready" }
+    },
+    "_meta": { "runtimeId": "runtime-local" }
+  },
+  "hosts": {
+    "id": "hosts-local",
+    "ok": true,
+    "result": {
+      "hosts": [
+        {
+          "kind": "local",
+          "name": "this machine",
+          "id": "local",
+          "selector": "--host local",
+          "platform": "darwin"
+        }
+      ]
+    },
+    "_meta": { "runtimeId": "local" }
+  },
+  "worktrees": {
+    "id": "worktrees-local",
+    "ok": true,
+    "result": {
+      "worktrees": [
+        {
+          "worktreeId": "repo-token::/Users/alice/token-scope",
+          "repoId": "repo-token",
+          "hostId": "local",
+          "repo": "token-scope",
+          "path": "/Users/alice/token-scope",
+          "branch": "main",
+          "agents": [
+            {
+              "paneKey": "tab-local:leaf-local",
+              "agentType": "opencode",
+              "prompt": "PRIVATE PROMPT MUST NOT SURVIVE",
+              "lastAssistantMessage": "PRIVATE MESSAGE MUST NOT SURVIVE",
+              "toolInput": "/Users/alice/private.txt"
+            }
+          ],
+          "preview": "PRIVATE WORKTREE PREVIEW MUST NOT SURVIVE"
+        }
+      ],
+      "totalCount": 1,
+      "truncated": false,
+      "hostScope": { "hostIds": ["local"], "omittedHostIds": [] }
+    },
+    "_meta": { "runtimeId": "runtime-local" }
+  },
+  "terminals": {
+    "id": "terminals-local",
+    "ok": true,
+    "result": {
+      "terminals": [
+        {
+          "handle": "term-local",
+          "ptyId": "pty-local",
+          "worktreeId": "repo-token::/Users/alice/token-scope",
+          "worktreePath": "/Users/alice/token-scope",
+          "branch": "main",
+          "tabId": "tab-local",
+          "leafId": "leaf-local",
+          "title": "worker",
+          "connected": true,
+          "writable": true,
+          "lastOutputAt": 1790150400000,
+          "preview": "PRIVATE TERMINAL SCROLLBACK MUST NOT SURVIVE",
+          "agentIdentity": "opencode",
+          "executionHostId": "local"
+        }
+      ],
+      "totalCount": 1,
+      "truncated": false,
+      "hostScope": { "hostIds": ["local"], "omittedHostIds": [] }
+    },
+    "_meta": { "runtimeId": "runtime-local" }
+  }
+}

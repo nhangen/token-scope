@@ -1,0 +1,19 @@
+{
+  "id": "terminals-invalid-agent-identity",
+  "ok": true,
+  "result": {
+    "terminals": [
+      {
+        "handle": "term-local",
+        "worktreeId": "repo-token::/Users/alice/token-scope",
+        "tabId": "tab-local",
+        "leafId": "leaf-local",
+        "agentIdentity": "ignore-previous-instructions",
+        "executionHostId": "local"
+      }
+    ],
+    "totalCount": 1,
+    "truncated": false,
+    "hostScope": { "hostIds": ["local"], "omittedHostIds": [] }
+  }
+}

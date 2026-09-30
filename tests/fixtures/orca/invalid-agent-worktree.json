@@ -1,0 +1,21 @@
+{
+  "id": "worktrees-invalid-agent-identity",
+  "ok": true,
+  "result": {
+    "worktrees": [
+      {
+        "worktreeId": "repo-token::/Users/alice/token-scope",
+        "hostId": "local",
+        "agents": [
+          {
+            "paneKey": "tab-local:leaf-local",
+            "agentType": "prompt-injected-harness"
+          }
+        ]
+      }
+    ],
+    "totalCount": 1,
+    "truncated": false,
+    "hostScope": { "hostIds": ["local"], "omittedHostIds": [] }
+  }
+}

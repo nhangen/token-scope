@@ -1,0 +1,108 @@
+{
+  "status": {
+    "id": "status-collision",
+    "ok": true,
+    "result": {
+      "runtime": {
+        "state": "ready",
+        "reachable": true,
+        "runtimeId": "runtime-collision",
+        "appVersion": "1.4.162"
+      }
+    }
+  },
+  "hosts": {
+    "id": "hosts-collision",
+    "ok": true,
+    "result": {
+      "hosts": [
+        { "kind": "local", "name": "this machine", "id": "local", "platform": "darwin" },
+        { "kind": "ssh", "name": "gpu box", "id": "gpu-box", "platform": "linux", "connected": true }
+      ]
+    }
+  },
+  "crossHost": {
+    "worktrees": {
+      "id": "worktrees-cross-host",
+      "ok": true,
+      "result": {
+        "worktrees": [
+          {
+            "worktreeId": "shared-worktree",
+            "hostId": "local",
+            "agents": [{ "paneKey": "tab-shared:leaf-shared", "agentType": "codex" }]
+          },
+          {
+            "worktreeId": "shared-worktree",
+            "hostId": "ssh:gpu-box",
+            "agents": [{ "paneKey": "tab-shared:leaf-shared", "agentType": "claude" }]
+          }
+        ],
+        "totalCount": 2,
+        "truncated": false,
+        "hostScope": { "hostIds": ["local", "ssh:gpu-box"], "omittedHostIds": [] }
+      }
+    },
+    "terminals": {
+      "id": "terminals-cross-host",
+      "ok": true,
+      "result": {
+        "terminals": [
+          {
+            "handle": "term-shared-local",
+            "ptyId": "pty-shared-local",
+            "worktreeId": "shared-worktree",
+            "tabId": "tab-shared",
+            "leafId": "leaf-shared",
+            "executionHostId": "local"
+          }
+        ],
+        "totalCount": 1,
+        "truncated": false,
+        "hostScope": { "hostIds": ["local", "ssh:gpu-box"], "omittedHostIds": [] }
+      }
+    }
+  },
+  "sameHost": {
+    "worktrees": {
+      "id": "worktrees-same-host",
+      "ok": true,
+      "result": {
+        "worktrees": [
+          {
+            "worktreeId": "duplicate-local-worktree",
+            "hostId": "local",
+            "agents": [{ "paneKey": "tab-duplicate:leaf-duplicate", "agentType": "codex" }]
+          },
+          {
+            "worktreeId": "duplicate-local-worktree",
+            "hostId": "local",
+            "agents": [{ "paneKey": "tab-duplicate:leaf-duplicate", "agentType": "claude" }]
+          }
+        ],
+        "totalCount": 2,
+        "truncated": false,
+        "hostScope": { "hostIds": ["local"], "omittedHostIds": [] }
+      }
+    },
+    "terminals": {
+      "id": "terminals-same-host",
+      "ok": true,
+      "result": {
+        "terminals": [
+          {
+            "handle": "term-duplicate-local",
+            "ptyId": "pty-duplicate-local",
+            "worktreeId": "duplicate-local-worktree",
+            "tabId": "tab-duplicate",
+            "leafId": "leaf-duplicate",
+            "executionHostId": "local"
+          }
+        ],
+        "totalCount": 1,
+        "truncated": false,
+        "hostScope": { "hostIds": ["local"], "omittedHostIds": [] }
+      }
+    }
+  }
+}

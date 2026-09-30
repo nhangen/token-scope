@@ -1,0 +1,18 @@
+{
+  "id": "worktrees-out-of-scope",
+  "ok": true,
+  "result": {
+    "worktrees": [
+      {
+        "worktreeId": "repo-token::/Users/alice/token-scope",
+        "hostId": "local",
+        "agents": [
+          { "paneKey": "tab-local:leaf-local", "agentType": "opencode" }
+        ]
+      }
+    ],
+    "totalCount": 1,
+    "truncated": false,
+    "hostScope": { "hostIds": ["ssh:gpu-box"], "omittedHostIds": [] }
+  }
+}

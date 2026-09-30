@@ -1,0 +1,20 @@
+{
+  "id": "terminals-out-of-scope",
+  "ok": true,
+  "result": {
+    "terminals": [
+      {
+        "handle": "term-codex",
+        "ptyId": "ssh:gpu-box@@pty-7",
+        "worktreeId": "repo-a::/srv/repo-a/feature",
+        "tabId": "tab-codex",
+        "leafId": "leaf-codex",
+        "agentIdentity": "codex",
+        "executionHostId": "ssh:gpu-box"
+      }
+    ],
+    "totalCount": 1,
+    "truncated": false,
+    "hostScope": { "hostIds": ["local"], "omittedHostIds": [] }
+  }
+}
