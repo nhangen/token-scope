@@ -76,6 +76,24 @@ describe("Codex root-task experiments", () => {
     expect(renderCodexExperimentReport(report)).toContain("excluded: 2 event(s)");
   });
 
+  it("keeps a forked child's own identity when the parent's session_meta follows it", () => {
+    const { events } = codexEvents(CODEX_HOME);
+    const forked = events.filter((event) => event.provenance.endsWith("forked-child.jsonl"));
+    expect(forked).toHaveLength(1);
+    expect(forked[0]!.codexThread).toEqual({
+      threadId: "forked-child",
+      role: "subagent",
+      parentThreadId: "root-unrelated",
+      depth: 1,
+      agentPath: "unknown",
+    });
+    const manifest = readCodexExperimentManifest(MANIFEST);
+    manifest.experiments = { "root-unrelated": manifest.experiments["root-sol"]! };
+    const [unrelated] = codexExperimentReport(events, manifest).experiments;
+    expect(unrelated!.events).toBe(2);
+    expect(unrelated!.integrity).toBe("ok");
+  });
+
   it("keeps malformed ancestry unknown and unattached", () => {
     const { events } = codexEvents(CODEX_HOME);
     const unknown = events.find((event) => event.codexThread?.threadId === "unknown-child")!;

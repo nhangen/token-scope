@@ -203,7 +203,9 @@ export function codexEventsFromRollout(
     const useOrdinal = validOrdinal(rec.ordinal) && !seenOrdinals.has(rec.ordinal);
     if (validOrdinal(rec.ordinal)) seenOrdinals.add(rec.ordinal);
     const recordKey = useOrdinal ? `ordinal-${rec.ordinal}` : `line-${lineIndex}`;
-    if (rec.type === "session_meta") meta = rec.payload ?? null;
+    // Forked children also carry the parent's session_meta after their own;
+    // the first one identifies this rollout.
+    if (rec.type === "session_meta" && meta === null) meta = rec.payload ?? null;
     const p = rec.payload ?? rec;
     if (rec.type === "turn_context" || p?.type === "turn_context") {
       model = typeof p?.model === "string" && p.model ? p.model : null;
