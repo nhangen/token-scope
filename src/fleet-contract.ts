@@ -190,23 +190,59 @@ function nullableInteger(value: unknown, name: string): number | null {
   return value;
 }
 
-const URL_USERINFO = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*@/i;
-const CREDENTIAL_QUERY_KEY = /token|key|secret|auth|sig|password|credential/i;
+const URL_USERINFO = /^(?:[a-z][a-z0-9+.-]*:)?\/\/[^/?#]*@/i;
+const BARE_USERINFO = /^[^/?#:@]+:[^/?#@]*@/;
+const CREDENTIAL_PARAM_SEGMENTS = new Set([
+  "accesstoken",
+  "apikey",
+  "auth",
+  "authorization",
+  "authtoken",
+  "bearer",
+  "clientsecret",
+  "credential",
+  "credentials",
+  "idtoken",
+  "jwt",
+  "key",
+  "pass",
+  "passwd",
+  "password",
+  "pwd",
+  "refreshtoken",
+  "secret",
+  "sig",
+  "signature",
+  "token",
+]);
+
+function isCredentialParam(name: string): boolean {
+  return name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .some((segment) => CREDENTIAL_PARAM_SEGMENTS.has(segment));
+}
+
+function locatorParams(locator: string): string[] {
+  const hashStart = locator.indexOf("#");
+  const beforeHash = hashStart === -1 ? locator : locator.slice(0, hashStart);
+  const fragment = hashStart === -1 ? "" : locator.slice(hashStart + 1);
+  const queryStart = beforeHash.indexOf("?");
+  const query = queryStart === -1 ? "" : beforeHash.slice(queryStart + 1);
+  return [
+    ...new URLSearchParams(query).keys(),
+    ...new URLSearchParams(fragment).keys(),
+  ];
+}
 
 function locatorValue(value: unknown): string | null {
   const locator = nullableString(value, "provenance.locator");
   if (locator === null) return null;
-  if (URL_USERINFO.test(locator)) {
+  if (URL_USERINFO.test(locator) || BARE_USERINFO.test(locator)) {
     throw new Error("provenance.locator cannot contain URL credentials");
   }
-  const queryStart = locator.indexOf("?");
-  if (queryStart !== -1) {
-    const query = locator.slice(queryStart + 1).split("#")[0] ?? "";
-    for (const key of new URLSearchParams(query).keys()) {
-      if (CREDENTIAL_QUERY_KEY.test(key)) {
-        throw new Error("provenance.locator cannot contain credential query parameters");
-      }
-    }
+  if (locatorParams(locator).some(isCredentialParam)) {
+    throw new Error("provenance.locator cannot contain credential query parameters");
   }
   return locator;
 }

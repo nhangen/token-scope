@@ -173,6 +173,14 @@ describe("fleet schema v1 contract", () => {
     }
   });
 
+  it("treats a prototype name present on neither plain counter object as absent", () => {
+    const plainPrevious = { ...snapshot, counters: { requests: 3 } };
+    const plainCurrent = { ...snapshot, counters: { requests: 5 } };
+    expect(() => snapshotCounterDelta(plainPrevious, plainCurrent, "toString")).toThrow("not present");
+    expect(snapshotCounterDelta(plainPrevious, { ...plainCurrent, counters: { toString: 5 } }, "toString"))
+      .toEqual({ state: "unavailable", value: null });
+  });
+
   it("keeps a __proto__ counter as an own measured value", () => {
     const parsed = parseFleetRecord(JSON.parse(JSON.stringify(fixture.operational_snapshot)
       .replace('"requests":18', '"__proto__":7,"requests":18')));
@@ -201,8 +209,29 @@ describe("fleet schema v1 contract", () => {
       .toThrow("provenance.locator cannot contain credential query parameters");
     expect(() => parseFleetRecord(withLocator("sessions/run-3.jsonl?access_token=FAKE-EXAMPLE")))
       .toThrow("provenance.locator cannot contain credential query parameters");
-    const plain = parseFleetRecord(withLocator("http://ml1/metrics?window=5m"));
-    expect(plain.provenance.locator).toBe("http://ml1/metrics?window=5m");
+    for (const locator of [
+      "//user:FAKE-EXAMPLE@ml1/metrics",
+      "user:FAKE-EXAMPLE@ml1/metrics",
+    ]) {
+      expect(() => parseFleetRecord(withLocator(locator)))
+        .toThrow("provenance.locator cannot contain URL credentials");
+    }
+    for (const locator of [
+      "https://ml1/callback#access_token=FAKE-EXAMPLE",
+      "http://ml1/metrics?apiKey=FAKE-EXAMPLE",
+      "http://ml1/metrics?pwd=FAKE-EXAMPLE",
+      "http://ml1/metrics?X-Amz-Signature=FAKE-EXAMPLE",
+    ]) {
+      expect(() => parseFleetRecord(withLocator(locator)))
+        .toThrow("provenance.locator cannot contain credential query parameters");
+    }
+    for (const locator of [
+      "http://ml1/metrics?window=5m",
+      "http://ml1/metrics?max_tokens=4096&signal=1&author=a&design=b&monkey=c",
+      "sessions/2026/09/22/run-3.jsonl#L10",
+    ]) {
+      expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);
+    }
   });
 
   it("rejects unsupported and missing envelope fields", () => {
