@@ -325,6 +325,24 @@ describe("codex adapter", () => {
       ["gpt-6-astra", "high"],
       ["unknown", "unknown"],
     ]);
+    expect(events[0]!.partial).not.toContain("response_attribution");
+    expect(events[1]!.partial).toContain("response_attribution");
+  });
+
+  it("marks usage before any turn_context, or without an effort, as partially attributed", () => {
+    const usage = (ordinal: number, total: number) => JSON.stringify({ ordinal, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 }, total_token_usage: { input_tokens: total, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: total, reasoning_output_tokens: 0 } } } });
+    const text = [
+      JSON.stringify({ type: "session_meta", payload: { id: "attribution", model_provider: "openai", source: "vscode" } }),
+      usage(1, 1),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.2-codex" } }),
+      usage(3, 2),
+    ].join("\n");
+    const events = codexEventsFromRollout(text, "attribution.jsonl");
+    expect(events.map((event) => [event.model, event.reasoningEffort])).toEqual([
+      ["unknown", "unknown"],
+      ["gpt-5.2-codex", "unknown"],
+    ]);
+    expect(events.every((event) => event.partial?.includes("response_attribution"))).toBe(true);
   });
 
   it("does not overlap input classes when cache-write exists but cache-read is absent", () => {

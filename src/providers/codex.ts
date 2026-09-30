@@ -256,9 +256,11 @@ export function codexEventsFromRollout(
       provenance,
       codexThread: codexThread(meta),
       malformed: usage.malformed,
-      partial: hasLastUsage
-        ? [...new Set([...usage.partial, ...(cumulativeKey === null ? ["cumulative_token_usage"] : [])])].sort()
-        : [...new Set([...usage.partial, "response_attribution"])].sort(),
+      partial: [...new Set([
+        ...usage.partial,
+        ...(hasLastUsage && cumulativeKey === null ? ["cumulative_token_usage"] : []),
+        ...(!hasLastUsage || model === null || effort === null ? ["response_attribution"] : []),
+      ])].sort(),
       usageSource: hasLastUsage ? "response" : "legacy-cumulative",
     };
     if (hasLastUsage) events.push(event);
