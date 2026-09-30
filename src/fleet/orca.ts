@@ -625,14 +625,15 @@ export async function collectOrcaPlacement(
   try {
     const runtime = objectValue(status.value.runtime, "status.runtime");
     runtimeId = optionalSafeString(runtime.runtimeId, "runtime.runtimeId");
-    version = optionalSafeString(runtime.appVersion, "runtime.appVersion");
+    const reportedVersion = optionalSafeString(runtime.appVersion, "runtime.appVersion");
+    version = reportedVersion !== null && supportedVersion(reportedVersion) ? reportedVersion : null;
     if (runtime.reachable !== true || runtime.state !== "ready") {
       status.observation.state = "unavailable";
       status.observation.reason = "runtime_unavailable";
       status.observation.provenance.completeness = "unavailable";
       return empty(runtimeId, version);
     }
-    if (version === null || !supportedVersion(version)) {
+    if (version === null) {
       status.observation.state = "unavailable";
       status.observation.reason = "unsupported_version";
       status.observation.provenance.completeness = "unavailable";

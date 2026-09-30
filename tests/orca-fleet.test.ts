@@ -430,6 +430,25 @@ describe("Orca fleet placement adapter", () => {
     });
   }
 
+  it("emits the Orca version only when it is supported semver", async () => {
+    for (const [appVersion, reachable] of [
+      ["1.4.162+FAKE_EXAMPLE", true],
+      ["2.0.0+FAKEEXAMPLE", true],
+      ["1.0.0 FAKEEXAMPLE", false],
+    ] as const) {
+      const source = fixture("local.json");
+      source.status.result.runtime.appVersion = appVersion;
+      source.status.result.runtime.reachable = reachable;
+      const collected = await collectOrcaPlacement({
+        collectedAt: COLLECTED_AT,
+        runner: fixtureRunner(source).runner,
+      });
+
+      expect(collected.runtime.version).toBeNull();
+      expect(JSON.stringify(collected)).not.toContain("FAKE");
+    }
+  });
+
   it("rejects an SSH host whose target embeds a credential", async () => {
     const source = fixture("local.json");
     const target = "deploy:FAKE_EXAMPLE@gpu-box";
