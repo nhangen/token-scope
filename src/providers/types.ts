@@ -39,6 +39,8 @@ export interface ProviderEvent {
     parentThreadId: string | null | "unknown";
     depth: number | "unknown";
     agentPath: string[] | "unknown";
+    /** Parent named by a spawn record whose ancestry failed validation. */
+    claimedParentThreadId?: string;
   };
   /** Source contradictions that prevent a disjoint token value. */
   malformed?: string[];

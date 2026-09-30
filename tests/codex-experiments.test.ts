@@ -24,16 +24,56 @@ describe("Codex root-task experiments", () => {
     expect(sol.primary[0]!.reasoningEffort).toBe("high");
     expect(sol.astraEscalation[0]!.model).toBe("gpt-6-astra");
 
-    expect(luna.events).toBe(3);
+    // root-luna, child-sol ("/root/implementer"), grandchild-astra, and
+    // missing-agent-path (no agent_path, the shape most real children have).
+    expect(luna.events).toBe(4);
     expect(luna.primary.map((row) => row.model)).toEqual(["gpt-5.6-luna", "gpt-5.6-sol"]);
     expect(luna.astraEscalation.map((row) => row.model)).toEqual(["gpt-6-astra"]);
-    expect(luna.models.reduce((sum, row) => sum + row.rawTokens.uncachedInput, 0)).toBe(85);
+    expect(luna.models.reduce((sum, row) => sum + row.rawTokens.uncachedInput, 0)).toBe(95);
     expect(luna.models.reduce((sum, row) => sum + row.rawTokens.cacheReadInput, 0)).toBe(35);
     expect(luna.models.reduce((sum, row) => sum + row.rawTokens.cacheWriteInput, 0)).toBe(15);
-    expect(luna.models.reduce((sum, row) => sum + row.rawTokens.visibleOutput, 0)).toBe(41);
+    expect(luna.models.reduce((sum, row) => sum + row.rawTokens.visibleOutput, 0)).toBe(45);
     expect(luna.models.reduce((sum, row) => sum + row.rawTokens.reasoningOutput, 0)).toBe(11);
     expect(luna.models.some((row) => row.rawTokens.uncachedInput === 999)).toBe(false);
     expect(luna.models.some((row) => row.rawTokens.uncachedInput === 777)).toBe(false);
+  });
+
+  it("accepts the agent_path shapes Codex writes: absent, null, and /root/<name>", () => {
+    const meta = (agentPath: unknown, depth = 1) => JSON.stringify({
+      type: "session_meta",
+      payload: {
+        id: "child",
+        source: { subagent: { thread_spawn: { parent_thread_id: "root", depth, ...(agentPath === undefined ? {} : { agent_path: agentPath }) } } },
+      },
+    });
+    const usage = JSON.stringify({
+      ordinal: 1,
+      type: "event_msg",
+      payload: { type: "token_count", info: { last_token_usage: { input_tokens: 5, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } } },
+    });
+    const thread = (agentPath: unknown, depth = 1) =>
+      codexEventsFromRollout(`${meta(agentPath, depth)}\n${usage}`, "f.jsonl")[0]!.codexThread;
+    expect(thread(undefined)).toEqual({ threadId: "child", role: "subagent", parentThreadId: "root", depth: 1, agentPath: "unknown" });
+    expect(thread(null)).toEqual({ threadId: "child", role: "subagent", parentThreadId: "root", depth: 1, agentPath: "unknown" });
+    expect(thread("/root/test_reviewer")).toEqual({ threadId: "child", role: "subagent", parentThreadId: "root", depth: 1, agentPath: ["test_reviewer"] });
+    expect(thread("/root/a/b", 2)).toEqual({ threadId: "child", role: "subagent", parentThreadId: "root", depth: 2, agentPath: ["a", "b"] });
+    expect(thread("/root/a/b", 1)?.role).toBe("unknown");
+    expect(thread("/root/a/b", 1)?.claimedParentThreadId).toBe("root");
+    expect(thread(42)?.role).toBe("unknown");
+  });
+
+  it("reports children that claim the root but fail ancestry validation", () => {
+    const { events } = codexEvents(CODEX_HOME);
+    const report = codexExperimentReport(events, readCodexExperimentManifest(MANIFEST));
+    const luna = report.experiments.find((experiment) => experiment.rootThreadId === "root-luna")!;
+    const sol = report.experiments.find((experiment) => experiment.rootThreadId === "root-sol")!;
+    // bad-agent-path (path contradicts depth) and bad-depth (depth 2 under the root).
+    expect(luna.excludedDescendantEvents).toBe(2);
+    expect(luna.integrity).toBe("inconsistent-descendants");
+    expect(sol.excludedDescendantEvents).toBe(0);
+    expect(sol.integrity).toBe("ok");
+    expect(report.complete).toBe(false);
+    expect(renderCodexExperimentReport(report)).toContain("excluded: 2 event(s)");
   });
 
   it("keeps malformed ancestry unknown and unattached", () => {
@@ -47,19 +87,16 @@ describe("Codex root-task experiments", () => {
       agentPath: "unknown",
     });
     const report = codexExperimentReport(events, readCodexExperimentManifest(MANIFEST));
-    expect(report.experiments.every((experiment) => experiment.events < 4)).toBe(true);
     const inconsistent = events.find((event) => event.codexThread?.threadId === "bad-agent-path")!;
     expect(inconsistent.codexThread?.role).toBe("unknown");
+    expect(inconsistent.codexThread?.claimedParentThreadId).toBe("root-luna");
+    // bad-depth parses as a subagent; the report rejects it because depth 2
+    // under a depth-0 parent is inconsistent.
     const badDepth = events.find((event) => event.codexThread?.threadId === "bad-depth")!;
     expect(badDepth.codexThread?.role).toBe("subagent");
-    const missingPath = events.find((event) => event.codexThread?.threadId === "missing-agent-path")!;
-    expect(missingPath.codexThread).toEqual({
-      threadId: "missing-agent-path",
-      role: "unknown",
-      parentThreadId: "unknown",
-      depth: "unknown",
-      agentPath: "unknown",
-    });
+    const luna = report.experiments.find((experiment) => experiment.rootThreadId === "root-luna")!;
+    expect(luna.models.some((row) => row.rawTokens.uncachedInput === 555)).toBe(false);
+    expect(luna.models.some((row) => row.rawTokens.uncachedInput === 666)).toBe(false);
     const emptySource = events.find((event) => event.codexThread?.threadId === "empty-source")!;
     expect(emptySource.codexThread).toEqual({
       threadId: "empty-source",
@@ -68,7 +105,7 @@ describe("Codex root-task experiments", () => {
       depth: "unknown",
       agentPath: "unknown",
     });
-    expect(report.experiments.find((experiment) => experiment.rootThreadId === "root-luna")!.events).toBe(3);
+    expect(luna.events).toBe(4);
   });
 
   it("marks selected malformed, partial, and legacy observations incomplete", () => {
@@ -162,7 +199,10 @@ describe("--codex-experiment production CLI path", () => {
     });
     expect(proc.exitCode).toBe(0);
     const parsed = JSON.parse(proc.stdout.toString());
-    expect(parsed.complete).toBe(true);
+    expect(parsed.complete).toBe(false);
+    expect(parsed.experiments[0].integrity).toBe("ok");
+    expect(parsed.experiments[1].integrity).toBe("inconsistent-descendants");
+    expect(parsed.experiments[1].excludedDescendantEvents).toBe(2);
     expect(parsed.experiments.map((experiment: any) => experiment.strategy)).toEqual([
       "sol-main",
       "luna-root-sol-fresh-implementer",

@@ -33,8 +33,11 @@ export interface CodexExperimentResult {
   officialAccountMeter: CodexExperimentManifest["experiments"][string]["officialAccountMeter"] | null;
   officialAccountMeterDelta: number | null;
   officialAccountMeterConsumption: number | null;
-  integrity: "ok" | "missing-root" | "incomplete-events";
+  integrity: "ok" | "missing-root" | "inconsistent-descendants" | "incomplete-events";
   events: number;
+  /** Events whose spawn record names a selected thread as parent but whose
+   * ancestry failed validation; excluded from every total. */
+  excludedDescendantEvents: number;
   models: ModelResult[];
   primary: ModelResult[];
   astraEscalation: ModelResult[];
@@ -54,13 +57,14 @@ export interface CodexExperimentReport {
 function eventsForRoot(events: ProviderEvent[], rootThreadId: string): {
   foundRoot: boolean;
   events: ProviderEvent[];
+  excludedDescendantEvents: number;
 } {
   const known = events.filter((event) => event.harness === "codex"
     && event.codexThread?.threadId !== "unknown"
     && event.codexThread?.role !== "unknown");
   const rootExists = known.some((event) => event.codexThread?.threadId === rootThreadId
     && event.codexThread.role === "root");
-  if (!rootExists) return { foundRoot: false, events: [] };
+  if (!rootExists) return { foundRoot: false, events: [], excludedDescendantEvents: 0 };
 
   const selectedThreads = new Map([[rootThreadId, 0]]);
   let changed = true;
@@ -77,9 +81,16 @@ function eventsForRoot(events: ProviderEvent[], rootThreadId: string): {
       changed = true;
     }
   }
+  const excludedDescendantEvents = events.filter((event) => {
+    const thread = event.codexThread;
+    if (event.harness !== "codex" || !thread || selectedThreads.has(thread.threadId)) return false;
+    const claimed = thread.role === "unknown" ? thread.claimedParentThreadId : thread.parentThreadId;
+    return typeof claimed === "string" && selectedThreads.has(claimed);
+  }).length;
   return {
     foundRoot: true,
     events: known.filter((event) => selectedThreads.has(event.codexThread!.threadId)),
+    excludedDescendantEvents,
   };
 }
 
@@ -177,8 +188,10 @@ export function codexExperimentReport(
         ? null : meter!.direction === "used" ? meterDelta : -meterDelta,
       integrity: !selected.foundRoot
         ? "missing-root" as const
+        : selected.excludedDescendantEvents > 0 ? "inconsistent-descendants" as const
         : incompleteEvents ? "incomplete-events" as const : "ok" as const,
       events: events.length,
+      excludedDescendantEvents: selected.excludedDescendantEvents,
       models,
       primary: models.filter((row) => !row.astraEscalation),
       astraEscalation: models.filter((row) => row.astraEscalation),
@@ -207,6 +220,9 @@ export function renderCodexExperimentReport(report: CodexExperimentReport): stri
     lines.push(`protocol: fresh_context=${experiment.protocol.freshContext} fork_turns=${experiment.protocol.forkTurns} acceptance_test=${experiment.protocol.acceptanceTest}`);
     lines.push(`acceptance=${experiment.acceptanceResult ?? "not recorded"} elapsed=${experiment.elapsedSeconds}s human_rework=${experiment.humanReworkMinutes}m`);
     if (experiment.integrity !== "ok") lines.push(`integrity=${experiment.integrity}`);
+    if (experiment.excludedDescendantEvents > 0) {
+      lines.push(`excluded: ${experiment.excludedDescendantEvents} event(s) from threads naming this root's tree as parent with inconsistent ancestry`);
+    }
     for (const model of experiment.primary) {
       lines.push(modelSummary(model));
     }

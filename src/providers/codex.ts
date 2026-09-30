@@ -32,14 +32,33 @@ const TOKEN_KEYS = [
   "reasoning_output_tokens",
 ] as const;
 
-function unknownThread(threadId: string): CodexThread {
+function unknownThread(threadId: string, claimedParent?: string): CodexThread {
   return {
     threadId,
     role: "unknown",
     parentThreadId: "unknown",
     depth: "unknown",
     agentPath: "unknown",
+    ...(claimedParent ? { claimedParentThreadId: claimedParent } : {}),
   };
+}
+
+/** Codex writes agent_path as null, absent, or "/root/<name>/..."; arrays are
+ * accepted for older fixtures. Returns null when the value contradicts depth. */
+function spawnAgentPath(value: unknown, depth: number): string[] | "unknown" | null {
+  if (value === null || value === undefined) return "unknown";
+  let parts: unknown[];
+  if (typeof value === "string") {
+    const segments = value.split("/").filter((part) => part.length > 0);
+    if (segments[0] !== "root") return null;
+    parts = segments.slice(1);
+  } else if (Array.isArray(value)) {
+    parts = value;
+  } else {
+    return null;
+  }
+  if (!parts.every((part) => typeof part === "string" && part.length > 0)) return null;
+  return parts.length === depth ? parts as string[] : null;
 }
 
 function codexThread(meta: any): CodexThread {
@@ -51,15 +70,12 @@ function codexThread(meta: any): CodexThread {
   const spawn = source?.subagent?.thread_spawn;
   if (spawn && typeof spawn === "object") {
     const parent = typeof spawn.parent_thread_id === "string" && spawn.parent_thread_id
-      ? spawn.parent_thread_id : "unknown";
-    const depth = Number.isInteger(spawn.depth) && spawn.depth >= 1
-      ? spawn.depth : "unknown";
-    const path = Array.isArray(spawn.agent_path)
-      && spawn.agent_path.every((part: unknown) => typeof part === "string" && part.length > 0)
-      ? spawn.agent_path : "unknown";
-    if (parent === "unknown" || depth === "unknown" || path === "unknown" || path.length !== depth) {
-      return unknownThread(threadId);
-    }
+      ? spawn.parent_thread_id : null;
+    const depth = Number.isInteger(spawn.depth) && spawn.depth >= 1 ? spawn.depth as number : null;
+    if (parent === null) return unknownThread(threadId);
+    if (depth === null) return unknownThread(threadId, parent);
+    const path = spawnAgentPath(spawn.agent_path, depth);
+    if (path === null) return unknownThread(threadId, parent);
     return { threadId, role: "subagent", parentThreadId: parent, depth, agentPath: path };
   }
   return unknownThread(threadId);
