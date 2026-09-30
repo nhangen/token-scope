@@ -200,9 +200,12 @@ const CREDENTIAL_PARAM_SEGMENTS = new Set([
   "authtoken",
   "bearer",
   "clientsecret",
+  "cookie",
   "credential",
   "credentials",
+  "hmac",
   "idtoken",
+  "jsessionid",
   "jwt",
   "key",
   "pass",
@@ -215,29 +218,35 @@ const CREDENTIAL_PARAM_SEGMENTS = new Set([
   "signature",
   "token",
 ]);
-// Unseparated compounds (apitoken, sessionToken, privateKey) have no segment
+// Unseparated compounds (apitoken, apikeys, privatekeypem) have no segment
 // boundary to split on, so a denylist of whole segments alone fails open on them.
-const CREDENTIAL_PARAM_SUFFIXES = [
+// No telemetry name contains these stems, so they match anywhere in a segment.
+const CREDENTIAL_PARAM_STEMS = [
   "accesskey",
   "apikey",
   "authkey",
+  "clientsecret",
   "credential",
-  "credentials",
+  "passphrase",
   "passwd",
   "password",
   "privatekey",
-  "secret",
+  "privkey",
   "secretkey",
-  "signature",
-  "token",
 ];
+// These stems do appear inside telemetry names (max_tokens, tokenizer, secretary,
+// signature_version), so they match only at the end of a segment.
+const CREDENTIAL_PARAM_SUFFIXES = ["secret", "secrets", "signature", "token"];
 
 function isCredentialParam(name: string): boolean {
   return name
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
+    .map((segment) => segment.replace(/\d+$/, ""))
     .some((segment) =>
       CREDENTIAL_PARAM_SEGMENTS.has(segment) ||
+      CREDENTIAL_PARAM_STEMS.some((stem) => segment.includes(stem)) ||
       CREDENTIAL_PARAM_SUFFIXES.some((suffix) => segment.endsWith(suffix))
     );
 }

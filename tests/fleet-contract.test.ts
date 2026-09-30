@@ -225,7 +225,7 @@ describe("fleet schema v1 contract", () => {
       "http://ml1/metrics?sessionToken=FAKE-EXAMPLE",
       "http://ml1/metrics?privateKey=FAKE-EXAMPLE",
       "http://ml1/metrics?dbPassword=FAKE-EXAMPLE",
-      "http://ml1/metrics?client-secret=FAKE-EXAMPLE",
+      "http://ml1/metrics?mysecret=FAKE-EXAMPLE",
       "http://ml1/metrics?window=5m;token=FAKE-EXAMPLE",
     ]) {
       expect(() => parseFleetRecord(withLocator(locator)))
@@ -238,6 +238,46 @@ describe("fleet schema v1 contract", () => {
     ]) {
       expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);
     }
+  });
+
+  describe("provenance.locator credential names", () => {
+    const withLocator = (locator: string) => ({
+      ...fixture.operational_snapshot,
+      provenance: { ...fixture.operational_snapshot.provenance, locator },
+    });
+    const rejected = "provenance.locator cannot contain credential query parameters";
+
+    it.each([
+      "http://ml1/metrics?token1=FAKE-EXAMPLE",
+      "http://ml1/metrics?apikey2=FAKE-EXAMPLE",
+      "http://ml1/metrics?tokenValue=FAKE-EXAMPLE",
+      "http://ml1/metrics?apiKeyId=FAKE-EXAMPLE",
+      "http://ml1/metrics?passwordHash=FAKE-EXAMPLE",
+      "http://ml1/metrics?apikeys=FAKE-EXAMPLE",
+      "http://ml1/metrics?passwords=FAKE-EXAMPLE",
+      "http://ml1/metrics?secrets=FAKE-EXAMPLE",
+      "http://ml1/metrics?privatekeypem=FAKE-EXAMPLE",
+      "http://ml1/metrics?db_passphrase=FAKE-EXAMPLE",
+      "http://ml1/metrics?awsaccesskey=FAKE-EXAMPLE",
+      "http://ml1/metrics?usercredentials=FAKE-EXAMPLE",
+      "http://ml1/metrics?apitoken_v2=FAKE-EXAMPLE",
+      "http://ml1/metrics?cookie=FAKE-EXAMPLE",
+      "http://ml1/callback#a=1;sessiontoken=FAKE-EXAMPLE",
+    ])("rejects compound or qualified name in %s", (locator) => {
+      expect(() => parseFleetRecord(withLocator(locator))).toThrow(rejected);
+    });
+
+    it.each([
+      "http://ml1/metrics?input_tokens=1&tokenizer=bpe&maxTokens=2&window=5m",
+      "http://ml1/metrics?keyboard=us&sortkey=a&primarykey=b&secretary=c",
+      "http://ml1/metrics?session_id=run-3&sessionId=run-4&keyword=k&authority=a",
+      "http://ml1/metrics?model=qwen3.8:27b&q=100%",
+      "C:\\Users\\n\\sessions\\run-3.jsonl",
+      "s3://bucket/date=2026-09-22/run-3.jsonl",
+      "file:///home/n/sessions/run-3.jsonl#L10",
+    ])("accepts ordinary telemetry locator %s", (locator) => {
+      expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);
+    });
   });
 
   it("rejects unsupported and missing envelope fields", () => {
