@@ -1,0 +1,18 @@
+[
+  {
+    "label": "qualified request ID",
+    "secret": "request-route-secret",
+    "route": {
+      "requestId": "olla:token=request-route-secret",
+      "endpointId": "ml1-id"
+    }
+  },
+  {
+    "label": "qualified run ID",
+    "secret": "run-route-secret",
+    "route": {
+      "runId": "codex:token=run-route-secret",
+      "endpointId": "ml1-id"
+    }
+  }
+]

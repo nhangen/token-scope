@@ -1,0 +1,4 @@
+# TYPE olla_requests_total counter
+olla_requests_total 50
+# TYPE olla_model_requests_total counter
+olla_model_requests_total{model="Bearer secret-value"} 1

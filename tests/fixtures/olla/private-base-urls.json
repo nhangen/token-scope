@@ -1,0 +1,33 @@
+{
+  "private": [
+    {
+      "label": "encoded credential-like path",
+      "url": "http://router.local:40114/Bearer%20base-secret",
+      "secret": "base-secret"
+    },
+    {
+      "label": "credential-like query",
+      "url": "http://router.local:40114?api_key=query-secret",
+      "secret": "query-secret"
+    },
+    {
+      "label": "credential-like fragment",
+      "url": "http://router.local:40114#Bearer%20fragment-secret",
+      "secret": "fragment-secret"
+    },
+    {
+      "label": "generic token assignment path",
+      "url": "http://router.local:40114/v1/token=base-token-secret",
+      "secret": "base-token-secret"
+    },
+    {
+      "label": "generic key assignment path",
+      "url": "http://router.local:40114/v1/key=base-key-secret",
+      "secret": "base-key-secret"
+    }
+  ],
+  "safe": {
+    "url": "http://router.local:40114/olla?mode=readonly#local",
+    "requestPrefix": "/olla"
+  }
+}
