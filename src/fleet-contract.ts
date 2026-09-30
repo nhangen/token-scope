@@ -249,13 +249,20 @@ function isCredentialSegment(segment: string, next: string | undefined): boolean
     CREDENTIAL_PARAM_SUFFIXES.some((suffix) => segment.endsWith(suffix));
 }
 
-function isCredentialParam(name: string): boolean {
+function hasCredentialSegment(name: string): boolean {
   const segments = name
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .map((segment) => segment.replace(/(?<!\d)\d+$/, ""));
   return segments.some((segment, index) => isCredentialSegment(segment, segments[index + 1]));
+}
+
+// The camelCase split catches tokenValue and apiKeyId, but it also breaks a
+// mixed-case credential apart (pAssword -> p_assword), and case-insensitive
+// servers read that as the real name, so the unsplit name is checked too.
+function isCredentialParam(name: string): boolean {
+  return hasCredentialSegment(name.replace(/([a-z0-9])([A-Z])/g, "$1_$2")) ||
+    hasCredentialSegment(name);
 }
 
 // Each run of escapes decodes on its own, so one malformed % elsewhere in the
