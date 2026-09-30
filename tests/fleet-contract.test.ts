@@ -141,6 +141,24 @@ describe("fleet schema v1 contract", () => {
       .toEqual({ state: "reset", value: null });
     expect(snapshotCounterDelta(snapshot, { ...next, counters: { requests: null } }, "requests"))
       .toEqual({ state: "unavailable", value: null });
+    expect(snapshotCounterDelta(snapshot, { ...next, counters: { errors: null } }, "requests"))
+      .toEqual({ state: "unavailable", value: null });
+  });
+
+  it("rejects counter names absent from both snapshots, including prototype names", () => {
+    expect(() => snapshotCounterDelta(snapshot, snapshot, "reqests"))
+      .toThrow("snapshot counter reqests is not present in either snapshot");
+    for (const name of ["toString", "constructor", "valueOf"]) {
+      expect(() => snapshotCounterDelta(snapshot, snapshot, name)).toThrow("not present");
+    }
+  });
+
+  it("keeps a __proto__ counter as an own measured value", () => {
+    const parsed = parseFleetRecord(JSON.parse(JSON.stringify(fixture.operational_snapshot)
+      .replace('"requests":18', '"__proto__":7,"requests":18')));
+    if (parsed.record_type !== "operational_snapshot") throw new Error("wrong fixture type");
+    expect(Object.keys(parsed.counters)).toEqual(["__proto__", "errors", "requests"]);
+    expect(parsed.counters["__proto__"]).toBe(7);
   });
 
   it("rejects private content at any nesting depth", () => {

@@ -270,7 +270,7 @@ export function parseFleetRecord(value: unknown): FleetRecord {
       throw new Error("snapshot window must be non-empty and end no later than timestamp");
     }
     const counters = objectValue(record.counters, "counters");
-    const parsedCounters: Record<string, number | null> = {};
+    const parsedCounters: Record<string, number | null> = Object.create(null);
     for (const [name, counter] of Object.entries(counters).sort(([a], [b]) => a.localeCompare(b))) {
       if (!name) throw new Error("counter names cannot be empty");
       parsedCounters[name] = nullableMeasurement(counter, `counters.${name}`);
@@ -391,8 +391,13 @@ export function snapshotCounterDelta(
   current: FleetOperationalSnapshot,
   counter: string,
 ): { state: "continuous" | "restart" | "reset" | "unavailable"; value: number | null } {
-  const before = previous.counters[counter];
-  const after = current.counters[counter];
+  const hasBefore = Object.hasOwn(previous.counters, counter);
+  const hasAfter = Object.hasOwn(current.counters, counter);
+  if (!hasBefore && !hasAfter) {
+    throw new Error(`snapshot counter ${counter} is not present in either snapshot`);
+  }
+  const before = hasBefore ? previous.counters[counter] : undefined;
+  const after = hasAfter ? current.counters[counter] : undefined;
   if (before === null || before === undefined || after === null || after === undefined) {
     return { state: "unavailable", value: null };
   }
