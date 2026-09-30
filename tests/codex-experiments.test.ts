@@ -200,6 +200,24 @@ describe("Codex root-task experiments", () => {
     expect(renderCodexExperimentReport(report)).toContain("integrity=missing-root");
   });
 
+  it("reports one row per model and reasoning effort", () => {
+    const usage = (ordinal: number, input: number, total: number) => JSON.stringify({ ordinal, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: input, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 }, total_token_usage: { input_tokens: total, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: ordinal, reasoning_output_tokens: 0 } } } });
+    const text = [
+      JSON.stringify({ type: "session_meta", payload: { id: "effort-root", source: "vscode" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "high" } }),
+      usage(1, 7, 7),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "low" } }),
+      usage(2, 3, 10),
+    ].join("\n");
+    const manifest = readCodexExperimentManifest(MANIFEST);
+    manifest.experiments = { "effort-root": manifest.experiments["root-sol"]! };
+    const [experiment] = codexExperimentReport(codexEventsFromRollout(text, "effort.jsonl"), manifest).experiments;
+    expect(experiment!.models.map((row) => [row.model, row.reasoningEffort, row.rawTokens.uncachedInput])).toEqual([
+      ["gpt-5.6-sol", "high", 7],
+      ["gpt-5.6-sol", "low", 3],
+    ]);
+  });
+
   it("withholds completeness and says so when rollouts could not be read", () => {
     const report = codexExperimentReport(codexEvents(CODEX_HOME).events, readCodexExperimentManifest(MANIFEST), 2);
     expect(report.skippedRollouts).toBe(2);
