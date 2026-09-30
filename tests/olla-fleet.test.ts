@@ -38,6 +38,7 @@ function fixtureFetch(overrides: Record<string, string | Error | number> = {}): 
 async function collect(overrides: Record<string, string | Error | number> = {}, opts: {
   baseUrl?: string;
   collectedAt?: string;
+  timeoutMs?: number;
   fetch?: OllaFetch;
   previous?: OllaTelemetryCollection;
   observedRoutes?: Array<{
@@ -52,6 +53,7 @@ async function collect(overrides: Record<string, string | Error | number> = {}, 
     baseUrl: opts.baseUrl ?? "http://router.local:40114",
     collectedAt: opts.collectedAt ?? COLLECTED_AT,
     staleAfterMs: 60_000,
+    timeoutMs: opts.timeoutMs,
     fetch: opts.fetch ?? fixtureFetch(overrides),
     previous: opts.previous,
     observedRoutes: opts.observedRoutes,
@@ -703,6 +705,101 @@ describe("Olla fleet telemetry adapter", () => {
     await expect(result).rejects.toThrow("credential-like label value rejected");
     await result.catch((error: Error) => {
       expect(`${error.message}\n${error.stack ?? ""}`).not.toContain(FAKE_SECRET);
+    });
+  });
+
+  describe("fetch timeout and failure class tracking (#119)", () => {
+    it("rejects invalid timeoutMs (negative, zero, or non-finite)", async () => {
+      await expect(collect({}, { timeoutMs: 0 })).rejects.toThrow("timeoutMs must be positive");
+      await expect(collect({}, { timeoutMs: -10 })).rejects.toThrow("timeoutMs must be positive");
+      await expect(collect({}, { timeoutMs: NaN })).rejects.toThrow("timeoutMs must be positive");
+    });
+
+    it("marks source unavailable with reason timeout and errorClass TimeoutError on fetch timeout", async () => {
+      const collected = await collect({}, {
+        timeoutMs: 20,
+        fetch: async (url, init) => {
+          const path = new URL(url).pathname;
+          if (path === "/internal/status/endpoints") {
+            return new Promise((_, reject) => {
+              init?.signal?.addEventListener("abort", () => {
+                reject(init.signal?.reason ?? new DOMException("The operation timed out.", "TimeoutError"));
+              });
+            });
+          }
+          return fixtureFetch({})(url, init);
+        },
+      });
+      const endpointsSource = collected.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(endpointsSource.state).toBe("unavailable");
+      expect(endpointsSource.reason).toBe("timeout");
+      expect(endpointsSource.errorClass).toBe("TimeoutError");
+
+      const statusSource = collected.sources.find((s) => s.path === "/internal/status")!;
+      expect(statusSource.state).toBe("available");
+      expect(statusSource.errorClass).toBeNull();
+    });
+
+    it("records errorClass for fetch exceptions distinguishing network bugs from protocol errors", async () => {
+      const collectedTypeError = await collect({
+        "/internal/status/endpoints": new TypeError("network failed"),
+      });
+      const typeErrorSource = collectedTypeError.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(typeErrorSource.state).toBe("unavailable");
+      expect(typeErrorSource.reason).toBe("unreadable");
+      expect(typeErrorSource.errorClass).toBe("TypeError");
+
+      const collected500 = await collect({
+        "/internal/status/endpoints": 500,
+      });
+      const source500 = collected500.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(source500.state).toBe("unavailable");
+      expect(source500.reason).toBe("unreadable");
+      expect(source500.errorClass).toBeNull();
+
+      const collected404 = await collect({
+        "/internal/status/endpoints": 404,
+      });
+      const source404 = collected404.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(source404.state).toBe("unavailable");
+      expect(source404.reason).toBe("missing");
+      expect(source404.errorClass).toBeNull();
+    });
+
+    it("records errorClass for JSON parsing errors", async () => {
+      const collected = await collect({
+        "/internal/status/models": "{ invalid json body",
+      });
+      const source = collected.sources.find((s) => s.path === "/internal/status/models")!;
+      expect(source.state).toBe("partial");
+      expect(source.reason).toBe("malformed");
+      expect(source.errorClass).toBe("SyntaxError");
+    });
+
+    it("records errorClass for builder exceptions distinguishing programming bugs from malformed data", async () => {
+      const endpoints = JSON.parse(fixture("endpoints.json"));
+      endpoints.endpoints[1].request_count = "not a number";
+      const collected = await collect({ "/internal/status/endpoints": JSON.stringify(endpoints) });
+      const source = collected.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(source.state).toBe("partial");
+      expect(source.reason).toBe("malformed");
+      expect(source.errorClass).toBe("Error");
+    });
+
+    it("preserves errorClass null on available and dependency sources", async () => {
+      const collected = await collect();
+      for (const source of collected.sources) {
+        expect(source.state).toBe("available");
+        expect(source.errorClass).toBeNull();
+      }
+
+      const status = JSON.parse(fixture("status.json"));
+      delete status.system.start_time;
+      const collectedDep = await collect({ "/internal/status": JSON.stringify(status) });
+      const depSource = collectedDep.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(depSource.state).toBe("partial");
+      expect(depSource.reason).toBe("dependency");
+      expect(depSource.errorClass).toBeNull();
     });
   });
 });
