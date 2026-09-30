@@ -51,6 +51,8 @@ export interface CodexExperimentReport {
     measuredSubscriptionQuota: false;
   };
   complete: boolean;
+  /** Rollout files that exist but could not be read; their volume is unknown. */
+  skippedRollouts: number;
   experiments: CodexExperimentResult[];
 }
 
@@ -155,6 +157,7 @@ function modelResult(
 export function codexExperimentReport(
   allEvents: ProviderEvent[],
   manifest: CodexExperimentManifest,
+  skippedRollouts = 0,
 ): CodexExperimentReport {
   const experiments = Object.entries(manifest.experiments).map(([rootThreadId, experiment]) => {
     const baseline = new Set(experiment.baselineEventIds ?? []);
@@ -205,7 +208,9 @@ export function codexExperimentReport(
       derived: true,
       measuredSubscriptionQuota: false,
     },
-    complete: experiments.every((experiment) => experiment.integrity === "ok"),
+    complete: skippedRollouts === 0
+      && experiments.every((experiment) => experiment.integrity === "ok"),
+    skippedRollouts,
     experiments,
   };
 }
@@ -215,6 +220,9 @@ export function renderCodexExperimentReport(report: CodexExperimentReport): stri
     "Codex root-task experiments",
     `normalized weights: ${report.normalization.version} (derived, not measured subscription quota)`,
   ];
+  if (report.skippedRollouts > 0) {
+    lines.push(`incomplete: ${report.skippedRollouts} rollout file(s) could not be read; any experiment may be missing usage`);
+  }
   for (const experiment of report.experiments) {
     lines.push("", `${experiment.strategy}  root ${experiment.rootThreadId}`);
     lines.push(`protocol: fresh_context=${experiment.protocol.freshContext} fork_turns=${experiment.protocol.forkTurns} acceptance_test=${experiment.protocol.acceptanceTest}`);

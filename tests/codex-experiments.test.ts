@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { readFileSync } from "fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 import { readCodexExperimentManifest } from "@/codex-experiments";
 import { codexEvents, codexEventsFromRollout } from "@/providers/codex";
@@ -199,6 +200,13 @@ describe("Codex root-task experiments", () => {
     expect(renderCodexExperimentReport(report)).toContain("integrity=missing-root");
   });
 
+  it("withholds completeness and says so when rollouts could not be read", () => {
+    const report = codexExperimentReport(codexEvents(CODEX_HOME).events, readCodexExperimentManifest(MANIFEST), 2);
+    expect(report.skippedRollouts).toBe(2);
+    expect(report.complete).toBe(false);
+    expect(renderCodexExperimentReport(report)).toContain("2 rollout file(s) could not be read");
+  });
+
   it("rejects reversed or invalid official meter timestamps", () => {
     const invalid = join(FX, "codex-experiment-manifest-invalid-meter.json");
     expect(() => readCodexExperimentManifest(invalid)).toThrow("after.capturedAt must be later than before.capturedAt");
@@ -206,6 +214,38 @@ describe("Codex root-task experiments", () => {
 });
 
 describe("--codex-experiment production CLI path", () => {
+  it("reports unreadable rollouts in the JSON and withholds completeness", () => {
+    const home = mkdtempSync(join(tmpdir(), "codex-skip-"));
+    try {
+      const sessions = join(home, ".codex", "sessions");
+      mkdirSync(sessions, { recursive: true });
+      copyFileSync(join(CODEX_HOME, ".codex", "sessions", "root-sol.jsonl"), join(sessions, "root-sol.jsonl"));
+      const unreadable = join(sessions, "unreadable.jsonl");
+      writeFileSync(unreadable, "{}\n");
+      chmodSync(unreadable, 0o000);
+      const manifest = join(home, "manifest.json");
+      const parsedManifest = JSON.parse(readFileSync(MANIFEST, "utf8"));
+      parsedManifest.experiments = { "root-sol": parsedManifest.experiments["root-sol"] };
+      writeFileSync(manifest, JSON.stringify(parsedManifest));
+      const proc = Bun.spawnSync([
+        "bun", join(ROOT, "src", "cli.ts"), "--codex-experiment", manifest, "--json",
+      ], {
+        cwd: ROOT,
+        env: { ...process.env, TOKEN_SCOPE_CODEX_HOME: home },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(proc.exitCode).toBe(0);
+      const parsed = JSON.parse(proc.stdout.toString());
+      expect(parsed.skippedRollouts).toBe(1);
+      expect(parsed.complete).toBe(false);
+      expect(parsed.experiments[0].integrity).toBe("ok");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+
   it("renders the persisted comparison as JSON", () => {
     const proc = Bun.spawnSync([
       "bun", join(ROOT, "src", "cli.ts"), "--codex-experiment", MANIFEST, "--json",

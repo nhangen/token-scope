@@ -506,7 +506,7 @@ async function main() {
     const { codexExperimentReport, renderCodexExperimentReport } = await import("@/reports/codex-experiments");
     const manifest = readCodexExperimentManifest(args.codexExperimentManifest!);
     const collected = codexEvents(process.env.TOKEN_SCOPE_CODEX_HOME ?? homedir());
-    const report = codexExperimentReport(collected.events, manifest);
+    const report = codexExperimentReport(collected.events, manifest, collected.skipped);
     if (args.json) process.stdout.write(JSON.stringify(report) + "\n");
     else process.stdout.write(renderCodexExperimentReport(report) + "\n");
     if (collected.skipped > 0) {
