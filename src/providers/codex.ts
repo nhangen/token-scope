@@ -183,6 +183,7 @@ export function codexEventsFromRollout(
   provenance: string,
 ): ProviderEvent[] {
   let meta: any = null;
+  let historyStart: number | null = null;
   let model: string | null = null;
   let effort: string | null = null;
   let previousCumulative: string | null = null;
@@ -205,13 +206,20 @@ export function codexEventsFromRollout(
     const recordKey = useOrdinal ? `ordinal-${rec.ordinal}` : `line-${lineIndex}`;
     // Forked children also carry the parent's session_meta after their own;
     // the first one identifies this rollout.
-    if (rec.type === "session_meta" && meta === null) meta = rec.payload ?? null;
+    if (rec.type === "session_meta" && meta === null) {
+      meta = rec.payload ?? null;
+      if (validOrdinal(meta?.subagent_history_start_ordinal)) historyStart = meta.subagent_history_start_ordinal;
+    }
+    // A forked child replays its parent's records below this ordinal; that
+    // usage belongs to the parent's rollout and is counted there.
+    const replayed = historyStart !== null && validOrdinal(rec.ordinal) && rec.ordinal < historyStart;
     const p = rec.payload ?? rec;
     if (rec.type === "turn_context" || p?.type === "turn_context") {
       model = typeof p?.model === "string" && p.model ? p.model : null;
       effort = typeof p?.effort === "string" && p.effort ? p.effort : null;
     }
     if (p?.type === "turn_aborted") {
+      if (replayed) continue;
       const last = events[events.length - 1] ?? legacyCandidate;
       if (last) {
         last.status = "incomplete";
@@ -239,6 +247,7 @@ export function codexEventsFromRollout(
     const usage = disjointUsage(raw);
     if (repeatedSnapshot && usage.malformed.length === 0) continue;
     if (!hasUsage(raw, usage)) continue;
+    if (replayed) continue;
 
     const event: ProviderEvent = {
       eventId: stableId("codex", provenance, recordKey),

@@ -60,7 +60,9 @@ describe("Codex root-task experiments", () => {
     expect(thread("/root/a/b", 2)).toEqual({ threadId: "child", role: "subagent", parentThreadId: "root", depth: 2, agentPath: ["a", "b"] });
     expect(thread("/root/a/b", 1)?.role).toBe("unknown");
     expect(thread("/root/a/b", 1)?.claimedParentThreadId).toBe("root");
+    expect(thread("/other/a")?.role).toBe("unknown");
     expect(thread(42)?.role).toBe("unknown");
+    expect(thread(null, 0)).toMatchObject({ role: "unknown", claimedParentThreadId: "root" });
   });
 
   it("reports children that claim the root but fail ancestry validation", () => {
@@ -93,6 +95,16 @@ describe("Codex root-task experiments", () => {
     const [unrelated] = codexExperimentReport(events, manifest).experiments;
     expect(unrelated!.events).toBe(2);
     expect(unrelated!.integrity).toBe("ok");
+  });
+
+  it("does not count a forked child's replayed parent history as its own usage", () => {
+    const { events } = codexEvents(CODEX_HOME);
+    const forked = events.filter((event) => event.provenance.endsWith("forked-child.jsonl"));
+    expect(forked.map((event) => [event.inputTokens, event.reasoningEffort])).toEqual([[20, "medium"]]);
+    const manifest = readCodexExperimentManifest(MANIFEST);
+    manifest.experiments = { "root-unrelated": manifest.experiments["root-sol"]! };
+    const [unrelated] = codexExperimentReport(events, manifest).experiments;
+    expect(unrelated!.models.reduce((sum, row) => sum + row.rawTokens.uncachedInput, 0)).toBe(999 + 20);
   });
 
   it("keeps malformed ancestry unknown and unattached", () => {
