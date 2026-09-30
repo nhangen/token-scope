@@ -437,9 +437,18 @@ function hasCompleteScope(value: Record<string, unknown>): boolean {
     && ![...scope.hostIds].some((hostId) => hostId.startsWith("runtime:"));
 }
 
+const PARTIAL_REASON_RANK: Partial<Record<NonNullable<OrcaSourceReason>, number>> = {
+  partial_records: 1,
+  malformed: 2,
+  privacy: 3,
+};
+
+// A later, milder fault must not hide a privacy rejection from the observation.
 function markPartial(source: OrcaSourceObservation, reason: OrcaSourceReason): void {
   source.state = "partial";
-  source.reason = reason;
+  const current = source.reason === null ? 0 : PARTIAL_REASON_RANK[source.reason] ?? 0;
+  const next = reason === null ? 0 : PARTIAL_REASON_RANK[reason] ?? 0;
+  if (next >= current) source.reason = reason;
   source.provenance.completeness = "partial";
 }
 

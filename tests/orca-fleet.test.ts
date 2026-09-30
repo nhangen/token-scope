@@ -475,6 +475,27 @@ describe("Orca fleet placement adapter", () => {
     });
   });
 
+  it("keeps a privacy rejection visible when a later row is only partial", async () => {
+    const source = fixture("local.json");
+    const terminals = source.terminals.result;
+    const clean = terminals.terminals[0];
+    terminals.terminals = [
+      { ...clean, handle: "term?token=FAKE_EXAMPLE" },
+      { ...clean, handle: "term-other", executionHostId: undefined },
+    ];
+    terminals.totalCount = 2;
+    const collected = await collectOrcaPlacement({
+      collectedAt: COLLECTED_AT,
+      runner: fixtureRunner(source).runner,
+    });
+
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      command: "orca terminal list --json",
+      state: "partial",
+      reason: "privacy",
+    }));
+  });
+
   it("keeps execution-host identity stable across Orca runtime restarts", async () => {
     const source = fixture("local.json");
     const restart = fixture("restart.json");
