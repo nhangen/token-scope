@@ -94,15 +94,16 @@ describe("fleet schema v1 contract", () => {
   it("rejects unqualified identifiers and non-canonical timestamps", () => {
     expect(() => parseFleetRecord({ ...fixture.usage_event, schema_version: "2.0" }))
       .toThrow("unsupported fleet schema version");
-    expect(() => parseFleetRecord({ ...fixture.usage_event, run_id: "run-3" })).toThrow();
+    expect(() => parseFleetRecord({ ...fixture.usage_event, run_id: "run-3" }))
+      .toThrow("run_id must be source-qualified");
     expect(() => parseFleetRecord({
       ...fixture.usage_event,
       timestamp: "2026-02-31T14:02:03.456Z",
-    })).toThrow();
+    })).toThrow("timestamp must be a valid timestamp");
     expect(() => parseFleetRecord({
       ...fixture.usage_event,
       timestamp: "2026-09-22T10:02:03-04:00",
-    })).toThrow();
+    })).toThrow("timestamp must be an RFC 3339 UTC timestamp");
   });
 
   it("surfaces matched, unmatched, and ambiguous joins without attribution guesses", () => {
@@ -202,5 +203,72 @@ describe("fleet schema v1 contract", () => {
       .toThrow("provenance.locator cannot contain credential query parameters");
     const plain = parseFleetRecord(withLocator("http://ml1/metrics?window=5m"));
     expect(plain.provenance.locator).toBe("http://ml1/metrics?window=5m");
+  });
+
+  it("rejects unsupported and missing envelope fields", () => {
+    expect(() => parseFleetRecord({ ...fixture.usage_event, cost_usd: 1 }))
+      .toThrow("usage event has unsupported or missing fields");
+    const { model: _model, ...withoutModel } = fixture.usage_event;
+    expect(() => parseFleetRecord(withoutModel))
+      .toThrow("usage event has unsupported or missing fields");
+    expect(() => parseFleetRecord({
+      ...fixture.usage_event,
+      usage: { ...fixture.usage_event.usage, total_tokens: 144 },
+    })).toThrow("usage has unsupported or missing fields");
+  });
+
+  it("rejects empty, inverted, and future-ending snapshot windows", () => {
+    const withWindow = (start: string, end: string) => ({
+      ...fixture.operational_snapshot,
+      window: { start, end },
+    });
+    const message = "snapshot window must be non-empty and end no later than timestamp";
+    expect(() => parseFleetRecord(withWindow("2026-09-22T14:00:00.000Z", "2026-09-22T14:00:00.000Z")))
+      .toThrow(message);
+    expect(() => parseFleetRecord(withWindow("2026-09-22T14:01:00.000Z", "2026-09-22T14:00:00.000Z")))
+      .toThrow(message);
+    expect(() => parseFleetRecord(withWindow("2026-09-22T14:00:00.000Z", "2026-09-22T14:05:00.001Z")))
+      .toThrow(message);
+  });
+
+  it("does not join an event outside the snapshot window or without a timestamp", () => {
+    expect(joinUsageToSnapshots({ ...usage, timestamp: "2026-09-22T13:59:59.999Z" }, [snapshot]))
+      .toEqual({ state: "unmatched", key: null, snapshot: null });
+    expect(joinUsageToSnapshots({ ...usage, timestamp: null }, [snapshot]))
+      .toEqual({ state: "unmatched", key: null, snapshot: null });
+  });
+
+  it("prefers request_id over run_id and never falls through an ambiguous level", () => {
+    const byRequest = { ...snapshot, record_id: "olla:snapshot:req", request_id: "openai:req-7", run_id: null };
+    expect(joinUsageToSnapshots(usage, [snapshot, byRequest])).toEqual({
+      state: "matched",
+      key: "request_id=openai:req-7",
+      snapshot: byRequest,
+    });
+    const secondByRequest = { ...byRequest, record_id: "olla:snapshot:req-2" };
+    expect(joinUsageToSnapshots(usage, [snapshot, byRequest, secondByRequest])).toEqual({
+      state: "ambiguous",
+      key: "request_id=openai:req-7",
+      snapshot: null,
+    });
+  });
+
+  it("reports unknown freshness for a missing threshold or a future snapshot", () => {
+    expect(classifySnapshotFreshness({ ...snapshot, stale_after_ms: null }, "2026-09-22T14:05:30.000Z"))
+      .toBe("unknown");
+    expect(classifySnapshotFreshness(snapshot, "2026-09-22T14:04:59.999Z")).toBe("unknown");
+    expect(() => classifySnapshotFreshness(snapshot, "not-a-time"))
+      .toThrow("evaluatedAt must be an RFC 3339 UTC timestamp");
+  });
+
+  it("keeps counter deltas unavailable without process identity and prefers restart over reset", () => {
+    const next = { ...snapshot, counters: { requests: 25, errors: null } };
+    expect(snapshotCounterDelta(snapshot, { ...next, process_id: null }, "requests"))
+      .toEqual({ state: "unavailable", value: null });
+    expect(snapshotCounterDelta(
+      snapshot,
+      { ...next, process_id: "olla:ml1:pid-43", counters: { requests: 2 } },
+      "requests",
+    )).toEqual({ state: "restart", value: null });
   });
 });
