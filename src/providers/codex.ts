@@ -267,7 +267,17 @@ export function codexEventsFromRollout(
       usageSource: hasLastUsage ? "response" : "legacy-cumulative",
     };
     if (hasLastUsage) events.push(event);
-    else if (!sawLastUsage) {
+    else if (sawLastUsage) {
+      // A cumulative total after per-response records overlaps usage already
+      // counted, so none of its classes can be attributed to this response.
+      event.inputTokens = null;
+      event.outputTokens = null;
+      event.cacheReadTokens = null;
+      event.cacheWriteTokens = null;
+      event.reasoningTokens = null;
+      event.partial = [...new Set([...(event.partial ?? []), "mixed_schema"])].sort();
+      events.push(event);
+    } else {
       event.model = "unknown";
       event.reasoningEffort = "unknown";
       legacyCandidate = event;

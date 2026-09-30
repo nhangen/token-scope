@@ -344,6 +344,23 @@ describe("codex adapter", () => {
     expect(json.measured).toBe(false);
   });
 
+  it("keeps a cumulative-only record after per-response records as an unmeasured observation", () => {
+    const text = [
+      JSON.stringify({ type: "session_meta", payload: { id: "suffix", model_provider: "openai", source: "vscode" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "high" } }),
+      JSON.stringify({ ordinal: 2, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 5, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 }, total_token_usage: { input_tokens: 5, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } } } }),
+      JSON.stringify({ ordinal: 3, type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 50, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 9, reasoning_output_tokens: 0 } } } }),
+    ].join("\n");
+    const events = codexEventsFromRollout(text, "suffix.jsonl");
+    expect(events).toHaveLength(2);
+    expect(events[1]!.partial).toContain("mixed_schema");
+    expect(events[1]!.inputTokens).toBeNull();
+    expect(events[1]!.outputTokens).toBeNull();
+    const rows = providerRows({ events, unavailable: [], partial: {} });
+    expect(rows[0]!.input).toBe(5);
+    expect(providerReportJson(rows, []).measured).toBe(false);
+  });
+
   it("marks usage before any turn_context, or without an effort, as partially attributed", () => {
     const usage = (ordinal: number, total: number) => JSON.stringify({ ordinal, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 }, total_token_usage: { input_tokens: total, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: total, reasoning_output_tokens: 0 } } } });
     const text = [
