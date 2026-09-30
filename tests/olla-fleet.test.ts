@@ -116,7 +116,7 @@ describe("Olla fleet telemetry adapter", () => {
 
   it("ingests endpoint/model health, counters, latency, and sanitized routing metadata", async () => {
     const collected = await collect();
-    expect(collected.snapshots.length).toBeGreaterThan(5);
+    expect(collected.snapshots).toHaveLength(12);
     for (const record of collected.snapshots) expect(parseFleetRecord(record)).toEqual(record);
 
     const system = snapshot(collected, "system");
@@ -226,7 +226,7 @@ describe("Olla fleet telemetry adapter", () => {
     ]));
     for (const source of collected.sources) {
       expect(source.provenance.collected_at).toBe(COLLECTED_AT);
-      expect(source.provenance.locator).toContain(source.path);
+      expect(source.provenance.locator).toBe(`http://router.local:40114${source.path}`);
     }
   });
 
@@ -412,8 +412,8 @@ describe("Olla fleet telemetry adapter", () => {
     it(`rejects credential assignments in ${privacyCase.label} before persistence`, async () => {
       const result = collect({}, { observedRoutes: [privacyCase.route] });
       await expect(result).rejects.toThrow("credential-like label value rejected");
-      await result.catch((error) => {
-        expect(JSON.stringify(error)).not.toContain(privacyCase.secret);
+      await result.catch((error: Error) => {
+        expect(`${error.message}\n${error.stack ?? ""}`).not.toContain(privacyCase.secret);
       });
     });
   }
@@ -546,5 +546,163 @@ describe("Olla fleet telemetry adapter", () => {
         expect.objectContaining({ source: "olla-metrics" }),
     ]));
     expect(result.provenance).toHaveLength(2);
+  });
+
+  const FAKE_SECRET = "FAKE-EXAMPLE-TOKEN";
+  const credentialForms: Array<[string, string]> = [
+    ["prefixed secret name", `ep-client_secret=${FAKE_SECRET}`],
+    ["prefixed token name", `svc-refresh_token=${FAKE_SECRET}`],
+    ["header-style name", `x-api-key: ${FAKE_SECRET}`],
+    ["comma-joined name", `a,token=${FAKE_SECRET}`],
+    ["percent-encoded assignment", `token%3D${FAKE_SECRET}`],
+    ["double-encoded assignment", `token%253D${FAKE_SECRET}`],
+    ["control-character split name", `tok\u0001en=${FAKE_SECRET}`],
+    ["encoded bearer scheme", `Bearer%2520${FAKE_SECRET}`],
+    ["matrix session parameter", `svc;jsessionid=${FAKE_SECRET}`],
+    ["spaced assignment", `token = ${FAKE_SECRET}`],
+    ["assignment still encoded after three decodes", `token%2525253D${FAKE_SECRET}`],
+    ["embedded URL userinfo", `see http://reader:${FAKE_SECRET}@ml1`],
+    ["scheme-less userinfo", `reader:${FAKE_SECRET}@ml1`],
+    ["unspaced digit-leading value", `api_key:3fa85f64-${FAKE_SECRET}`],
+  ];
+
+  function endpointsWith(change: (endpoint: Record<string, unknown>) => void): string {
+    const endpoints = JSON.parse(fixture("endpoints.json"));
+    change(endpoints.endpoints[0]);
+    return JSON.stringify(endpoints);
+  }
+
+  function expectPrivacyRejected(collected: OllaTelemetryCollection, path: string, label: string): void {
+    expect(collected.sources, label).toContainEqual(expect.objectContaining({ path, state: "partial", reason: "privacy" }));
+    expect(JSON.stringify(collected), label).not.toContain(FAKE_SECRET);
+  }
+
+  for (const [label, value] of credentialForms) {
+    it(`rejects a ${label} in every persisted source string`, async () => {
+      expectPrivacyRejected(await collect({
+        "/internal/status/endpoints": endpointsWith((endpoint) => { endpoint.name = value; }),
+      }), "/internal/status/endpoints", `endpoint name: ${label}`);
+      expectPrivacyRejected(await collect({
+        "/internal/status/endpoints": endpointsWith((endpoint) => { endpoint.url = `http://ml1:5080/v1/${value}`; }),
+      }), "/internal/status/endpoints", `endpoint URL path: ${label}`);
+      expectPrivacyRejected(await collect({
+        "/internal/metrics": `olla_model_requests_total{model="${value}"} 1\n`,
+      }), "/internal/metrics", `Prometheus model label: ${label}`);
+      const stats = JSON.parse(fixture("model-stats.json"));
+      stats.models[0].endpoint_breakdown = { [value]: stats.models[0].endpoint_breakdown["ml1-5080"] };
+      const statsPath = "/internal/stats/models?include_endpoints=true&include_summary=true";
+      expectPrivacyRejected(
+        await collect({ [statsPath]: JSON.stringify(stats) }),
+        statsPath,
+        `endpoint breakdown key: ${label}`,
+      );
+      const route = collect({}, { observedRoutes: [{ runId: `codex:${value}`, endpointId: "ml1-id" }] });
+      await expect(route, `route run ID: ${label}`).rejects.toThrow("credential-like label value rejected");
+    });
+  }
+
+  it("keeps telemetry names that merely contain token words", async () => {
+    const collected = await collect({
+      "/internal/metrics": 'olla_model_requests_total{model="tokenizer-max_tokens:8b"} 1\n',
+    });
+    expect(snapshot(collected, "metrics_model", "tokenizer-max_tokens:8b").counters.requests).toBe(1);
+  });
+
+  it("does not echo an unparseable base URL in the thrown error", async () => {
+    const error = await collect({}, { baseUrl: `not a url ${FAKE_SECRET}` }).catch((caught: Error) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(`${(error as Error).message}\n${(error as Error).stack ?? ""}`).not.toContain(FAKE_SECRET);
+  });
+
+  it("rolls back every snapshot and endpoint lookup from a source rejected mid-way", async () => {
+    const endpoints = JSON.parse(fixture("endpoints.json"));
+    endpoints.endpoints[1].request_count = "not a number";
+    const collected = await collect({ "/internal/status/endpoints": JSON.stringify(endpoints) });
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      path: "/internal/status/endpoints",
+      state: "partial",
+      reason: "malformed",
+    }));
+    expect(collected.snapshots.some((record) => collected.metadata[record.record_id]?.scope === "endpoint"))
+      .toBe(false);
+    const enriched = collected.snapshots.filter((record) =>
+      collected.metadata[record.record_id]?.endpoint !== null || record.backend_host !== null
+    );
+    expect(enriched).toEqual([]);
+  });
+
+  it("keeps endpoint health unknown instead of measuring zero when status is missing", async () => {
+    const collected = await collect({
+      "/internal/status/endpoints": endpointsWith((endpoint) => { delete endpoint.status; }),
+    });
+    const endpoint = snapshot(collected, "endpoint", "ml1-id");
+    expect(endpoint.status).toBe("unknown");
+    expect(endpoint.counters.health_up).toBeNull();
+  });
+
+  it("leaves endpoint disappearance unknown without a valid previous endpoint source", async () => {
+    expect((await collect()).endpointChanges.disappeared).toBeNull();
+    const previous = await collect({ "/internal/status/endpoints": 404 });
+    expect((await collect({}, { previous })).endpointChanges.disappeared).toBeNull();
+  });
+
+  it("reports metric health only where an up gauge measured it", async () => {
+    const collected = await collect();
+    expect(snapshot(collected, "metrics_model", "qwen3.8:27b").status).toBe("unknown");
+    expect(snapshot(collected, "metrics").status).toBe("unknown");
+    expect(snapshot(collected, "metrics_endpoint", "ml1-id").status).toBe("ok");
+    expect(snapshot(collected, "metrics_endpoint", "ml2-id").status).toBe("error");
+  });
+
+  it("marks a metric whose family does not match its labels malformed instead of renaming it", async () => {
+    const collected = await collect({
+      "/internal/metrics": 'olla_requests_total{endpoint="ml1-5080"} 7\n',
+    });
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      path: "/internal/metrics",
+      state: "partial",
+      reason: "malformed",
+    }));
+  });
+
+  it("marks every other source dependency-partial when the status source has no process start", async () => {
+    const status = JSON.parse(fixture("status.json"));
+    delete status.system.start_time;
+    const collected = await collect({ "/internal/status": JSON.stringify(status) });
+    expect(collected.snapshots).toHaveLength(0);
+    for (const source of collected.sources.filter((candidate) => candidate.path !== "/internal/status")) {
+      expect(source, source.path).toMatchObject({ state: "partial", reason: "dependency" });
+    }
+  });
+
+  it("marks non-numeric and negative Prometheus values malformed", async () => {
+    for (const body of ["olla_requests_total NaN\n", "olla_requests_total -1\n", 'olla_model_requests_total{model="a" 1\n']) {
+      const collected = await collect({ "/internal/metrics": body });
+      expect(collected.sources, body).toContainEqual(expect.objectContaining({
+        path: "/internal/metrics",
+        state: "partial",
+        reason: "malformed",
+      }));
+    }
+  });
+
+  it("keeps hosts whose name contains a credential word when a port follows", async () => {
+    const collected = await collect({
+      "/internal/status/endpoints": endpointsWith((endpoint) => { endpoint.url = "http://auth01:11434/v1"; }),
+    }, { baseUrl: "http://auth-gw:40114" });
+    expect(collected.sources.every((source) => source.state === "available")).toBe(true);
+    expect(collected.metadata[snapshot(collected, "endpoint", "ml1-id").record_id]?.endpoint?.url)
+      .toBe("http://auth01:11434/v1");
+  });
+
+  it("rejects credential-like endpoint IDs carried in a caller-supplied previous collection", async () => {
+    const previous = await collect();
+    const planted = Object.values(previous.metadata).find((metadata) => metadata.scope === "endpoint")!;
+    planted.endpoint = { ...planted.endpoint!, id: `token=${FAKE_SECRET}` };
+    const result = collect({}, { previous });
+    await expect(result).rejects.toThrow("credential-like label value rejected");
+    await result.catch((error: Error) => {
+      expect(`${error.message}\n${error.stack ?? ""}`).not.toContain(FAKE_SECRET);
+    });
   });
 });
