@@ -134,6 +134,34 @@ describe("Gemini CLI source contract", () => {
     ]);
   });
 
+  it("keeps responses recorded before a later header that carries messages", () => {
+    const parsed = geminiCliEventsFromTranscript([
+      JSON.stringify({ sessionId: "session-resumed", messages: [] }),
+      JSON.stringify({
+        id: "response-before-header",
+        timestamp: "2026-09-23T11:01:00.000Z",
+        type: "gemini",
+        model: "gemini-before-header",
+        tokens: { input: 320, output: 32, cached: 20, thoughts: 3 },
+      }),
+      JSON.stringify({
+        sessionId: "session-resumed",
+        messages: [{
+          id: "response-in-header",
+          timestamp: "2026-09-23T11:02:00.000Z",
+          type: "gemini",
+          model: "gemini-in-header",
+          tokens: { input: 110, output: 11, cached: 10, thoughts: 1 },
+        }],
+      }),
+    ].join("\n"), "resumed.jsonl");
+
+    expect(parsed.events.map((event) => [event.eventId, event.inputTokens])).toEqual([
+      ["gemini-cli:response-before-header", 300],
+      ["gemini-cli:response-in-header", 100],
+    ]);
+  });
+
   it("skips token-less gemini turns a snapshot rebuilds from history", () => {
     const parsed = geminiCliEventsFromTranscript([
       JSON.stringify({ sessionId: "session-compressed", messages: [] }),
@@ -577,6 +605,28 @@ describe("Gemini CLI measurement completeness", () => {
     expect(parsed.events.map((event) => event.partial)).toEqual([
       ["response_attribution"],
       ["response_attribution"],
+    ]);
+  });
+
+  it("marks only the token class a record leaves out", () => {
+    const record = (id: string, tokens: Record<string, number>) => JSON.stringify({
+      id,
+      timestamp: "2026-09-23T10:01:00.000Z",
+      type: "gemini",
+      model: "gemini-3-flash-preview",
+      tokens,
+    });
+    const parsed = geminiCliEventsFromTranscript([
+      JSON.stringify({ sessionId: "session-classes", messages: [] }),
+      record("missing-cached", { input: 5, output: 2, thoughts: 0 }),
+      record("missing-output", { input: 5, cached: 0, thoughts: 0 }),
+      record("missing-thoughts", { input: 5, cached: 0, output: 2 }),
+    ].join("\n"), "classes.jsonl");
+
+    expect(parsed.events.map((event) => [event.eventId, event.partial])).toEqual([
+      ["gemini-cli:missing-cached", ["input_token_classes"]],
+      ["gemini-cli:missing-output", ["output_token_classes"]],
+      ["gemini-cli:missing-thoughts", ["output_token_classes"]],
     ]);
   });
 
