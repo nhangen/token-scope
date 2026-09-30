@@ -105,11 +105,15 @@ export function collectProviderEvents(opts?: {
     unavailable.push("opencode");
   }
 
-  const gemini = geminiCliEvents(geminiRoot, sinceMs);
-  events.push(...gemini.events);
-  if (gemini.source.state === "unavailable") unavailable.push("gemini-cli");
-  if (gemini.source.state === "partial") {
-    partial["gemini-cli"] = gemini.affectedFiles;
+  try {
+    const gemini = geminiCliEvents(geminiRoot, sinceMs);
+    events.push(...gemini.events);
+    if (gemini.source.state === "unavailable") unavailable.push("gemini-cli");
+    if (gemini.source.state === "partial") {
+      partial["gemini-cli"] = gemini.affectedFiles;
+    }
+  } catch {
+    unavailable.push("gemini-cli");
   }
 
   return {
