@@ -200,9 +200,12 @@ const CREDENTIAL_PARAM_SEGMENTS = new Set([
   "authtoken",
   "bearer",
   "clientsecret",
+  "cookie",
   "credential",
   "credentials",
+  "hmac",
   "idtoken",
+  "jsessionid",
   "jwt",
   "key",
   "pass",
@@ -215,33 +218,118 @@ const CREDENTIAL_PARAM_SEGMENTS = new Set([
   "signature",
   "token",
 ]);
+// Unseparated compounds (apitoken, apikeys, privatekeypem) have no segment
+// boundary to split on, so a denylist of whole segments alone fails open on them.
+// No telemetry name contains these stems, so they match anywhere in a segment.
+const CREDENTIAL_PARAM_STEMS = [
+  "accesskey",
+  "apikey",
+  "authkey",
+  "clientsecret",
+  "credential",
+  "passphrase",
+  "passwd",
+  "password",
+  "privatekey",
+  "privkey",
+  "secretkey",
+];
+// These stems do appear inside telemetry names (max_tokens, tokenizer, secretary),
+// so they match only at the end of a segment.
+const CREDENTIAL_PARAM_SUFFIXES = ["secret", "secrets", "signature", "token"];
 
-function isCredentialParam(name: string): boolean {
-  return name
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .some((segment) => CREDENTIAL_PARAM_SEGMENTS.has(segment));
+// A token segment followed by one of these names a count or class, not a
+// credential (tokenCount, token_type) — core telemetry for a token-accounting tool.
+const TOKEN_TELEMETRY_QUALIFIERS = new Set(["budget", "count", "counts", "kind", "limit", "total", "type", "usage"]);
+
+function isCredentialSegment(segment: string, next: string | undefined): boolean {
+  if (segment === "token" && next !== undefined && TOKEN_TELEMETRY_QUALIFIERS.has(next)) return false;
+  return CREDENTIAL_PARAM_SEGMENTS.has(segment) ||
+    CREDENTIAL_PARAM_STEMS.some((stem) => segment.includes(stem)) ||
+    CREDENTIAL_PARAM_SUFFIXES.some((suffix) => segment.endsWith(suffix));
 }
 
-function locatorParams(locator: string): string[] {
-  const hashStart = locator.indexOf("#");
-  const beforeHash = hashStart === -1 ? locator : locator.slice(0, hashStart);
-  const fragment = hashStart === -1 ? "" : locator.slice(hashStart + 1);
-  const queryStart = beforeHash.indexOf("?");
-  const query = queryStart === -1 ? "" : beforeHash.slice(queryStart + 1);
-  return [
-    ...new URLSearchParams(query).keys(),
-    ...new URLSearchParams(fragment).keys(),
-  ];
+function hasCredentialSegment(name: string): boolean {
+  const segments = name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((segment) => segment.replace(/(?<!\d)\d+$/, ""));
+  return segments.some((segment, index) => isCredentialSegment(segment, segments[index + 1]));
+}
+
+// The camelCase split catches tokenValue and apiKeyId, but it also breaks a
+// mixed-case credential apart (pAssword -> p_assword), and case-insensitive
+// servers read that as the real name, so the unsplit name is checked too.
+function isCredentialParam(name: string): boolean {
+  return hasCredentialSegment(name.replace(/([a-z0-9])([A-Z])/g, "$1_$2")) ||
+    hasCredentialSegment(name);
+}
+
+// Each run of escapes decodes on its own, so one malformed % elsewhere in the
+// locator cannot drop the whole string to byte-by-byte decoding, which splits
+// UTF-8-encoded zero-width and fullwidth characters into harmless-looking bytes.
+function decodeOnce(text: string): string {
+  return text.replace(/(?:%[0-9a-f]{2})+/gi, (run) => {
+    try {
+      return decodeURIComponent(run);
+    } catch {
+      return run.replace(/%([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+    }
+  });
+}
+
+// Decoding before splitting keeps an encoded separator (%3B, %26, %2574) from
+// hiding a name; NFKD and dropping marks, format, and control characters keep
+// fullwidth letters, accents, zero-width spaces, and NUL from disguising or
+// splitting one. Cross-script lookalikes (Cyrillic о) and Hangul fillers are not
+// folded: they take deliberate evasion, not accidental leakage. Returns null for
+// a locator still encoded after three passes.
+function decodeLocator(locator: string): string | null {
+  let decoded = locator;
+  for (let pass = 0; pass < 3; pass++) {
+    const next = decodeOnce(decoded);
+    if (next === decoded) break;
+    decoded = next;
+  }
+  if (decodeOnce(decoded) !== decoded) return null;
+  return decoded.normalize("NFKD").replace(/[\p{M}\p{Cc}\p{Cf}]/gu, "");
+}
+
+// Matrix params (;jsessionid=), name=value path segments, and values that embed
+// another name= all carry names, so every run ending in = counts, wherever it
+// sits. A bare name counts only where a query, fragment, or matrix param starts.
+const LOCATOR_PARAM = /(?<=(^|[\s/;?&#,|=]))([^\s/;?&#,|=]+)(=?)/g;
+
+function locatorParams(decoded: string): string[] {
+  const names: string[] = [];
+  for (const [, delimiter = "", name = "", equals = ""] of decoded.matchAll(LOCATOR_PARAM)) {
+    if (equals || (delimiter !== "" && "?&;#".includes(delimiter))) names.push(name);
+  }
+  return names;
+}
+
+// WHATWG URL parsing skips leading whitespace and control characters, treats
+// "\\" as "/", and accepts any number of slashes after a special scheme, so
+// "https:/user:pw@host" still carries userinfo the regexes alone miss.
+function hasUserinfo(locator: string): boolean {
+  const authority = locator.replace(/[\p{Cc}\p{Cf}]/gu, "").trim().replaceAll("\\", "/");
+  if (URL_USERINFO.test(authority) || BARE_USERINFO.test(authority)) return true;
+  try {
+    const url = new URL(authority);
+    return url.username !== "" || url.password !== "";
+  } catch {
+    return false;
+  }
 }
 
 function locatorValue(value: unknown): string | null {
   const locator = nullableString(value, "provenance.locator");
   if (locator === null) return null;
-  if (URL_USERINFO.test(locator) || BARE_USERINFO.test(locator)) {
+  if (hasUserinfo(locator)) {
     throw new Error("provenance.locator cannot contain URL credentials");
   }
-  if (locatorParams(locator).some(isCredentialParam)) {
+  const decoded = decodeLocator(locator);
+  if (decoded === null || locatorParams(decoded).some(isCredentialParam)) {
     throw new Error("provenance.locator cannot contain credential query parameters");
   }
   return locator;
