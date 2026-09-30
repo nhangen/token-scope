@@ -311,6 +311,7 @@ describe("fleet schema v1 contract", () => {
       "http://ml1/metrics?session_id=run-3&sessionId=run-4&keyword=k&authority=a",
       "http://ml1/metrics?model=qwen3.8:27b&q=100%",
       "http://ml1/metrics?tokenCount=1&token_limit=2&tokenBudget=3&token_usage=4&tokens_total=5",
+      "http://ml1/metrics?token_type=input&tokenKind=output",
       "C:\\Users\\n\\sessions\\run-3.jsonl",
       "C:\\Users\\n@work\\sessions\\run-3.jsonl",
       "s3://bucket/date=2026-09-22/run-3.jsonl",

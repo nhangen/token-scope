@@ -234,13 +234,13 @@ const CREDENTIAL_PARAM_STEMS = [
   "privkey",
   "secretkey",
 ];
-// These stems do appear inside telemetry names (max_tokens, tokenizer, secretary,
-// signature_version), so they match only at the end of a segment.
+// These stems do appear inside telemetry names (max_tokens, tokenizer, secretary),
+// so they match only at the end of a segment.
 const CREDENTIAL_PARAM_SUFFIXES = ["secret", "secrets", "signature", "token"];
 
-// A token segment followed by one of these names a count, not a credential
-// (tokenCount, token_limit) — core telemetry for a token-accounting tool.
-const TOKEN_TELEMETRY_QUALIFIERS = new Set(["budget", "count", "counts", "limit", "total", "usage"]);
+// A token segment followed by one of these names a count or class, not a
+// credential (tokenCount, token_type) — core telemetry for a token-accounting tool.
+const TOKEN_TELEMETRY_QUALIFIERS = new Set(["budget", "count", "counts", "kind", "limit", "total", "type", "usage"]);
 
 function isCredentialSegment(segment: string, next: string | undefined): boolean {
   if (segment === "token" && next !== undefined && TOKEN_TELEMETRY_QUALIFIERS.has(next)) return false;
@@ -281,7 +281,9 @@ function decodeOnce(text: string): string {
 // Decoding before splitting keeps an encoded separator (%3B, %26, %2574) from
 // hiding a name; NFKD and dropping marks, format, and control characters keep
 // fullwidth letters, accents, zero-width spaces, and NUL from disguising or
-// splitting one. Returns null for a locator still encoded after three passes.
+// splitting one. Cross-script lookalikes (Cyrillic о) and Hangul fillers are not
+// folded: they take deliberate evasion, not accidental leakage. Returns null for
+// a locator still encoded after three passes.
 function decodeLocator(locator: string): string | null {
   let decoded = locator;
   for (let pass = 0; pass < 3; pass++) {
