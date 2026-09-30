@@ -133,10 +133,11 @@ function modelResult(
     && malformedEvents === 0
     && partialEvents === 0
     && legacyCumulativeEvents === 0;
+  const model = events[0]!.model ?? "unknown";
   return {
-    model: events[0]!.model,
+    model,
     reasoningEffort: events[0]!.reasoningEffort ?? "unknown",
-    astraEscalation: events[0]!.model.toLowerCase().includes("astra"),
+    astraEscalation: model.toLowerCase().includes("astra"),
     events: events.length,
     rawTokens,
     partialClasses,
