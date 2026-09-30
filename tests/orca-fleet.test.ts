@@ -366,6 +366,115 @@ describe("Orca fleet placement adapter", () => {
     expect(JSON.stringify(collected)).not.toContain("ghp_");
   });
 
+  const credentialPayloads = [
+    "term?auth%3DFAKE_EXAMPLE",
+    "term?auth%253DFAKE_EXAMPLE",
+    "term?sessionToken=FAKE_EXAMPLE",
+    "term?client_secret=FAKE_EXAMPLE",
+    "term-passwd=FAKE_EXAMPLE",
+    "x-api-key: FAKE_EXAMPLE",
+    "term?ｔｏｋｅｎ=FAKE_EXAMPLE",
+    "term?to​ken=FAKE_EXAMPLE",
+    "deploy:FAKE_EXAMPLE@gpu-box",
+    "term;jsessionid=FAKE_EXAMPLE",
+    "eyJFAKEEXAMPLE.eyJFAKEEXAMPLE.sig",
+    "AKIAFAKEEXAMPLE00000",
+    "xoxb-FAKE-EXAMPLE-000",
+    "Bearer+FAKE_EXAMPLE",
+    "https://h.example/?refresh_token=FAKE_EXAMPLE",
+    "github_pat_FAKE_EXAMPLE_000000000000",
+    "glpat-FAKE-EXAMPLE-0000000000000",
+  ];
+  const credentialFields: Array<[string, string, (source: any, payload: string) => void]> = [
+    ["terminal.handle", "orca terminal list --json", (source, payload) => {
+      source.terminals.result.terminals[0].handle = payload;
+    }],
+    ["terminal.worktreeId", "orca terminal list --json", (source, payload) => {
+      source.terminals.result.terminals[0].worktreeId = payload;
+    }],
+    ["worktree.worktreeId", "orca worktree ps --json", (source, payload) => {
+      source.worktrees.result.worktrees[0].worktreeId = payload;
+    }],
+    ["host.name", "orca host list --json", (source, payload) => {
+      source.hosts.result.hosts[0].name = payload;
+    }],
+    ["host.platform", "orca host list --json", (source, payload) => {
+      source.hosts.result.hosts[0].platform = payload;
+    }],
+    ["runtime.runtimeId", "orca status --json", (source, payload) => {
+      source.status.result.runtime.runtimeId = payload;
+    }],
+    ["runtime.appVersion", "orca status --json", (source, payload) => {
+      source.status.result.runtime.appVersion = `1.4.162+${payload}`;
+    }],
+  ];
+  for (const [field, command, inject] of credentialFields) {
+    it(`rejects encoded and shaped credentials in ${field} without leaking them`, async () => {
+      for (const payload of credentialPayloads) {
+        const source = fixture("local.json");
+        inject(source, payload);
+        const collected = await collectOrcaPlacement({
+          collectedAt: COLLECTED_AT,
+          runner: fixtureRunner(source).runner,
+        });
+
+        expect({ payload, leaked: JSON.stringify(collected).includes("FAKE") })
+          .toEqual({ payload, leaked: false });
+        expect(collected.sources).toContainEqual(expect.objectContaining({
+          command,
+          state: "partial",
+          reason: "privacy",
+        }));
+      }
+    });
+  }
+
+  it("rejects an SSH host whose target embeds a credential", async () => {
+    const source = fixture("local.json");
+    const target = "deploy:FAKE_EXAMPLE@gpu-box";
+    const hostId = `ssh:${encodeURIComponent(target)}`;
+    source.hosts.result.hosts.push({ kind: "ssh", name: "gpu", id: target, platform: "linux" });
+    source.terminals.result.terminals[0].executionHostId = hostId;
+    source.terminals.result.hostScope.hostIds = ["local", hostId];
+    const collected = await collectOrcaPlacement({
+      collectedAt: COLLECTED_AT,
+      runner: fixtureRunner(source).runner,
+    });
+
+    expect(collected.records.every((record) => record.execution_host === null)).toBe(true);
+    expect(JSON.stringify(collected)).not.toContain("FAKE");
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      command: "orca host list --json",
+      reason: "privacy",
+    }));
+  });
+
+  it("checks both halves of a repoId::path worktree ID", async () => {
+    for (const worktreeId of ["token::FAKE_EXAMPLE", "repo-token::/Users/alice/x?token=FAKE_EXAMPLE"]) {
+      const source = fixture("local.json");
+      source.worktrees.result.worktrees[0].worktreeId = worktreeId;
+      source.terminals.result.terminals[0].worktreeId = worktreeId;
+      const collected = await collectOrcaPlacement({
+        collectedAt: COLLECTED_AT,
+        runner: fixtureRunner(source).runner,
+      });
+
+      expect(JSON.stringify(collected)).not.toContain("FAKE");
+    }
+  });
+
+  it("keeps a credential-named repo in a repoId::path worktree ID attributable", async () => {
+    const collected = await collectOrcaPlacement({
+      collectedAt: COLLECTED_AT,
+      runner: fixtureRunner(fixture("local.json")).runner,
+    });
+
+    expect(collected.records[0]).toMatchObject({ status: "ok" });
+    expect(Object.values(collected.metadata)[0]).toMatchObject({
+      worktreeId: "orca:repo-token::/Users/alice/token-scope",
+    });
+  });
+
   it("keeps execution-host identity stable across Orca runtime restarts", async () => {
     const source = fixture("local.json");
     const restart = fixture("restart.json");

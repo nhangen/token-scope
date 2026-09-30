@@ -1,6 +1,9 @@
 import {
+  assertSafeLabelValue,
   FLEET_SCHEMA_VERSION,
+  objectValue,
   parseFleetRecord,
+  PrivacyError,
   type FleetOperationalSnapshot,
   type FleetProvenance,
 } from "@/fleet-contract";
@@ -144,41 +147,40 @@ interface OrcaHostScope {
   omittedHostIds: Set<string>;
 }
 
-class PrivacyError extends Error {}
+// Orca worktree IDs are "<repoId>::<absolute path>". Read whole, the shared
+// check takes "repo-token:" for a header name, so each half is checked on its
+// own. A right half that is not an absolute path gets the whole-value check.
+const WORKTREE_ID = /^([^:]+)::((?:\/|[A-Za-z]:[\\/]).*)$/;
 
-const SENSITIVE_KEY = /^(?:api[_-]?key|access[_-]?token|auth(?:orization)?|credential|password|secret|token|key)$/i;
-const CREDENTIAL_VALUE = /\b(?:bearer|basic)(?:\s+|%20)\S+|(?:^|[?&#/:;\s])(?:api[_-]?key|access[_-]?token|auth(?:orization)?|credential|password|secret|token|key)\s*[:=]\s*\S+/i;
-const RAW_CREDENTIAL_VALUE = /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,})\b/i;
-
-function objectValue(value: unknown, name: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${name} must be an object`);
+function checkWorktreeId(raw: string): void {
+  const parts = WORKTREE_ID.exec(raw);
+  if (parts === null) {
+    assertSafeLabelValue(raw);
+    return;
   }
-  return value as Record<string, unknown>;
+  assertSafeLabelValue(parts[1]!);
+  assertSafeLabelValue(parts[2]!);
 }
 
 function optionalString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function safeString(value: unknown, name: string): string {
+function safeString(
+  value: unknown,
+  name: string,
+  check: (raw: string) => void = assertSafeLabelValue,
+): string {
   const raw = optionalString(value);
   if (raw === null) throw new Error(`${name} must be a non-empty string`);
-  const text = raw.replace(/[\u0000-\u001f\u007f]/g, "");
+  check(raw);
+  const text = raw.replace(/[\p{Cc}\p{Cf}]/gu, "");
   if (text.length === 0) throw new Error(`${name} must be a non-empty string`);
-  if (CREDENTIAL_VALUE.test(text) || RAW_CREDENTIAL_VALUE.test(text)) {
-    throw new PrivacyError(`${name} contains a credential-like value`);
-  }
-  try {
-    const parsed = new URL(text);
-    const sensitiveQuery = [...parsed.searchParams.keys()].some((key) => SENSITIVE_KEY.test(key));
-    if (parsed.username !== "" || parsed.password !== "" || sensitiveQuery) {
-      throw new PrivacyError(`${name} contains a credential-like URL`);
-    }
-  } catch (error) {
-    if (error instanceof PrivacyError) throw error;
-  }
   return text.slice(0, 2048);
+}
+
+function safeWorktreeId(value: unknown, name: string): string {
+  return safeString(value, name, checkWorktreeId);
 }
 
 function optionalSafeString(value: unknown, name: string): string | null {
@@ -286,7 +288,7 @@ async function loadCommand(
 }
 
 function supportedVersion(version: string): boolean {
-  return /^1\.\d+\.\d+(?:[-+].*)?$/.test(version);
+  return /^1\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version);
 }
 
 function sourceHostId(kind: OrcaHostIdentity["kind"], id: string): string {
@@ -316,8 +318,8 @@ function placementKind(sourceId: string | null): OrcaPlacementMetadata["placemen
   return "unknown";
 }
 
-function qualify(namespace: string, value: string): string {
-  return `${namespace}:${safeString(value, namespace)}`;
+function qualifyWorktree(namespace: string, value: string): string {
+  return `${namespace}:${safeWorktreeId(value, namespace)}`;
 }
 
 function parseHosts(value: Record<string, unknown>): Record<string, OrcaHostIdentity> {
@@ -356,7 +358,7 @@ function parseWorktrees(value: Record<string, unknown>): ParsedWorktrees {
   let partial = false;
   for (const candidate of value.worktrees) {
     const worktree = objectValue(candidate, "worktree");
-    const worktreeId = safeString(worktree.worktreeId, "worktree.worktreeId");
+    const worktreeId = safeWorktreeId(worktree.worktreeId, "worktree.worktreeId");
     const hostId = optionalSafeString(worktree.hostId, "worktree.hostId");
     if (hostId === null || stableHostId(hostId) === null || scopedHostIds?.has(hostId) !== true) {
       partial = true;
@@ -466,7 +468,7 @@ function addTerminalRecords(
     try {
       const terminal = objectValue(candidate, "terminal");
       const handle = safeString(terminal.handle, "terminal.handle");
-      const worktreeId = safeString(terminal.worktreeId, "terminal.worktreeId");
+      const worktreeId = safeWorktreeId(terminal.worktreeId, "terminal.worktreeId");
       const executionSourceId = optionalSafeString(terminal.executionHostId, "terminal.executionHostId");
       const executionHostCandidate = executionSourceId === null ? null : stableHostId(executionSourceId);
       const executionHostInScope = executionSourceId !== null && scopedHostIds?.has(executionSourceId) === true;
@@ -527,7 +529,7 @@ function addTerminalRecords(
         : directAgentType.value ?? (paneKey === null || worktree?.ambiguous === true || paneAmbiguous
           ? null
           : worktree?.placement.agents.get(paneKey) ?? null);
-      const worktreeQualifiedId = qualify("orca", worktreeId);
+      const worktreeQualifiedId = qualifyWorktree("orca", worktreeId);
       const incomplete = dependentSourcePartial
         || !sourceComplete
         || worktree === undefined
