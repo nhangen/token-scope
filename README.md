@@ -573,7 +573,7 @@ Snapshot counter deltas are emitted only when both values and both process IDs a
 
 ### Privacy and migration
 
-Fleet records contain metadata and measured numeric telemetry only. They must not contain prompt text, terminal content or scrollback, credentials, authorization values, raw authorization headers, or arbitrary header collections. The v1 parser rejects those fields, including when nested.
+Fleet records contain metadata and measured numeric telemetry only. They must not contain prompt text, terminal content or scrollback, credentials, authorization values, raw authorization headers, or arbitrary header collections. The v1 parser rejects fields with those names at any depth, and rejects a `provenance.locator` that embeds URL credentials or a credential-like query parameter. It does not scan other string values, so adapters must keep that content out of them.
 
 This contract does not replace `ProviderEvent` or alter `--providers`. Existing adapters and nullable token/cost behavior remain unchanged. New fleet adapters should emit v1 envelopes alongside the existing provider events where both views are supported. Historical provider records must not be upgraded by guessing host, route, request, run, or session identity; unavailable fleet fields stay null. A future schema change uses a new `schema_version` and an explicit adapter rather than changing v1 interpretation in place.
 

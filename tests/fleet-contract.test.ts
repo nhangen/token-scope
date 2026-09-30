@@ -169,4 +169,19 @@ describe("fleet schema v1 contract", () => {
       counters: { requests: 18, raw_authorization_headers: "Bearer secret" },
     })).toThrow("private field raw_authorization_headers");
   });
+
+  it("rejects credentials embedded in the provenance locator", () => {
+    const withLocator = (locator: string) => ({
+      ...fixture.operational_snapshot,
+      provenance: { ...fixture.operational_snapshot.provenance, locator },
+    });
+    expect(() => parseFleetRecord(withLocator("https://user:FAKE-EXAMPLE@ml1/metrics")))
+      .toThrow("provenance.locator cannot contain URL credentials");
+    expect(() => parseFleetRecord(withLocator("http://ml1/metrics?api_key=FAKE-EXAMPLE")))
+      .toThrow("provenance.locator cannot contain credential query parameters");
+    expect(() => parseFleetRecord(withLocator("sessions/run-3.jsonl?access_token=FAKE-EXAMPLE")))
+      .toThrow("provenance.locator cannot contain credential query parameters");
+    const plain = parseFleetRecord(withLocator("http://ml1/metrics?window=5m"));
+    expect(plain.provenance.locator).toBe("http://ml1/metrics?window=5m");
+  });
 });

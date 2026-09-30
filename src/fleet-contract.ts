@@ -186,6 +186,27 @@ function nullableTokenCount(value: unknown, name: string): number | null {
   return value;
 }
 
+const URL_USERINFO = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*@/i;
+const CREDENTIAL_QUERY_KEY = /token|key|secret|auth|sig|password|credential/i;
+
+function locatorValue(value: unknown): string | null {
+  const locator = nullableString(value, "provenance.locator");
+  if (locator === null) return null;
+  if (URL_USERINFO.test(locator)) {
+    throw new Error("provenance.locator cannot contain URL credentials");
+  }
+  const queryStart = locator.indexOf("?");
+  if (queryStart !== -1) {
+    const query = locator.slice(queryStart + 1).split("#")[0] ?? "";
+    for (const key of new URLSearchParams(query).keys()) {
+      if (CREDENTIAL_QUERY_KEY.test(key)) {
+        throw new Error("provenance.locator cannot contain credential query parameters");
+      }
+    }
+  }
+  return locator;
+}
+
 function provenanceValue(value: unknown): FleetProvenance {
   const provenance = objectValue(value, "provenance");
   assertExactKeys(provenance, ["source", "locator", "collected_at", "completeness"], "provenance");
@@ -195,7 +216,7 @@ function provenanceValue(value: unknown): FleetProvenance {
   }
   return {
     source: stringValue(provenance.source, "provenance.source"),
-    locator: nullableString(provenance.locator, "provenance.locator"),
+    locator: locatorValue(provenance.locator),
     collected_at: timestampValue(provenance.collected_at, "provenance.collected_at"),
     completeness,
   };
