@@ -78,7 +78,9 @@ function codexThread(meta: any): CodexThread {
     if (path === null) return unknownThread(threadId, parent);
     return { threadId, role: "subagent", parentThreadId: parent, depth, agentPath: path };
   }
-  return unknownThread(threadId);
+  const claimed = typeof meta?.parent_thread_id === "string" && meta.parent_thread_id
+    ? meta.parent_thread_id : undefined;
+  return unknownThread(threadId, claimed);
 }
 
 function finiteToken(value: unknown): number | null {

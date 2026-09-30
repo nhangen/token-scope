@@ -65,6 +65,21 @@ describe("Codex root-task experiments", () => {
     expect(thread(null, 0)).toMatchObject({ role: "unknown", claimedParentThreadId: "root" });
   });
 
+  it("counts a non-spawn subagent that names a selected parent as excluded", () => {
+    const text = [
+      JSON.stringify({ type: "session_meta", payload: { id: "other-child", parent_thread_id: "root-sol", source: { subagent: { other: "review" } } } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "high" } }),
+      JSON.stringify({ ordinal: 1, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 3, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } } } }),
+    ].join("\n");
+    const other = codexEventsFromRollout(text, "other.jsonl");
+    expect(other[0]!.codexThread).toMatchObject({ role: "unknown", claimedParentThreadId: "root-sol" });
+    const manifest = readCodexExperimentManifest(MANIFEST);
+    manifest.experiments = { "root-sol": manifest.experiments["root-sol"]! };
+    const [sol] = codexExperimentReport([...codexEvents(CODEX_HOME).events, ...other], manifest).experiments;
+    expect(sol!.excludedDescendantEvents).toBe(1);
+    expect(sol!.integrity).toBe("inconsistent-descendants");
+  });
+
   it("reports children that claim the root but fail ancestry validation", () => {
     const { events } = codexEvents(CODEX_HOME);
     const report = codexExperimentReport(events, readCodexExperimentManifest(MANIFEST));
