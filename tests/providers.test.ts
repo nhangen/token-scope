@@ -205,7 +205,7 @@ describe("provider model wire compatibility", () => {
 
     const codex = codexEventsFromRollout([
       JSON.stringify({ type: "session_meta", payload: { id: "missing-model", model_provider: "openai" } }),
-      JSON.stringify({ type: "event_msg", payload: { info: { total_token_usage: { input_tokens: 1, output_tokens: 1 } } } }),
+      JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 1, output_tokens: 1 } } } }),
     ].join("\n"), "codex.jsonl");
     expect(codex[0]!.model).toBe("unknown");
 
