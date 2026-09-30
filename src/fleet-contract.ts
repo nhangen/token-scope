@@ -69,7 +69,7 @@ const RECORD_STATUSES = new Set<FleetRecordStatus>([
   "unknown",
 ]);
 
-const PRIVATE_KEYS = new Set([
+export const PRIVATE_KEYS: ReadonlySet<string> = new Set([
   "authorization",
   "credential",
   "credentials",
@@ -101,7 +101,7 @@ const COMMON_KEYS = [
   "provenance",
 ] as const;
 
-function objectValue(value: unknown, name: string): Record<string, unknown> {
+export function objectValue(value: unknown, name: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`${name} must be an object`);
   }
@@ -260,7 +260,7 @@ function hasCredentialSegment(name: string): boolean {
 // The camelCase split catches tokenValue and apiKeyId, but it also breaks a
 // mixed-case credential apart (pAssword -> p_assword), and case-insensitive
 // servers read that as the real name, so the unsplit name is checked too.
-function isCredentialParam(name: string): boolean {
+export function isCredentialParam(name: string): boolean {
   return hasCredentialSegment(name.replace(/([a-z0-9])([A-Z])/g, "$1_$2")) ||
     hasCredentialSegment(name);
 }
@@ -284,7 +284,7 @@ function decodeOnce(text: string): string {
 // splitting one. Cross-script lookalikes (Cyrillic о) and Hangul fillers are not
 // folded: they take deliberate evasion, not accidental leakage. Returns null for
 // a locator still encoded after three passes.
-function decodeLocator(locator: string): string | null {
+export function decodeLocator(locator: string): string | null {
   let decoded = locator;
   for (let pass = 0; pass < 3; pass++) {
     const next = decodeOnce(decoded);
@@ -300,7 +300,7 @@ function decodeLocator(locator: string): string | null {
 // sits. A bare name counts only where a query, fragment, or matrix param starts.
 const LOCATOR_PARAM = /(?<=(^|[\s/;?&#,|=]))([^\s/;?&#,|=]+)(=?)/g;
 
-function locatorParams(decoded: string): string[] {
+export function locatorParams(decoded: string): string[] {
   const names: string[] = [];
   for (const [, delimiter = "", name = "", equals = ""] of decoded.matchAll(LOCATOR_PARAM)) {
     if (equals || (delimiter !== "" && "?&;#".includes(delimiter))) names.push(name);
@@ -311,7 +311,7 @@ function locatorParams(decoded: string): string[] {
 // WHATWG URL parsing skips leading whitespace and control characters, treats
 // "\\" as "/", and accepts any number of slashes after a special scheme, so
 // "https:/user:pw@host" still carries userinfo the regexes alone miss.
-function hasUserinfo(locator: string): boolean {
+export function hasUserinfo(locator: string): boolean {
   const authority = locator.replace(/[\p{Cc}\p{Cf}]/gu, "").trim().replaceAll("\\", "/");
   if (URL_USERINFO.test(authority) || BARE_USERINFO.test(authority)) return true;
   try {

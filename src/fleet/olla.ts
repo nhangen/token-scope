@@ -1,6 +1,12 @@
 import {
+  decodeLocator,
   FLEET_SCHEMA_VERSION,
+  hasUserinfo,
+  isCredentialParam,
+  locatorParams,
+  objectValue,
   parseFleetRecord,
+  PRIVATE_KEYS,
   type FleetOperationalSnapshot,
   type FleetProvenance,
   type FleetRecordStatus,
@@ -104,25 +110,6 @@ export type OllaRouteCorrelationResult =
 
 class PrivacyError extends Error {}
 
-const PRIVATE_KEYS = new Set([
-  "authorization",
-  "credential",
-  "credentials",
-  "headers",
-  "prompt",
-  "prompt_text",
-  "raw_authorization_headers",
-  "terminal_content",
-  "terminal_scrollback",
-]);
-
-function objectValue(value: unknown, name: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${name} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
 function arrayValue(value: unknown, name: string): unknown[] {
   if (!Array.isArray(value)) throw new Error(`${name} must be an array`);
   return value;
@@ -175,23 +162,38 @@ function safeLabel(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 256);
 }
 
+// Header-style "name: value" and spaced "name = value" pairs are not locator
+// params, so they get their own pass over the fleet contract's credential names.
+// An unspaced colon before a bare number, model size, or date is part of a
+// qualified ID (auth-gw:40114, secret-model:7b, olla:auth-gw:2026-09-22...),
+// not a name: value pair. Any other unspaced value still counts.
+const SPACED_ASSIGNMENT = new RegExp(
+  String.raw`([^\s/;?&#,|=:]+)\s*(?:=(?=\s*\S)|:(?=\s+\S|(?!\d+(?:\.\d+)*[bBkKmM]?(?:$|[\s/:?#,;&|=-]))\S))`,
+  "g",
+);
+const EMBEDDED_USERINFO = /(?:^|[\s/])[^/?#@\s:]+:[^/?#@\s]*@/;
+const BARE_CREDENTIAL = new RegExp([
+  String.raw`\b(?:bearer|basic)[\s+]+\S`,
+  String.raw`\beyJ[\w-]{8,}\.[\w-]{8,}`,
+  String.raw`(?:^|[^a-z0-9])sk-[\w-]{16,}`,
+  String.raw`\b(?:sk|rk|pk)_(?:live|test)_\w{8,}`,
+  String.raw`\bgh[pousr]_\w{20,}`,
+  String.raw`\bxox[abposr]-[\w-]{10,}`,
+  String.raw`\bAKIA[0-9A-Z]{16}\b`,
+].join("|"), "i");
+
 function assertSafeLabelValue(value: string): void {
-  if (/\b(?:bearer|basic)(?:\s+|%20)\S+/i.test(value)) {
+  const decoded = decodeLocator(value);
+  if (
+    decoded === null
+    || hasUserinfo(decoded)
+    || EMBEDDED_USERINFO.test(decoded)
+    || BARE_CREDENTIAL.test(decoded)
+    || locatorParams(decoded).some(isCredentialParam)
+    || [...decoded.matchAll(SPACED_ASSIGNMENT)]
+      .some((match) => isCredentialParam(match[1]!))
+  ) {
     throw new PrivacyError("credential-like label value rejected");
-  }
-  if (/(?:^|[?&#/:;\s])(?:api[_-]?key|access[_-]?token|auth(?:orization)?|credential|password|secret|token|key)\s*[:=]\s*\S+/i.test(value)) {
-    throw new PrivacyError("credential-like label value rejected");
-  }
-  try {
-    const parsed = new URL(value);
-    const sensitiveQuery = [...parsed.searchParams.keys()].some((key) =>
-      /^(?:api[_-]?key|access[_-]?token|auth(?:orization)?|credential|password|secret|token|key)$/i.test(key)
-    );
-    if (parsed.username !== "" || parsed.password !== "" || sensitiveQuery) {
-      throw new PrivacyError("credential-like label value rejected");
-    }
-  } catch (error) {
-    if (error instanceof PrivacyError) throw error;
   }
 }
 
@@ -225,7 +227,7 @@ function sanitizedUrl(value: unknown): { url: string | null; host: string | null
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return { url: null, host: null };
     }
-    assertSafeLabelValue(decodedUrlComponent(parsed.pathname));
+    assertSafeLabelValue(parsed.pathname);
     parsed.username = "";
     parsed.password = "";
     parsed.search = "";
@@ -237,16 +239,13 @@ function sanitizedUrl(value: unknown): { url: string | null; host: string | null
   }
 }
 
-function decodedUrlComponent(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    throw new PrivacyError("invalid encoded URL component rejected");
-  }
-}
-
 function sanitizedBaseUrl(value: string): { baseUrl: string; provenanceBaseUrl: string; host: string } {
-  const parsed = new URL(value);
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("Olla base URL is not a valid URL");
+  }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Olla base URL must use HTTP or HTTPS");
   }
@@ -254,9 +253,6 @@ function sanitizedBaseUrl(value: string): { baseUrl: string; provenanceBaseUrl: 
     throw new PrivacyError("credential-bearing Olla base URL rejected");
   }
   assertSafeLabelValue(value);
-  assertSafeLabelValue(decodedUrlComponent(parsed.pathname));
-  assertSafeLabelValue(decodedUrlComponent(parsed.search));
-  assertSafeLabelValue(decodedUrlComponent(parsed.hash));
   const provenanceBaseUrl = privateSafeLabel(parsed.origin);
   parsed.username = "";
   parsed.password = "";
@@ -308,11 +304,7 @@ function parseLatency(value: unknown): number | null {
   return amount;
 }
 
-function endpointHealth(status: string | null): FleetRecordStatus {
-  return status === "healthy" ? "ok" : status === null ? "unknown" : "error";
-}
-
-function systemHealth(status: string | null): FleetRecordStatus {
+function statusHealth(status: string | null): FleetRecordStatus {
   return status === "healthy" ? "ok" : status === null ? "unknown" : "error";
 }
 
@@ -330,7 +322,6 @@ interface AdapterContext {
   staleAfterMs: number;
   processStart: string | null;
   processId: string | null;
-  endpointById: Map<string, OllaEndpointMetadata>;
   endpointByName: Map<string, OllaEndpointMetadata[]>;
   snapshots: FleetOperationalSnapshot[];
   metadata: Record<string, OllaSnapshotMetadata>;
@@ -453,7 +444,7 @@ function buildSystem(source: LoadedSource, context: AdapterContext): void {
     scope: "system",
     identity: context.routerHost,
     timestamp,
-    health: systemHealth(optionalString(system.status)),
+    health: statusHealth(optionalString(system.status)),
     backend: engine,
     counters: {
       requests: measurement(system.total_requests, "system.total_requests"),
@@ -481,7 +472,6 @@ function buildEndpoints(source: LoadedSource, context: AdapterContext): void {
     raw: objectValue(value, "endpoint"),
   }));
   for (const { endpoint, raw } of entries) {
-    context.endpointById.set(endpoint.id, endpoint);
     const named = context.endpointByName.get(endpoint.name) ?? [];
     named.push(endpoint);
     context.endpointByName.set(endpoint.name, named);
@@ -489,11 +479,11 @@ function buildEndpoints(source: LoadedSource, context: AdapterContext): void {
       scope: "endpoint",
       identity: endpoint.id,
       timestamp,
-      health: endpointHealth(endpoint.status),
+      health: statusHealth(endpoint.status),
       backendHost: endpoint.host,
       backend: endpoint.type,
       counters: {
-        health_up: endpoint.status === "healthy" ? 1 : 0,
+        health_up: endpoint.status === null ? null : endpoint.status === "healthy" ? 1 : 0,
         requests: measurement(raw.request_count, "endpoint.request_count"),
         avg_latency_ms: optionalMeasurement(raw.avg_latency_ms),
         min_latency_ms: optionalMeasurement(raw.min_latency_ms),
@@ -603,7 +593,7 @@ function parseMetricLabels(raw: string | undefined): Record<string, string> {
     if (PRIVATE_KEYS.has(key.toLowerCase().replaceAll("-", "_"))) {
       throw new PrivacyError("private metric label rejected");
     }
-    const value = match[2]!.replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+    const value = match[2]!.replace(/\\(.)/g, (_, escaped: string) => escaped === "n" ? "\n" : escaped);
     assertSafeLabelValue(value);
     labels[key] = value;
     consumed = match.index + match[0].length;
@@ -627,6 +617,7 @@ function parsePrometheus(body: string): MetricSample[] {
 }
 
 function counterName(metric: string, prefix: string): string {
+  if (!metric.startsWith(prefix)) throw new Error("Prometheus metric family does not match its labels");
   const name = metric.slice(prefix.length).replace(/_total$/, "");
   return prefix === "olla_endpoint_" && name === "up" ? "health_up" : name;
 }
@@ -649,7 +640,14 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
     endpoint: OllaEndpointMetadata | null,
     model: string | null,
   ) => {
-    const existing = groups.get(key) ?? { scope, identity, endpoint, model, counters: {}, health: "ok" as const };
+    const existing = groups.get(key) ?? {
+      scope,
+      identity,
+      endpoint,
+      model,
+      counters: {},
+      health: "unknown" as FleetRecordStatus,
+    };
     groups.set(key, existing);
     return existing;
   };
@@ -680,7 +678,7 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
         null,
       );
       entry.counters[counterName(sample.name, "olla_endpoint_")] = sample.value;
-      if (sample.name === "olla_endpoint_up" && sample.value === 0) entry.health = "error";
+      if (sample.name === "olla_endpoint_up") entry.health = sample.value === 0 ? "error" : "ok";
       continue;
     }
     if (model !== null) {
@@ -818,7 +816,6 @@ export async function collectOllaTelemetry(
     staleAfterMs,
     processStart,
     processId: processStart === null ? null : `olla:${host}:${processStart}`,
-    endpointById: new Map(),
     endpointByName: new Map(),
     snapshots: [],
     metadata: {},
@@ -839,10 +836,12 @@ export async function collectOllaTelemetry(
     }
     const snapshotCount = context.snapshots.length;
     const metadataIds = new Set(Object.keys(context.metadata));
+    const endpointByName = new Map([...context.endpointByName].map(([name, endpoints]) => [name, [...endpoints]]));
     try {
       builder(source, context);
     } catch (error) {
       context.snapshots.splice(snapshotCount);
+      context.endpointByName = endpointByName;
       for (const id of Object.keys(context.metadata)) {
         if (!metadataIds.has(id)) delete context.metadata[id];
       }
@@ -853,15 +852,19 @@ export async function collectOllaTelemetry(
     snapshots: context.snapshots.sort((a, b) => a.record_id.localeCompare(b.record_id)),
     metadata: context.metadata,
     sources: loaded.map((source) => source.observation),
-    endpointChanges: { disappeared: [] },
+    endpointChanges: { disappeared: null },
     observedRoutes: normalizeObservedRoutes(options.observedRoutes),
   };
   if (options.previous !== undefined) {
     const endpointSource = byPath.get("/internal/status/endpoints")!;
-    if (endpointSource.observation.state === "available") {
+    const previousEndpointSource = options.previous.sources.find((source) =>
+      source.path === "/internal/status/endpoints"
+    );
+    if (endpointSource.observation.state === "available" && previousEndpointSource?.state === "available") {
       const currentIds = new Set(sourceEndpointIds(collection));
       collection.endpointChanges.disappeared = sourceEndpointIds(options.previous)
-        .filter((id) => !currentIds.has(id));
+        .filter((id) => !currentIds.has(id))
+        .map(privateSafeLabel);
     } else {
       collection.endpointChanges.disappeared = null;
     }
