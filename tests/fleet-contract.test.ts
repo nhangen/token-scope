@@ -1,0 +1,303 @@
+import { describe, expect, it } from "bun:test";
+import { readFileSync } from "fs";
+import { join } from "path";
+import {
+  FLEET_SCHEMA_VERSION,
+  classifySnapshotFreshness,
+  correlationKeys,
+  dedupeFleetRecords,
+  joinUsageToSnapshots,
+  parseFleetRecord,
+  snapshotCounterDelta,
+  usageFallsInSnapshotWindow,
+} from "@/fleet-contract";
+
+const fixture = JSON.parse(
+  readFileSync(join(import.meta.dir, "fixtures", "fleet-contract-v1.json"), "utf8"),
+);
+
+const parsedUsage = parseFleetRecord(fixture.usage_event);
+const parsedSnapshot = parseFleetRecord(fixture.operational_snapshot);
+if (parsedUsage.record_type !== "usage_event") throw new Error("wrong usage fixture type");
+if (parsedSnapshot.record_type !== "operational_snapshot") {
+  throw new Error("wrong snapshot fixture type");
+}
+
+describe("fleet schema v1 contract", () => {
+  const usage = parsedUsage;
+  const snapshot = parsedSnapshot;
+
+  it("distinguishes a request event from an aggregate snapshot", () => {
+    expect(FLEET_SCHEMA_VERSION).toBe("1.0");
+    expect(usage.record_type).toBe("usage_event");
+    expect(snapshot.record_type).toBe("operational_snapshot");
+    expect(usage.usage.cache_read_tokens).toBeNull();
+    expect(usage.usage.cash_charge_usd).toBeNull();
+    expect(snapshot.counters.errors).toBeNull();
+    expect(snapshot.status).toBe("partial");
+  });
+
+  it("requires snapshot status to agree with partial provenance", () => {
+    expect(() => parseFleetRecord({
+      ...fixture.operational_snapshot,
+      status: "ok",
+    })).toThrow("snapshot status and provenance completeness must agree");
+    expect(() => parseFleetRecord({
+      ...fixture.operational_snapshot,
+      status: "partial",
+      provenance: { ...fixture.operational_snapshot.provenance, completeness: "complete" },
+    })).toThrow("snapshot status and provenance completeness must agree");
+  });
+
+  it("requires integer token counts while retaining decimal cash costs", () => {
+    expect(() => parseFleetRecord({
+      ...fixture.usage_event,
+      usage: { ...fixture.usage_event.usage, input_tokens: 1.5 },
+    })).toThrow("usage.input_tokens must be a non-negative integer or null");
+
+    const withDecimalCost = parseFleetRecord({
+      ...fixture.usage_event,
+      usage: { ...fixture.usage_event.usage, cash_charge_usd: 0.0125 },
+    });
+    if (withDecimalCost.record_type !== "usage_event") throw new Error("wrong fixture type");
+    expect(withDecimalCost.usage.cash_charge_usd).toBe(0.0125);
+  });
+
+  it("orders counter names by code unit, independent of locale", () => {
+    const parsed = parseFleetRecord({
+      ...fixture.operational_snapshot,
+      counters: { a: 1, B: 2 },
+    });
+    if (parsed.record_type !== "operational_snapshot") throw new Error("wrong fixture type");
+    expect(Object.keys(parsed.counters)).toEqual(["B", "a"]);
+  });
+
+  it("requires an integer stale threshold", () => {
+    expect(() => parseFleetRecord({ ...fixture.operational_snapshot, stale_after_ms: 1.5 }))
+      .toThrow("stale_after_ms must be a non-negative integer or null");
+  });
+
+  it("uses deterministic qualified join keys and half-open snapshot windows", () => {
+    expect(correlationKeys(usage)).toEqual([
+      "request_id=openai:req-7",
+      "run_id=codex:run-3",
+      "session_id=codex:session-2",
+    ]);
+    expect(correlationKeys(snapshot)).toEqual(["run_id=codex:run-3"]);
+    expect(usageFallsInSnapshotWindow(usage, snapshot)).toBe(true);
+
+    const atEnd = { ...usage, timestamp: snapshot.window.end };
+    expect(usageFallsInSnapshotWindow(atEnd, snapshot)).toBe(false);
+    expect(usageFallsInSnapshotWindow({ ...usage, timestamp: null }, snapshot)).toBeNull();
+  });
+
+  it("rejects unqualified identifiers and non-canonical timestamps", () => {
+    expect(() => parseFleetRecord({ ...fixture.usage_event, schema_version: "2.0" }))
+      .toThrow("unsupported fleet schema version");
+    expect(() => parseFleetRecord({ ...fixture.usage_event, run_id: "run-3" }))
+      .toThrow("run_id must be source-qualified");
+    expect(() => parseFleetRecord({
+      ...fixture.usage_event,
+      timestamp: "2026-02-31T14:02:03.456Z",
+    })).toThrow("timestamp must be a valid timestamp");
+    expect(() => parseFleetRecord({
+      ...fixture.usage_event,
+      timestamp: "2026-09-22T10:02:03-04:00",
+    })).toThrow("timestamp must be an RFC 3339 UTC timestamp");
+  });
+
+  it("surfaces matched, unmatched, and ambiguous joins without attribution guesses", () => {
+    expect(joinUsageToSnapshots(usage, [snapshot])).toEqual({
+      state: "matched",
+      key: "run_id=codex:run-3",
+      snapshot,
+    });
+    expect(joinUsageToSnapshots({ ...usage, run_id: null }, [snapshot])).toEqual({
+      state: "unmatched",
+      key: null,
+      snapshot: null,
+    });
+    expect(joinUsageToSnapshots(usage, [snapshot, { ...snapshot, record_id: "olla:snapshot:2" }])).toEqual({
+      state: "ambiguous",
+      key: "run_id=codex:run-3",
+      snapshot: null,
+    });
+  });
+
+  it("deduplicates identical records but surfaces record-id collisions", () => {
+    expect(dedupeFleetRecords([usage, snapshot, usage])).toEqual({
+      records: [snapshot, usage],
+      conflicts: [],
+    });
+    const reordered = Object.fromEntries(Object.entries(usage).reverse()) as typeof usage;
+    expect(dedupeFleetRecords([usage, reordered])).toEqual({
+      records: [usage],
+      conflicts: [],
+    });
+    const conflict = { ...usage, model: "different-model" };
+    expect(dedupeFleetRecords([usage, conflict])).toEqual({
+      records: [],
+      conflicts: [usage.record_id],
+    });
+  });
+
+  it("makes stale, restart, reset, and unavailable counter states explicit", () => {
+    expect(classifySnapshotFreshness(snapshot, "2026-09-22T14:06:00.000Z")).toBe("current");
+    expect(classifySnapshotFreshness(snapshot, "2026-09-22T14:06:00.001Z")).toBe("stale");
+
+    const next = {
+      ...snapshot,
+      timestamp: "2026-09-22T14:10:00.000Z",
+      window: { start: "2026-09-22T14:05:00.000Z", end: "2026-09-22T14:10:00.000Z" },
+      counters: { requests: 25, errors: null },
+    };
+    expect(snapshotCounterDelta(snapshot, next, "requests")).toEqual({
+      state: "continuous",
+      value: 7,
+    });
+    expect(snapshotCounterDelta(snapshot, { ...next, process_id: "olla:ml1:pid-43" }, "requests"))
+      .toEqual({ state: "restart", value: null });
+    expect(snapshotCounterDelta(snapshot, { ...next, counters: { requests: 2 } }, "requests"))
+      .toEqual({ state: "reset", value: null });
+    expect(snapshotCounterDelta(snapshot, { ...next, counters: { requests: null } }, "requests"))
+      .toEqual({ state: "unavailable", value: null });
+    expect(snapshotCounterDelta(snapshot, { ...next, counters: { errors: null } }, "requests"))
+      .toEqual({ state: "unavailable", value: null });
+  });
+
+  it("rejects counter names absent from both snapshots, including prototype names", () => {
+    expect(() => snapshotCounterDelta(snapshot, snapshot, "reqests"))
+      .toThrow("snapshot counter reqests is not present in either snapshot");
+    for (const name of ["toString", "constructor", "valueOf"]) {
+      expect(() => snapshotCounterDelta(snapshot, snapshot, name)).toThrow("not present");
+    }
+  });
+
+  it("treats a prototype name present on neither plain counter object as absent", () => {
+    const plainPrevious = { ...snapshot, counters: { requests: 3 } };
+    const plainCurrent = { ...snapshot, counters: { requests: 5 } };
+    expect(() => snapshotCounterDelta(plainPrevious, plainCurrent, "toString")).toThrow("not present");
+    expect(snapshotCounterDelta(plainPrevious, { ...plainCurrent, counters: { toString: 5 } }, "toString"))
+      .toEqual({ state: "unavailable", value: null });
+  });
+
+  it("keeps a __proto__ counter as an own measured value", () => {
+    const parsed = parseFleetRecord(JSON.parse(JSON.stringify(fixture.operational_snapshot)
+      .replace('"requests":18', '"__proto__":7,"requests":18')));
+    if (parsed.record_type !== "operational_snapshot") throw new Error("wrong fixture type");
+    expect(Object.keys(parsed.counters)).toEqual(["__proto__", "errors", "requests"]);
+    expect(parsed.counters["__proto__"]).toBe(7);
+  });
+
+  it("rejects private content at any nesting depth", () => {
+    expect(() => parseFleetRecord({ ...fixture.usage_event, prompt: "secret" }))
+      .toThrow("private field prompt");
+    expect(() => parseFleetRecord({
+      ...fixture.operational_snapshot,
+      counters: { requests: 18, raw_authorization_headers: "Bearer secret" },
+    })).toThrow("private field raw_authorization_headers");
+  });
+
+  it("rejects credentials embedded in the provenance locator", () => {
+    const withLocator = (locator: string) => ({
+      ...fixture.operational_snapshot,
+      provenance: { ...fixture.operational_snapshot.provenance, locator },
+    });
+    expect(() => parseFleetRecord(withLocator("https://user:FAKE-EXAMPLE@ml1/metrics")))
+      .toThrow("provenance.locator cannot contain URL credentials");
+    expect(() => parseFleetRecord(withLocator("http://ml1/metrics?api_key=FAKE-EXAMPLE")))
+      .toThrow("provenance.locator cannot contain credential query parameters");
+    expect(() => parseFleetRecord(withLocator("sessions/run-3.jsonl?access_token=FAKE-EXAMPLE")))
+      .toThrow("provenance.locator cannot contain credential query parameters");
+    for (const locator of [
+      "//user:FAKE-EXAMPLE@ml1/metrics",
+      "user:FAKE-EXAMPLE@ml1/metrics",
+    ]) {
+      expect(() => parseFleetRecord(withLocator(locator)))
+        .toThrow("provenance.locator cannot contain URL credentials");
+    }
+    for (const locator of [
+      "https://ml1/callback#access_token=FAKE-EXAMPLE",
+      "http://ml1/metrics?apiKey=FAKE-EXAMPLE",
+      "http://ml1/metrics?pwd=FAKE-EXAMPLE",
+      "http://ml1/metrics?X-Amz-Signature=FAKE-EXAMPLE",
+    ]) {
+      expect(() => parseFleetRecord(withLocator(locator)))
+        .toThrow("provenance.locator cannot contain credential query parameters");
+    }
+    for (const locator of [
+      "http://ml1/metrics?window=5m",
+      "http://ml1/metrics?max_tokens=4096&signal=1&author=a&design=b&monkey=c",
+      "sessions/2026/09/22/run-3.jsonl#L10",
+    ]) {
+      expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);
+    }
+  });
+
+  it("rejects unsupported and missing envelope fields", () => {
+    expect(() => parseFleetRecord({ ...fixture.usage_event, cost_usd: 1 }))
+      .toThrow("usage event has unsupported or missing fields");
+    const { model: _model, ...withoutModel } = fixture.usage_event;
+    expect(() => parseFleetRecord(withoutModel))
+      .toThrow("usage event has unsupported or missing fields");
+    expect(() => parseFleetRecord({
+      ...fixture.usage_event,
+      usage: { ...fixture.usage_event.usage, total_tokens: 144 },
+    })).toThrow("usage has unsupported or missing fields");
+  });
+
+  it("rejects empty, inverted, and future-ending snapshot windows", () => {
+    const withWindow = (start: string, end: string) => ({
+      ...fixture.operational_snapshot,
+      window: { start, end },
+    });
+    const message = "snapshot window must be non-empty and end no later than timestamp";
+    expect(() => parseFleetRecord(withWindow("2026-09-22T14:00:00.000Z", "2026-09-22T14:00:00.000Z")))
+      .toThrow(message);
+    expect(() => parseFleetRecord(withWindow("2026-09-22T14:01:00.000Z", "2026-09-22T14:00:00.000Z")))
+      .toThrow(message);
+    expect(() => parseFleetRecord(withWindow("2026-09-22T14:00:00.000Z", "2026-09-22T14:05:00.001Z")))
+      .toThrow(message);
+  });
+
+  it("does not join an event outside the snapshot window or without a timestamp", () => {
+    expect(joinUsageToSnapshots({ ...usage, timestamp: "2026-09-22T13:59:59.999Z" }, [snapshot]))
+      .toEqual({ state: "unmatched", key: null, snapshot: null });
+    expect(joinUsageToSnapshots({ ...usage, timestamp: null }, [snapshot]))
+      .toEqual({ state: "unmatched", key: null, snapshot: null });
+  });
+
+  it("prefers request_id over run_id and never falls through an ambiguous level", () => {
+    const byRequest = { ...snapshot, record_id: "olla:snapshot:req", request_id: "openai:req-7", run_id: null };
+    expect(joinUsageToSnapshots(usage, [snapshot, byRequest])).toEqual({
+      state: "matched",
+      key: "request_id=openai:req-7",
+      snapshot: byRequest,
+    });
+    const secondByRequest = { ...byRequest, record_id: "olla:snapshot:req-2" };
+    expect(joinUsageToSnapshots(usage, [snapshot, byRequest, secondByRequest])).toEqual({
+      state: "ambiguous",
+      key: "request_id=openai:req-7",
+      snapshot: null,
+    });
+  });
+
+  it("reports unknown freshness for a missing threshold or a future snapshot", () => {
+    expect(classifySnapshotFreshness({ ...snapshot, stale_after_ms: null }, "2026-09-22T14:05:30.000Z"))
+      .toBe("unknown");
+    expect(classifySnapshotFreshness(snapshot, "2026-09-22T14:04:59.999Z")).toBe("unknown");
+    expect(() => classifySnapshotFreshness(snapshot, "not-a-time"))
+      .toThrow("evaluatedAt must be an RFC 3339 UTC timestamp");
+  });
+
+  it("keeps counter deltas unavailable without process identity and prefers restart over reset", () => {
+    const next = { ...snapshot, counters: { requests: 25, errors: null } };
+    expect(snapshotCounterDelta(snapshot, { ...next, process_id: null }, "requests"))
+      .toEqual({ state: "unavailable", value: null });
+    expect(snapshotCounterDelta(
+      snapshot,
+      { ...next, process_id: "olla:ml1:pid-43", counters: { requests: 2 } },
+      "requests",
+    )).toEqual({ state: "restart", value: null });
+  });
+});
