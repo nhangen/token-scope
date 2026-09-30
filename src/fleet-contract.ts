@@ -238,17 +238,24 @@ const CREDENTIAL_PARAM_STEMS = [
 // signature_version), so they match only at the end of a segment.
 const CREDENTIAL_PARAM_SUFFIXES = ["secret", "secrets", "signature", "token"];
 
+// A token segment followed by one of these names a count, not a credential
+// (tokenCount, token_limit) — core telemetry for a token-accounting tool.
+const TOKEN_TELEMETRY_QUALIFIERS = new Set(["budget", "count", "counts", "limit", "total", "usage"]);
+
+function isCredentialSegment(segment: string, next: string | undefined): boolean {
+  if (segment === "token" && next !== undefined && TOKEN_TELEMETRY_QUALIFIERS.has(next)) return false;
+  return CREDENTIAL_PARAM_SEGMENTS.has(segment) ||
+    CREDENTIAL_PARAM_STEMS.some((stem) => segment.includes(stem)) ||
+    CREDENTIAL_PARAM_SUFFIXES.some((suffix) => segment.endsWith(suffix));
+}
+
 function isCredentialParam(name: string): boolean {
-  return name
+  const segments = name
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .map((segment) => segment.replace(/(?<!\d)\d+$/, ""))
-    .some((segment) =>
-      CREDENTIAL_PARAM_SEGMENTS.has(segment) ||
-      CREDENTIAL_PARAM_STEMS.some((stem) => segment.includes(stem)) ||
-      CREDENTIAL_PARAM_SUFFIXES.some((suffix) => segment.endsWith(suffix))
-    );
+    .map((segment) => segment.replace(/(?<!\d)\d+$/, ""));
+  return segments.some((segment, index) => isCredentialSegment(segment, segments[index + 1]));
 }
 
 // Each run of escapes decodes on its own, so one malformed % elsewhere in the

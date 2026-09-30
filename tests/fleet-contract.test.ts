@@ -262,6 +262,8 @@ describe("fleet schema v1 contract", () => {
       "http://ml1/metrics?usercredentials=FAKE-EXAMPLE",
       "http://ml1/metrics?apitoken_v2=FAKE-EXAMPLE",
       "http://ml1/metrics?cookie=FAKE-EXAMPLE",
+      "http://ml1/metrics?tokenCountToken=FAKE-EXAMPLE",
+      "http://ml1/metrics?count_token=FAKE-EXAMPLE",
       "http://ml1/callback#a=1;sessiontoken=FAKE-EXAMPLE",
     ])("rejects compound or qualified name in %s", (locator) => {
       expect(() => parseFleetRecord(withLocator(locator))).toThrow(rejected);
@@ -303,6 +305,7 @@ describe("fleet schema v1 contract", () => {
       "http://ml1/metrics?keyboard=us&sortkey=a&primarykey=b&secretary=c",
       "http://ml1/metrics?session_id=run-3&sessionId=run-4&keyword=k&authority=a",
       "http://ml1/metrics?model=qwen3.8:27b&q=100%",
+      "http://ml1/metrics?tokenCount=1&token_limit=2&tokenBudget=3&token_usage=4&tokens_total=5",
       "C:\\Users\\n\\sessions\\run-3.jsonl",
       "C:\\Users\\n@work\\sessions\\run-3.jsonl",
       "s3://bucket/date=2026-09-22/run-3.jsonl",
