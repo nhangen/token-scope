@@ -108,6 +108,10 @@ function objectValue(value: unknown, name: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function compareCodeUnits(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function assertExactKeys(
   value: Record<string, unknown>,
   expected: readonly string[],
@@ -178,12 +182,157 @@ function nullableMeasurement(value: unknown, name: string): number | null {
   return value;
 }
 
-function nullableTokenCount(value: unknown, name: string): number | null {
+function nullableInteger(value: unknown, name: string): number | null {
   if (value === null) return null;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new Error(`${name} must be a non-negative integer or null`);
   }
   return value;
+}
+
+const URL_USERINFO = /^(?:[a-z][a-z0-9+.-]*:)?\/\/[^/?#]*@/i;
+const BARE_USERINFO = /^[^/?#:@]+:[^/?#@]*@/;
+const CREDENTIAL_PARAM_SEGMENTS = new Set([
+  "accesstoken",
+  "apikey",
+  "auth",
+  "authorization",
+  "authtoken",
+  "bearer",
+  "clientsecret",
+  "cookie",
+  "credential",
+  "credentials",
+  "hmac",
+  "idtoken",
+  "jsessionid",
+  "jwt",
+  "key",
+  "pass",
+  "passwd",
+  "password",
+  "pwd",
+  "refreshtoken",
+  "secret",
+  "sig",
+  "signature",
+  "token",
+]);
+// Unseparated compounds (apitoken, apikeys, privatekeypem) have no segment
+// boundary to split on, so a denylist of whole segments alone fails open on them.
+// No telemetry name contains these stems, so they match anywhere in a segment.
+const CREDENTIAL_PARAM_STEMS = [
+  "accesskey",
+  "apikey",
+  "authkey",
+  "clientsecret",
+  "credential",
+  "passphrase",
+  "passwd",
+  "password",
+  "privatekey",
+  "privkey",
+  "secretkey",
+];
+// These stems do appear inside telemetry names (max_tokens, tokenizer, secretary),
+// so they match only at the end of a segment.
+const CREDENTIAL_PARAM_SUFFIXES = ["secret", "secrets", "signature", "token"];
+
+// A token segment followed by one of these names a count or class, not a
+// credential (tokenCount, token_type) — core telemetry for a token-accounting tool.
+const TOKEN_TELEMETRY_QUALIFIERS = new Set(["budget", "count", "counts", "kind", "limit", "total", "type", "usage"]);
+
+function isCredentialSegment(segment: string, next: string | undefined): boolean {
+  if (segment === "token" && next !== undefined && TOKEN_TELEMETRY_QUALIFIERS.has(next)) return false;
+  return CREDENTIAL_PARAM_SEGMENTS.has(segment) ||
+    CREDENTIAL_PARAM_STEMS.some((stem) => segment.includes(stem)) ||
+    CREDENTIAL_PARAM_SUFFIXES.some((suffix) => segment.endsWith(suffix));
+}
+
+function hasCredentialSegment(name: string): boolean {
+  const segments = name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((segment) => segment.replace(/(?<!\d)\d+$/, ""));
+  return segments.some((segment, index) => isCredentialSegment(segment, segments[index + 1]));
+}
+
+// The camelCase split catches tokenValue and apiKeyId, but it also breaks a
+// mixed-case credential apart (pAssword -> p_assword), and case-insensitive
+// servers read that as the real name, so the unsplit name is checked too.
+function isCredentialParam(name: string): boolean {
+  return hasCredentialSegment(name.replace(/([a-z0-9])([A-Z])/g, "$1_$2")) ||
+    hasCredentialSegment(name);
+}
+
+// Each run of escapes decodes on its own, so one malformed % elsewhere in the
+// locator cannot drop the whole string to byte-by-byte decoding, which splits
+// UTF-8-encoded zero-width and fullwidth characters into harmless-looking bytes.
+function decodeOnce(text: string): string {
+  return text.replace(/(?:%[0-9a-f]{2})+/gi, (run) => {
+    try {
+      return decodeURIComponent(run);
+    } catch {
+      return run.replace(/%([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+    }
+  });
+}
+
+// Decoding before splitting keeps an encoded separator (%3B, %26, %2574) from
+// hiding a name; NFKD and dropping marks, format, and control characters keep
+// fullwidth letters, accents, zero-width spaces, and NUL from disguising or
+// splitting one. Cross-script lookalikes (Cyrillic о) and Hangul fillers are not
+// folded: they take deliberate evasion, not accidental leakage. Returns null for
+// a locator still encoded after three passes.
+function decodeLocator(locator: string): string | null {
+  let decoded = locator;
+  for (let pass = 0; pass < 3; pass++) {
+    const next = decodeOnce(decoded);
+    if (next === decoded) break;
+    decoded = next;
+  }
+  if (decodeOnce(decoded) !== decoded) return null;
+  return decoded.normalize("NFKD").replace(/[\p{M}\p{Cc}\p{Cf}]/gu, "");
+}
+
+// Matrix params (;jsessionid=), name=value path segments, and values that embed
+// another name= all carry names, so every run ending in = counts, wherever it
+// sits. A bare name counts only where a query, fragment, or matrix param starts.
+const LOCATOR_PARAM = /(?<=(^|[\s/;?&#,|=]))([^\s/;?&#,|=]+)(=?)/g;
+
+function locatorParams(decoded: string): string[] {
+  const names: string[] = [];
+  for (const [, delimiter = "", name = "", equals = ""] of decoded.matchAll(LOCATOR_PARAM)) {
+    if (equals || (delimiter !== "" && "?&;#".includes(delimiter))) names.push(name);
+  }
+  return names;
+}
+
+// WHATWG URL parsing skips leading whitespace and control characters, treats
+// "\\" as "/", and accepts any number of slashes after a special scheme, so
+// "https:/user:pw@host" still carries userinfo the regexes alone miss.
+function hasUserinfo(locator: string): boolean {
+  const authority = locator.replace(/[\p{Cc}\p{Cf}]/gu, "").trim().replaceAll("\\", "/");
+  if (URL_USERINFO.test(authority) || BARE_USERINFO.test(authority)) return true;
+  try {
+    const url = new URL(authority);
+    return url.username !== "" || url.password !== "";
+  } catch {
+    return false;
+  }
+}
+
+function locatorValue(value: unknown): string | null {
+  const locator = nullableString(value, "provenance.locator");
+  if (locator === null) return null;
+  if (hasUserinfo(locator)) {
+    throw new Error("provenance.locator cannot contain URL credentials");
+  }
+  const decoded = decodeLocator(locator);
+  if (decoded === null || locatorParams(decoded).some(isCredentialParam)) {
+    throw new Error("provenance.locator cannot contain credential query parameters");
+  }
+  return locator;
 }
 
 function provenanceValue(value: unknown): FleetProvenance {
@@ -195,7 +344,7 @@ function provenanceValue(value: unknown): FleetProvenance {
   }
   return {
     source: stringValue(provenance.source, "provenance.source"),
-    locator: nullableString(provenance.locator, "provenance.locator"),
+    locator: locatorValue(provenance.locator),
     collected_at: timestampValue(provenance.collected_at, "provenance.collected_at"),
     completeness,
   };
@@ -246,11 +395,11 @@ export function parseFleetRecord(value: unknown): FleetRecord {
       record_type: "usage_event",
       timestamp: record.timestamp === null ? null : timestampValue(record.timestamp, "timestamp"),
       usage: {
-        input_tokens: nullableTokenCount(usage.input_tokens, "usage.input_tokens"),
-        output_tokens: nullableTokenCount(usage.output_tokens, "usage.output_tokens"),
-        cache_read_tokens: nullableTokenCount(usage.cache_read_tokens, "usage.cache_read_tokens"),
-        cache_write_tokens: nullableTokenCount(usage.cache_write_tokens, "usage.cache_write_tokens"),
-        reasoning_tokens: nullableTokenCount(usage.reasoning_tokens, "usage.reasoning_tokens"),
+        input_tokens: nullableInteger(usage.input_tokens, "usage.input_tokens"),
+        output_tokens: nullableInteger(usage.output_tokens, "usage.output_tokens"),
+        cache_read_tokens: nullableInteger(usage.cache_read_tokens, "usage.cache_read_tokens"),
+        cache_write_tokens: nullableInteger(usage.cache_write_tokens, "usage.cache_write_tokens"),
+        reasoning_tokens: nullableInteger(usage.reasoning_tokens, "usage.reasoning_tokens"),
         cash_charge_usd: nullableMeasurement(usage.cash_charge_usd, "usage.cash_charge_usd"),
       },
     };
@@ -270,8 +419,8 @@ export function parseFleetRecord(value: unknown): FleetRecord {
       throw new Error("snapshot window must be non-empty and end no later than timestamp");
     }
     const counters = objectValue(record.counters, "counters");
-    const parsedCounters: Record<string, number | null> = {};
-    for (const [name, counter] of Object.entries(counters).sort(([a], [b]) => a.localeCompare(b))) {
+    const parsedCounters: Record<string, number | null> = Object.create(null);
+    for (const [name, counter] of Object.entries(counters).sort(([a], [b]) => compareCodeUnits(a, b))) {
       if (!name) throw new Error("counter names cannot be empty");
       parsedCounters[name] = nullableMeasurement(counter, `counters.${name}`);
     }
@@ -289,7 +438,7 @@ export function parseFleetRecord(value: unknown): FleetRecord {
       timestamp,
       window: { start, end },
       process_id: qualifiedId(record.process_id, "process_id"),
-      stale_after_ms: nullableMeasurement(record.stale_after_ms, "stale_after_ms"),
+      stale_after_ms: nullableInteger(record.stale_after_ms, "stale_after_ms"),
       counters: parsedCounters,
     };
   }
@@ -350,7 +499,7 @@ function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (typeof value !== "object" || value === null) return JSON.stringify(value);
   return `{${Object.entries(value)
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => compareCodeUnits(a, b))
     .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`)
     .join(",")}}`;
 }
@@ -367,7 +516,7 @@ export function dedupeFleetRecords(records: FleetRecord[]): {
   }
   const deduped: FleetRecord[] = [];
   const conflicts: string[] = [];
-  for (const id of [...byId.keys()].sort()) {
+  for (const id of [...byId.keys()].sort(compareCodeUnits)) {
     const variants = byId.get(id)!;
     if (variants.size === 1) deduped.push(variants.values().next().value!);
     else conflicts.push(id);
@@ -391,8 +540,13 @@ export function snapshotCounterDelta(
   current: FleetOperationalSnapshot,
   counter: string,
 ): { state: "continuous" | "restart" | "reset" | "unavailable"; value: number | null } {
-  const before = previous.counters[counter];
-  const after = current.counters[counter];
+  const hasBefore = Object.hasOwn(previous.counters, counter);
+  const hasAfter = Object.hasOwn(current.counters, counter);
+  if (!hasBefore && !hasAfter) {
+    throw new Error(`snapshot counter ${counter} is not present in either snapshot`);
+  }
+  const before = hasBefore ? previous.counters[counter] : undefined;
+  const after = hasAfter ? current.counters[counter] : undefined;
   if (before === null || before === undefined || after === null || after === undefined) {
     return { state: "unavailable", value: null };
   }
