@@ -306,6 +306,35 @@ describe("fleet schema v1 contract", () => {
       expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);
     });
 
+    it.each([
+      "http://ml1/metrics?window=5m+token=FAKE-EXAMPLE",
+      "http://ml1/metrics?window=5m%2Btoken=FAKE-EXAMPLE",
+      "http://ml1/metrics?window=5m:token=FAKE-EXAMPLE",
+      "http://ml1/metrics?window=(token=FAKE-EXAMPLE)",
+      "http://ml1/metrics?window=5m|token=FAKE-EXAMPLE",
+      "http://ml1/metrics?a=1 token=FAKE-EXAMPLE",
+      "http://ml1/metrics?token",
+      "http://ml1/metrics?privkey=FAKE-EXAMPLE",
+      "http://ml1/metrics?hmac=FAKE-EXAMPLE",
+      "http://ml1/metrics?tok%E2%80%8Ben=FAKE-EXAMPLE&q=100%",
+      "http://ml1/metrics?tok%C2%ADen=FAKE-EXAMPLE&q=100%",
+      "http://ml1/metrics?q=100%&%74oken=FAKE-EXAMPLE",
+      "http://ml1/metrics?%252574oken=FAKE-EXAMPLE",
+      "http://ml1/metrics?%25252574oken=FAKE-EXAMPLE",
+      "http://ml1/metrics?to\u0301ken=FAKE-EXAMPLE",
+      "http://ml1/metrics?t%C3%B6ken=FAKE-EXAMPLE",
+      "http://ml1/metrics?tok\u034Fen=FAKE-EXAMPLE",
+    ])("rejects credential name disguised inside a value or by encoding in %s", (locator) => {
+      expect(() => parseFleetRecord(withLocator(locator))).toThrow(rejected);
+    });
+
+    it.each([
+      "http://ml1/metrics?cursor=abc==&q=a=b&filter=max_tokens>=5",
+      "http://ml1/metrics?q=%E4%B8%AD%E6%96%87&note=caf%C3%A9&q=100%25",
+    ])("accepts ordinary encoded telemetry locator %s", (locator) => {
+      expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);
+    });
+
     it("checks a long digit run in a name in linear time", () => {
       const locator = `http://ml1/metrics?a${"1".repeat(100_000)}x=1`;
       const started = performance.now();

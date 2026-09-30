@@ -251,35 +251,42 @@ function isCredentialParam(name: string): boolean {
     );
 }
 
+// Each run of escapes decodes on its own, so one malformed % elsewhere in the
+// locator cannot drop the whole string to byte-by-byte decoding, which splits
+// UTF-8-encoded zero-width and fullwidth characters into harmless-looking bytes.
 function decodeOnce(text: string): string {
-  try {
-    return decodeURIComponent(text);
-  } catch {
-    return text.replace(/%([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
-  }
+  return text.replace(/(?:%[0-9a-f]{2})+/gi, (run) => {
+    try {
+      return decodeURIComponent(run);
+    } catch {
+      return run.replace(/%([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+    }
+  });
 }
 
 // Decoding before splitting keeps an encoded separator (%3B, %26, %2574) from
-// hiding a name; NFKC and dropping format/control characters keep fullwidth
-// letters, zero-width spaces, and NUL from disguising or splitting one.
-function decodeLocator(locator: string): string {
+// hiding a name; NFKD and dropping marks, format, and control characters keep
+// fullwidth letters, accents, zero-width spaces, and NUL from disguising or
+// splitting one. Returns null for a locator still encoded after three passes.
+function decodeLocator(locator: string): string | null {
   let decoded = locator;
   for (let pass = 0; pass < 3; pass++) {
     const next = decodeOnce(decoded);
     if (next === decoded) break;
     decoded = next;
   }
-  return decoded.normalize("NFKC").replace(/[\p{Cc}\p{Cf}]/gu, "");
+  if (decodeOnce(decoded) !== decoded) return null;
+  return decoded.normalize("NFKD").replace(/[\p{M}\p{Cc}\p{Cf}]/gu, "");
 }
 
-// Scans the whole locator, not just the query: matrix params (;jsessionid=),
-// name=value path segments, and values that embed another query all carry
-// names. A bare name counts only where a query, fragment, or matrix param starts.
-const LOCATOR_PARAM = /(^|[\s/;?&#,|])([^\s/;?&#,|=]+)(=?)/g;
+// Matrix params (;jsessionid=), name=value path segments, and values that embed
+// another name= all carry names, so every run ending in = counts, wherever it
+// sits. A bare name counts only where a query, fragment, or matrix param starts.
+const LOCATOR_PARAM = /(?<=(^|[\s/;?&#,|=]))([^\s/;?&#,|=]+)(=?)/g;
 
-function locatorParams(locator: string): string[] {
+function locatorParams(decoded: string): string[] {
   const names: string[] = [];
-  for (const [, delimiter = "", name = "", equals = ""] of decodeLocator(locator).matchAll(LOCATOR_PARAM)) {
+  for (const [, delimiter = "", name = "", equals = ""] of decoded.matchAll(LOCATOR_PARAM)) {
     if (equals || (delimiter !== "" && "?&;#".includes(delimiter))) names.push(name);
   }
   return names;
@@ -294,7 +301,8 @@ function locatorValue(value: unknown): string | null {
   if (URL_USERINFO.test(authority) || BARE_USERINFO.test(authority)) {
     throw new Error("provenance.locator cannot contain URL credentials");
   }
-  if (locatorParams(locator).some(isCredentialParam)) {
+  const decoded = decodeLocator(locator);
+  if (decoded === null || locatorParams(decoded).some(isCredentialParam)) {
     throw new Error("provenance.locator cannot contain credential query parameters");
   }
   return locator;
