@@ -61,7 +61,8 @@ export interface OllaSnapshotMetadata {
 export interface OllaSourceObservation {
   path: OllaSourcePath;
   state: "available" | "partial" | "unavailable";
-  reason: "stale" | "missing" | "unreadable" | "malformed" | "privacy" | "dependency" | null;
+  reason: "stale" | "missing" | "unreadable" | "malformed" | "privacy" | "dependency" | "timeout" | null;
+  errorClass: string | null;
   provenance: FleetProvenance;
 }
 
@@ -84,6 +85,7 @@ export interface CollectOllaTelemetryOptions {
   baseUrl: string;
   collectedAt?: string;
   staleAfterMs?: number;
+  timeoutMs?: number;
   fetch?: OllaFetch;
   previous?: OllaTelemetryCollection;
   observedRoutes?: OllaRouteObservation[];
@@ -299,13 +301,68 @@ interface AdapterContext {
   metadata: Record<string, OllaSnapshotMetadata>;
 }
 
+export function errorClassName(error: unknown): string {
+  if (typeof error === "object" && error !== null) {
+    const err = error as { name?: unknown; constructor?: { name?: unknown } };
+    let candidate: string | null = null;
+    if (typeof err.constructor?.name === "string") {
+      const ctor = err.constructor.name.trim();
+      if (/^[A-Za-z0-9_$]+$/.test(ctor) && ctor !== "Object" && ctor !== "Error") {
+        candidate = ctor;
+      }
+    }
+    if (candidate === "DOMException" && typeof err.name === "string") {
+      const name = err.name.trim();
+      if (/^[A-Za-z0-9_$]+$/.test(name) && name !== "Error") {
+        candidate = name;
+      }
+    }
+    if (candidate === null && typeof err.name === "string") {
+      const name = err.name.trim();
+      if (/^[A-Za-z0-9_$]+$/.test(name) && name !== "Error") {
+        candidate = name;
+      }
+    }
+    const raw = candidate ?? "Error";
+    try {
+      return privateSafeLabel(raw);
+    } catch {
+      return "Error";
+    }
+  }
+  try {
+    return privateSafeLabel(typeof error);
+  } catch {
+    return "Error";
+  }
+}
+
+export function isTimeoutError(error: unknown, signal?: AbortSignal): boolean {
+  if (error instanceof DOMException && error.name === "TimeoutError") return true;
+  if (typeof error === "object" && error !== null) {
+    const err = error as { name?: unknown; cause?: unknown };
+    if (err.name === "TimeoutError") return true;
+    if (err.cause instanceof DOMException && err.cause.name === "TimeoutError") return true;
+    if (err.cause instanceof Error && err.cause.name === "TimeoutError") return true;
+  }
+  if (signal?.aborted) {
+    const reason = signal.reason;
+    if (reason instanceof DOMException && reason.name === "TimeoutError") return true;
+    if (reason instanceof Error && reason.name === "TimeoutError") return true;
+    if (typeof reason === "object" && reason !== null && (reason as { name?: unknown }).name === "TimeoutError") return true;
+  }
+  return false;
+}
+
 function setObservation(
   source: LoadedSource,
   state: OllaSourceObservation["state"],
   reason: OllaSourceObservation["reason"],
+  errorClass: string | null = null,
 ): void {
   source.observation.state = state;
   source.observation.reason = reason;
+  source.observation.errorClass = errorClass;
   source.observation.provenance = {
     ...source.observation.provenance,
     completeness: state === "unavailable" ? "unavailable" : state === "partial" ? "partial" : "complete",
@@ -781,20 +838,27 @@ export async function collectOllaTelemetry(
   if (!Number.isFinite(staleAfterMs) || staleAfterMs < 0) {
     throw new Error("staleAfterMs must be non-negative");
   }
-  const fetcher = options.fetch ?? ((url: string) => fetch(url));
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("timeoutMs must be positive");
+  }
+  const fetcher = options.fetch ?? ((url: string, init?: RequestInit) => fetch(url, init));
   const loaded = await Promise.all(SOURCE_PATHS.map(async (path): Promise<LoadedSource> => {
     const observation: OllaSourceObservation = {
       path,
       state: "available",
       reason: null,
+      errorClass: null,
       provenance: provenanceFor(provenanceBaseUrl, path, collectedAt, "complete"),
     };
+    const signal = AbortSignal.timeout(timeoutMs);
     try {
-      const response = await fetcher(`${baseUrl}${path}`, { method: "GET" });
+      const response = await fetcher(`${baseUrl}${path}`, { method: "GET", signal });
       if (!response.ok) {
         const state: OllaSourceObservation["state"] = "unavailable";
         observation.state = state;
         observation.reason = response.status === 404 ? "missing" : "unreadable";
+        observation.errorClass = null;
         observation.provenance.completeness = "unavailable";
         return { path, body: null, value: null, observation };
       }
@@ -807,18 +871,22 @@ export async function collectOllaTelemetry(
         if (Date.parse(collectedAt) - Date.parse(timestamp) > staleAfterMs) {
           observation.state = "partial";
           observation.reason = "stale";
+          observation.errorClass = null;
           observation.provenance.completeness = "partial";
         }
         return { path, body, value, observation };
       } catch (error) {
         observation.state = "partial";
         observation.reason = error instanceof PrivacyError ? "privacy" : "malformed";
+        observation.errorClass = errorClassName(error);
         observation.provenance.completeness = "partial";
         return { path, body: null, value: null, observation };
       }
-    } catch {
+    } catch (error) {
+      const isTimeout = isTimeoutError(error, signal);
       observation.state = "unavailable";
-      observation.reason = "unreadable";
+      observation.reason = isTimeout ? "timeout" : "unreadable";
+      observation.errorClass = isTimeout ? "TimeoutError" : errorClassName(error);
       observation.provenance.completeness = "unavailable";
       return { path, body: null, value: null, observation };
     }
@@ -830,8 +898,8 @@ export async function collectOllaTelemetry(
     try {
       const system = objectValue(objectValue(statusSource.value, "status").system, "status.system");
       processStart = canonicalTimestamp(system.start_time, "system.start_time");
-    } catch {
-      setObservation(statusSource, "partial", "malformed");
+    } catch (error) {
+      setObservation(statusSource, "partial", "malformed", errorClassName(error));
       statusSource.value = null;
     }
   }
@@ -857,7 +925,7 @@ export async function collectOllaTelemetry(
     const source = byPath.get(path)!;
     if ((path === METRICS_PATH ? source.body : source.value) === null) continue;
     if (processStart === null) {
-      setObservation(source, "partial", "dependency");
+      setObservation(source, "partial", "dependency", null);
       continue;
     }
     const snapshotCount = context.snapshots.length;
@@ -871,7 +939,7 @@ export async function collectOllaTelemetry(
       for (const id of Object.keys(context.metadata)) {
         if (!metadataIds.has(id)) delete context.metadata[id];
       }
-      setObservation(source, "partial", error instanceof PrivacyError ? "privacy" : "malformed");
+      setObservation(source, "partial", error instanceof PrivacyError ? "privacy" : "malformed", errorClassName(error));
     }
   }
   const { observedRoutes, rejectedRoutes } = normalizeObservedRoutes(options.observedRoutes);

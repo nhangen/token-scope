@@ -5,6 +5,7 @@ import { parseFleetRecord, snapshotCounterDelta, PrivacyError } from "@/fleet-co
 import {
   collectOllaTelemetry,
   correlateOllaRoute,
+  errorClassName,
   type OllaFetch,
   type OllaTelemetryCollection,
 } from "@/fleet/olla";
@@ -38,6 +39,7 @@ function fixtureFetch(overrides: Record<string, string | Error | number> = {}): 
 async function collect(overrides: Record<string, string | Error | number> = {}, opts: {
   baseUrl?: string;
   collectedAt?: string;
+  timeoutMs?: number;
   fetch?: OllaFetch;
   previous?: OllaTelemetryCollection;
   observedRoutes?: Array<{
@@ -53,6 +55,7 @@ async function collect(overrides: Record<string, string | Error | number> = {}, 
     baseUrl: opts.baseUrl ?? "http://router.local:40114",
     collectedAt: opts.collectedAt ?? COLLECTED_AT,
     staleAfterMs: 60_000,
+    timeoutMs: opts.timeoutMs,
     fetch: opts.fetch ?? fixtureFetch(overrides),
     previous: opts.previous,
     observedRoutes: opts.observedRoutes,
@@ -936,6 +939,182 @@ describe("Olla fleet telemetry adapter", () => {
     await expect(result).rejects.toThrow("credential-like label value rejected");
     await result.catch((error: Error) => {
       expect(`${error.message}\n${error.stack ?? ""}`).not.toContain(FAKE_SECRET);
+    });
+  });
+
+  describe("fetch timeout and failure class tracking (#119)", () => {
+    it("rejects invalid timeoutMs (negative, zero, or non-finite)", async () => {
+      await expect(collect({}, { timeoutMs: 0 })).rejects.toThrow("timeoutMs must be positive");
+      await expect(collect({}, { timeoutMs: -10 })).rejects.toThrow("timeoutMs must be positive");
+      await expect(collect({}, { timeoutMs: NaN })).rejects.toThrow("timeoutMs must be positive");
+    });
+
+    it("marks source unavailable with reason timeout and errorClass TimeoutError on fetch timeout", async () => {
+      const collected = await collect({}, {
+        timeoutMs: 20,
+        fetch: async (url, init) => {
+          const path = new URL(url).pathname;
+          if (path === "/internal/status/endpoints") {
+            return new Promise((_, reject) => {
+              init?.signal?.addEventListener("abort", () => {
+                reject(init.signal?.reason ?? new DOMException("The operation timed out.", "TimeoutError"));
+              });
+            });
+          }
+          return fixtureFetch({})(url, init);
+        },
+      });
+      const endpointsSource = collected.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(endpointsSource.state).toBe("unavailable");
+      expect(endpointsSource.reason).toBe("timeout");
+      expect(endpointsSource.errorClass).toBe("TimeoutError");
+
+      const statusSource = collected.sources.find((s) => s.path === "/internal/status")!;
+      expect(statusSource.state).toBe("available");
+      expect(statusSource.errorClass).toBeNull();
+    });
+
+    it("records errorClass for fetch exceptions distinguishing network bugs from protocol errors", async () => {
+      const collectedTypeError = await collect({
+        "/internal/status/endpoints": new TypeError("network failed"),
+      });
+      const typeErrorSource = collectedTypeError.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(typeErrorSource.state).toBe("unavailable");
+      expect(typeErrorSource.reason).toBe("unreadable");
+      expect(typeErrorSource.errorClass).toBe("TypeError");
+
+      const collected500 = await collect({
+        "/internal/status/endpoints": 500,
+      });
+      const source500 = collected500.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(source500.state).toBe("unavailable");
+      expect(source500.reason).toBe("unreadable");
+      expect(source500.errorClass).toBeNull();
+
+      const collected404 = await collect({
+        "/internal/status/endpoints": 404,
+      });
+      const source404 = collected404.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(source404.state).toBe("unavailable");
+      expect(source404.reason).toBe("missing");
+      expect(source404.errorClass).toBeNull();
+    });
+
+    it("records errorClass for JSON parsing errors", async () => {
+      const collected = await collect({
+        "/internal/status/models": "{ invalid json body",
+      });
+      const source = collected.sources.find((s) => s.path === "/internal/status/models")!;
+      expect(source.state).toBe("partial");
+      expect(source.reason).toBe("malformed");
+      expect(source.errorClass).toBe("SyntaxError");
+    });
+
+    it("records errorClass for builder exceptions distinguishing programming bugs from malformed data", async () => {
+      const endpoints = JSON.parse(fixture("endpoints.json"));
+      endpoints.endpoints[1].request_count = "not a number";
+      const collected = await collect({ "/internal/status/endpoints": JSON.stringify(endpoints) });
+      const source = collected.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(source.state).toBe("partial");
+      expect(source.reason).toBe("malformed");
+      expect(source.errorClass).toBe("Error");
+    });
+
+    it("preserves errorClass null on available and dependency sources", async () => {
+      const collected = await collect();
+      for (const source of collected.sources) {
+        expect(source.state).toBe("available");
+        expect(source.errorClass).toBeNull();
+      }
+
+      const status = JSON.parse(fixture("status.json"));
+      delete status.system.start_time;
+      const collectedDep = await collect({ "/internal/status": JSON.stringify(status) });
+      const depSource = collectedDep.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(depSource.state).toBe("partial");
+      expect(depSource.reason).toBe("dependency");
+      expect(depSource.errorClass).toBeNull();
+    });
+
+    it("records PrivacyError as errorClass when privacy checks fail", async () => {
+      const endpoints = JSON.parse(fixture("endpoints.json"));
+      endpoints.endpoints[0].id = "sk-secret1234567890123456";
+      const collected = await collect({ "/internal/status/endpoints": JSON.stringify(endpoints) });
+      const source = collected.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(source.state).toBe("partial");
+      expect(source.reason).toBe("privacy");
+      expect(source.errorClass).toBe("PrivacyError");
+    });
+
+    it("never leaks error message or URL text into errorClass", async () => {
+      const secretUrl = "http://internal-db.local:5432/token=supersecret";
+      const customError = new TypeError(`Failed to fetch from ${secretUrl}`);
+      // Simulate library error formatting
+      customError.name = `FetchError: connect ECONNREFUSED ${secretUrl}`;
+      const collected = await collect({}, {
+        fetch: async () => Promise.reject(customError),
+      });
+      const source = collected.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(source.state).toBe("unavailable");
+      expect(source.reason).toBe("unreadable");
+      expect(source.errorClass).toBe("TypeError");
+      expect(JSON.stringify(source)).not.toContain("supersecret");
+      expect(JSON.stringify(source)).not.toContain("5432");
+    });
+
+    it("handles non-string or credential-like error.name without crashing", async () => {
+      const malformedError = { name: 404, message: "not found" };
+      const collected = await collect({}, {
+        fetch: async () => Promise.reject(malformedError),
+      });
+      const source = collected.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(source.state).toBe("unavailable");
+      expect(source.reason).toBe("unreadable");
+      expect(source.errorClass).toBe("Error");
+
+      const credentialError = { name: "sk-secret1234567890123456", message: "credential in name" };
+      const collectedCred = await collect({}, {
+        fetch: async () => Promise.reject(credentialError),
+      });
+      const sourceCred = collectedCred.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(sourceCred.state).toBe("unavailable");
+      expect(sourceCred.reason).toBe("unreadable");
+      expect(sourceCred.errorClass).toBe("Error");
+    });
+
+    it("evaluates errorClassName accurately across error types", () => {
+      expect(errorClassName(new TypeError("bug"))).toBe("TypeError");
+      expect(errorClassName(new SyntaxError("syntax"))).toBe("SyntaxError");
+      expect(errorClassName(new DOMException("timed out", "TimeoutError"))).toBe("TimeoutError");
+      expect(errorClassName(new DOMException("aborted", "AbortError"))).toBe("AbortError");
+      expect(errorClassName({ name: 404 })).toBe("Error");
+      expect(errorClassName({ name: "token=leak" })).toBe("Error");
+      expect(errorClassName({ name: "sk-secret1234567890123456" })).toBe("Error");
+      expect(errorClassName("failed")).toBe("string");
+      expect(errorClassName(null)).toBe("object");
+    });
+
+    it("attaches default AbortSignal and normalizes errorClass to TimeoutError on client abort", async () => {
+      let sawSignal = false;
+      const collected = await collect({}, {
+        fetch: async (url, init) => {
+          if (init?.signal instanceof AbortSignal) sawSignal = true;
+          const path = new URL(url).pathname;
+          if (path === "/internal/status/endpoints") {
+            const err = new DOMException("The operation was aborted.", "AbortError");
+            return new Promise((_, reject) => {
+              init?.signal?.addEventListener("abort", () => reject(err));
+            });
+          }
+          return fixtureFetch({})(url, init);
+        },
+        timeoutMs: 15,
+      });
+      expect(sawSignal).toBe(true);
+      const source = collected.sources.find((s) => s.path === "/internal/status/endpoints")!;
+      expect(source.state).toBe("unavailable");
+      expect(source.reason).toBe("timeout");
+      expect(source.errorClass).toBe("TimeoutError");
     });
   });
 });
