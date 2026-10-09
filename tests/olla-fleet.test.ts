@@ -1312,5 +1312,17 @@ describe("Olla fleet telemetry adapter", () => {
         }));
       }
     });
+
+    it("extracts routing metadata and bare info counter from olla_info", async () => {
+      const prom = 'olla_info{version="0.1.0",commit="abc123de",engine="olla",profile="auto",balancer="least-connections"} 1\n';
+      const collected = await collect({ "/internal/metrics": prom });
+      const metricsSnapshot = snapshot(collected, "metrics");
+      expect(metricsSnapshot.counters.info).toBe(1);
+      expect(collected.metadata[metricsSnapshot.record_id]?.routing).toMatchObject({
+        engine: "olla",
+        profile: "auto",
+        balancer: "least-connections",
+      });
+    });
   });
 });

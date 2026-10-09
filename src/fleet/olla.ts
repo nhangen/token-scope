@@ -699,6 +699,7 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
     model: string | null;
     counters: Record<string, number>;
     health: FleetRecordStatus;
+    routing: OllaRoutingMetadata | null;
   }>();
   const group = (
     key: string,
@@ -714,11 +715,25 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
       model,
       counters: {},
       health: "unknown" as FleetRecordStatus,
+      routing: null,
     };
     groups.set(key, existing);
     return existing;
   };
   for (const sample of samples) {
+    if (sample.name === "olla_info") {
+      const entry = group("system", "metrics", context.routerHost, null, null);
+      if (entry.counters.info !== undefined) {
+        throw new Error("duplicate Prometheus metric sample");
+      }
+      entry.counters.info = sample.value;
+      entry.routing = {
+        engine: optionalPrivateSafeLabel(sample.labels.engine),
+        profile: optionalPrivateSafeLabel(sample.labels.profile),
+        balancer: optionalPrivateSafeLabel(sample.labels.balancer),
+      };
+      continue;
+    }
     const endpointName = sample.labels.endpoint;
     const model = sample.labels.model === undefined ? null : privateSafeLabel(sample.labels.model);
     if (endpointName !== undefined && model !== null) {
@@ -787,6 +802,7 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
       model: entry.model,
       counters: entry.counters,
       endpoint: entry.endpoint,
+      routing: entry.routing,
     });
   }
 }
