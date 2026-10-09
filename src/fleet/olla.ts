@@ -65,12 +65,19 @@ export interface OllaSourceObservation {
   provenance: FleetProvenance;
 }
 
+export type OllaRejectedRouteReason = "invalid_key" | "missing_endpoint" | "malformed_timestamp";
+
+export interface OllaRejectedRoute {
+  reason: OllaRejectedRouteReason;
+}
+
 export interface OllaTelemetryCollection {
   snapshots: FleetOperationalSnapshot[];
   metadata: Record<string, OllaSnapshotMetadata>;
   sources: OllaSourceObservation[];
   endpointChanges: { disappeared: string[] | null };
   observedRoutes: OllaObservedRoute[];
+  rejectedRoutes: OllaRejectedRoute[];
 }
 
 export interface CollectOllaTelemetryOptions {
@@ -180,7 +187,9 @@ function privateSafePersistenceValue<T>(value: T): T {
 
 function optionalPrivateSafeLabel(value: unknown): string | null {
   const label = optionalString(value);
-  return label === null ? null : privateSafeLabel(label);
+  if (label === null) return null;
+  const safe = privateSafeLabel(label);
+  return safe.length > 0 ? safe : null;
 }
 
 function sanitizedUrl(value: unknown): { url: string | null; host: string | null } {
@@ -678,7 +687,8 @@ function sourceEndpointIds(collection: OllaTelemetryCollection): string[] {
 function qualifiedRequestId(value: string | undefined): string | null {
   if (value === undefined || value.length === 0) return null;
   const id = privateSafeLabel(value);
-  return id.startsWith("olla:") ? id : `olla:${id}`;
+  const unqualified = id.startsWith("olla:") ? id.slice("olla:".length) : id;
+  return unqualified.length > 0 ? `olla:${unqualified}` : null;
 }
 
 function qualifiedRunId(value: string | undefined): string | null {
@@ -688,25 +698,78 @@ function qualifiedRunId(value: string | undefined): string | null {
   return separator > 0 && separator < id.length - 1 ? id : null;
 }
 
-function normalizeObservedRoutes(routes: OllaRouteObservation[] | undefined): OllaObservedRoute[] {
-  const normalized = (routes ?? []).map((route): OllaObservedRoute | null => {
-    const requestId = qualifiedRequestId(route.requestId);
-    const runId = qualifiedRunId(route.runId);
-    const endpointId = route.endpointId === undefined ? null : privateSafeLabel(route.endpointId);
-    const endpointName = route.endpointName === undefined ? null : privateSafeLabel(route.endpointName);
-    const model = route.model === undefined ? null : privateSafeLabel(route.model);
-    if ((requestId === null && runId === null) || (endpointId === null && endpointName === null)) return null;
-    return {
+function normalizeObservedRoutes(routes: OllaRouteObservation[] | undefined): {
+  observedRoutes: OllaObservedRoute[];
+  rejectedRoutes: OllaRejectedRoute[];
+} {
+  const rejectedRoutes: OllaRejectedRoute[] = [];
+  const validRoutes: OllaObservedRoute[] = [];
+
+  for (const route of routes ?? []) {
+    for (const val of [
+      route.requestId,
+      route.runId,
+      route.endpointId,
+      route.endpointName,
+      route.model,
+      route.timestamp,
+    ]) {
+      if (typeof val === "string" && val.length > 0) {
+        assertSafeLabelValue(val);
+      }
+    }
+
+    let timestamp: string | null = null;
+    if (route.timestamp !== undefined) {
+      try {
+        timestamp = canonicalTimestamp(route.timestamp, "route.timestamp");
+      } catch {
+        rejectedRoutes.push({ reason: "malformed_timestamp" });
+        continue;
+      }
+    }
+
+    const hasRequestId = route.requestId !== undefined;
+    const hasRunId = route.runId !== undefined;
+    if (!hasRequestId && !hasRunId) {
+      rejectedRoutes.push({ reason: "invalid_key" });
+      continue;
+    }
+    const requestId = hasRequestId ? qualifiedRequestId(route.requestId) : null;
+    if (hasRequestId && requestId === null) {
+      rejectedRoutes.push({ reason: "invalid_key" });
+      continue;
+    }
+    const runId = hasRunId ? qualifiedRunId(route.runId) : null;
+    if (hasRunId && runId === null) {
+      rejectedRoutes.push({ reason: "invalid_key" });
+      continue;
+    }
+
+    const endpointId = optionalPrivateSafeLabel(route.endpointId);
+    const endpointName = optionalPrivateSafeLabel(route.endpointName);
+    if (endpointId === null && endpointName === null) {
+      rejectedRoutes.push({ reason: "missing_endpoint" });
+      continue;
+    }
+
+    const model = optionalPrivateSafeLabel(route.model);
+
+    validRoutes.push({
       requestId,
       runId,
       endpointId,
       endpointName,
       model,
-      timestamp: route.timestamp === undefined ? null : canonicalTimestamp(route.timestamp, "route.timestamp"),
-    };
-  }).filter((route): route is OllaObservedRoute => route !== null);
-  const byValue = new Map(normalized.map((route) => [JSON.stringify(route), route]));
-  return [...byValue.values()];
+      timestamp,
+    });
+  }
+
+  const byValue = new Map(validRoutes.map((route) => [JSON.stringify(route), route]));
+  return {
+    observedRoutes: [...byValue.values()],
+    rejectedRoutes,
+  };
 }
 
 export async function collectOllaTelemetry(
@@ -811,12 +874,14 @@ export async function collectOllaTelemetry(
       setObservation(source, "partial", error instanceof PrivacyError ? "privacy" : "malformed");
     }
   }
+  const { observedRoutes, rejectedRoutes } = normalizeObservedRoutes(options.observedRoutes);
   const collection: OllaTelemetryCollection = {
     snapshots: context.snapshots.sort((a, b) => a.record_id.localeCompare(b.record_id)),
     metadata: context.metadata,
     sources: loaded.map((source) => source.observation),
     endpointChanges: { disappeared: null },
-    observedRoutes: normalizeObservedRoutes(options.observedRoutes),
+    observedRoutes,
+    rejectedRoutes,
   };
   if (options.previous !== undefined) {
     const endpointSource = byPath.get("/internal/status/endpoints")!;
@@ -839,18 +904,34 @@ export function correlateOllaRoute(
   collection: OllaTelemetryCollection,
   route: OllaRouteCorrelation,
 ): OllaRouteCorrelationResult {
+  for (const val of [
+    route.requestId,
+    route.runId,
+    route.endpointId,
+    route.endpointName,
+    route.model,
+    route.timestamp,
+  ]) {
+    if (typeof val === "string" && val.length > 0) {
+      assertSafeLabelValue(val);
+    }
+  }
+
   const requestId = qualifiedRequestId(route.requestId);
   const runId = qualifiedRunId(route.runId);
   if (requestId === null && runId === null) {
     return { state: "unmatched", key: null, snapshot: null };
   }
+  const endpointId = optionalPrivateSafeLabel(route.endpointId) ?? undefined;
+  const endpointName = optionalPrivateSafeLabel(route.endpointName) ?? undefined;
+  const model = optionalPrivateSafeLabel(route.model) ?? undefined;
   const observed = collection.observedRoutes.filter((candidate) => {
     if (requestId !== null && candidate.requestId !== requestId) return false;
     if (requestId === null && runId !== null && candidate.runId !== runId) return false;
     if (runId !== null && candidate.runId !== runId) return false;
-    if (route.endpointId !== undefined && candidate.endpointId !== route.endpointId) return false;
-    if (route.endpointName !== undefined && candidate.endpointName !== route.endpointName) return false;
-    if (route.model !== undefined && candidate.model !== route.model) return false;
+    if (endpointId !== undefined && candidate.endpointId !== endpointId) return false;
+    if (endpointName !== undefined && candidate.endpointName !== endpointName) return false;
+    if (model !== undefined && candidate.model !== model) return false;
     return true;
   });
   if (observed.length === 0) return { state: "unmatched", key: null, snapshot: null };
@@ -862,16 +943,26 @@ export function correlateOllaRoute(
   const scopes: OllaSnapshotScope[] = observedRoute.model === null
     ? ["endpoint", "metrics_endpoint"]
     : ["model_endpoint", "metrics_model_endpoint"];
+
+  let queryTimestampMs: number | null = null;
+  if (route.timestamp !== undefined) {
+    const canonical = canonicalTimestamp(route.timestamp, "route.timestamp");
+    queryTimestampMs = Date.parse(canonical);
+  }
+  const effectiveTimestampMs = observedRoute.timestamp !== null
+    ? Date.parse(observedRoute.timestamp)
+    : queryTimestampMs;
+
   const matches = collection.snapshots.filter((snapshot) => {
     const metadata = collection.metadata[snapshot.record_id];
     if (metadata === undefined || !scopes.includes(metadata.scope) || metadata.endpoint === null) return false;
     if (observedRoute.endpointId !== null && metadata.endpoint.id !== observedRoute.endpointId) return false;
     if (observedRoute.endpointName !== null && metadata.endpoint.name !== observedRoute.endpointName) return false;
     if (observedRoute.model !== null && metadata.model !== observedRoute.model) return false;
-    const timestampValue = observedRoute.timestamp ?? route.timestamp ?? null;
-    if (timestampValue !== null) {
-      const timestamp = Date.parse(canonicalTimestamp(timestampValue, "route.timestamp"));
-      if (timestamp < Date.parse(snapshot.window.start) || timestamp >= Date.parse(snapshot.window.end)) return false;
+    if (effectiveTimestampMs !== null) {
+      if (effectiveTimestampMs < Date.parse(snapshot.window.start) || effectiveTimestampMs >= Date.parse(snapshot.window.end)) {
+        return false;
+      }
     }
     return true;
   });

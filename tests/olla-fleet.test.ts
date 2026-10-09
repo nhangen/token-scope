@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { parseFleetRecord, snapshotCounterDelta } from "@/fleet-contract";
+import { parseFleetRecord, snapshotCounterDelta, PrivacyError } from "@/fleet-contract";
 import {
   collectOllaTelemetry,
   correlateOllaRoute,
@@ -46,6 +46,7 @@ async function collect(overrides: Record<string, string | Error | number> = {}, 
     endpointId?: string;
     endpointName?: string;
     model?: string;
+    timestamp?: string;
   }>;
 } = {}): Promise<OllaTelemetryCollection> {
   return collectOllaTelemetry({
@@ -546,6 +547,238 @@ describe("Olla fleet telemetry adapter", () => {
         expect.objectContaining({ source: "olla-metrics" }),
     ]));
     expect(result.provenance).toHaveLength(2);
+  });
+
+  it("returns ambiguous with empty provenance when multiple observed routes match the query", async () => {
+    const collected = await collect({}, {
+      observedRoutes: [
+        {
+          requestId: "ambiguous-observed",
+          endpointId: "ml1-id",
+          model: "qwen3.8:27b",
+        },
+        {
+          requestId: "ambiguous-observed",
+          endpointId: "ml2-id",
+          model: "qwen3.8:27b",
+        },
+      ],
+    });
+    const result = correlateOllaRoute(collected, { requestId: "ambiguous-observed" });
+    expect(result).toEqual({
+      state: "ambiguous",
+      key: "request_id=olla:ambiguous-observed",
+      snapshot: null,
+      provenance: [],
+    });
+  });
+
+  it("excludes snapshots when route timestamp falls outside the snapshot window", async () => {
+    const collected = await collect({ "/internal/metrics": 404 }, {
+      observedRoutes: [{
+        requestId: "window-test-route",
+        endpointId: "ml1-id",
+        model: "qwen3.8:27b",
+      }],
+    });
+
+    const inside = correlateOllaRoute(collected, {
+      requestId: "window-test-route",
+      timestamp: "2026-09-22T13:30:00.000Z",
+    });
+    expect(inside.state).toBe("matched");
+
+    const atStart = correlateOllaRoute(collected, {
+      requestId: "window-test-route",
+      timestamp: "2026-09-22T13:00:00.000Z",
+    });
+    expect(atStart.state).toBe("matched");
+
+    const before = correlateOllaRoute(collected, {
+      requestId: "window-test-route",
+      timestamp: "2026-09-22T12:59:59.000Z",
+    });
+    expect(before.state).toBe("unmatched");
+
+    const atEnd = correlateOllaRoute(collected, {
+      requestId: "window-test-route",
+      timestamp: "2026-09-22T14:05:00.000Z",
+    });
+    expect(atEnd.state).toBe("unmatched");
+  });
+
+  it("filters snapshot windows using candidate route timestamp when query timestamp is omitted", async () => {
+    const collectedInside = await collect({ "/internal/metrics": 404 }, {
+      observedRoutes: [{
+        requestId: "candidate-window-route-1",
+        endpointId: "ml1-id",
+        model: "qwen3.8:27b",
+        timestamp: "2026-09-22T13:00:00.000Z",
+      }],
+    });
+    const inside = correlateOllaRoute(collectedInside, {
+      requestId: "candidate-window-route-1",
+    });
+    expect(inside.state).toBe("matched");
+
+    const collectedOutside = await collect({ "/internal/metrics": 404 }, {
+      observedRoutes: [{
+        requestId: "candidate-window-route-2",
+        endpointId: "ml1-id",
+        model: "qwen3.8:27b",
+        timestamp: "2026-09-22T12:59:59.000Z",
+      }],
+    });
+    const outside = correlateOllaRoute(collectedOutside, {
+      requestId: "candidate-window-route-2",
+    });
+    expect(outside.state).toBe("unmatched");
+  });
+
+  it("sanitizes query parameters in correlateOllaRoute to match stored candidates", async () => {
+    const collected = await collect({ "/internal/metrics": 404 }, {
+      observedRoutes: [{
+        requestId: "sanitize-query-route",
+        endpointId: "ml1-id",
+        endpointName: "ml1-5080",
+        model: "qwen3.8:27b",
+      }],
+    });
+    const result = correlateOllaRoute(collected, {
+      requestId: "sanitize-query-route",
+      endpointId: "ml1-id\u0000",
+      endpointName: "ml1-5080\u0000",
+      model: "qwen3.8:27b\u0001",
+    });
+    expect(result.state).toBe("matched");
+
+    const emptyQuery = correlateOllaRoute(collected, {
+      requestId: "sanitize-query-route",
+      endpointId: "",
+      model: "",
+    });
+    expect(emptyQuery.state).toBe("matched");
+  });
+
+  it("rejects credential assignments in correlateOllaRoute query parameters and timestamp", async () => {
+    const collected = await collect({ "/internal/metrics": 404 }, {
+      observedRoutes: [{
+        requestId: "safe-route",
+        endpointId: "ml1-id",
+        model: "qwen3.8:27b",
+      }],
+    });
+
+    const secret = "Bearer secret-credential-value";
+    expect(() => correlateOllaRoute(collected, { requestId: secret })).toThrow("credential-like label value rejected");
+    expect(() => correlateOllaRoute(collected, { runId: secret })).toThrow("credential-like label value rejected");
+    expect(() => correlateOllaRoute(collected, { requestId: "safe-route", endpointId: secret })).toThrow("credential-like label value rejected");
+    expect(() => correlateOllaRoute(collected, { requestId: "safe-route", endpointName: secret })).toThrow("credential-like label value rejected");
+    expect(() => correlateOllaRoute(collected, { requestId: "safe-route", model: secret })).toThrow("credential-like label value rejected");
+    expect(() => correlateOllaRoute(collected, { requestId: "safe-route", timestamp: secret })).toThrow("credential-like label value rejected");
+    expect(() => correlateOllaRoute(collected, { endpointId: secret })).toThrow("credential-like label value rejected");
+  });
+
+  it("reports rejected observed routes for invalid keys without dropping valid routes", async () => {
+    const collected = await collect({}, {
+      observedRoutes: [
+        { runId: "run-89", endpointId: "ml1-id" },
+        { requestId: "", endpointId: "ml1-id" },
+        { endpointId: "ml1-id" },
+        { requestId: "req-with-bad-run", runId: "run-90", endpointId: "ml1-id" },
+        { requestId: "valid-key-route", endpointId: "ml1-id" },
+      ],
+    });
+    expect(collected.rejectedRoutes).toEqual([
+      { reason: "invalid_key" },
+      { reason: "invalid_key" },
+      { reason: "invalid_key" },
+      { reason: "invalid_key" },
+    ]);
+    expect(collected.observedRoutes).toHaveLength(1);
+    expect(collected.observedRoutes[0]!.requestId).toBe("olla:valid-key-route");
+  });
+
+  it("reports rejected observed routes for missing endpoints", async () => {
+    const collected = await collect({}, {
+      observedRoutes: [
+        { requestId: "no-endpoint-route" },
+        { requestId: "empty-endpoint-route", endpointId: "", endpointName: "" },
+      ],
+    });
+    expect(collected.rejectedRoutes).toEqual([
+      { reason: "missing_endpoint" },
+      { reason: "missing_endpoint" },
+    ]);
+    expect(collected.observedRoutes).toEqual([]);
+  });
+
+  it("rejects observed routes with control-character-only keys or endpoints", async () => {
+    const collected = await collect({}, {
+      observedRoutes: [
+        { requestId: "\u0000", endpointId: "ml1-id" },
+        { requestId: "olla:", endpointId: "ml1-id" },
+        { requestId: "valid-key", endpointId: "\u0000", endpointName: "\u0001" },
+      ],
+    });
+    expect(collected.rejectedRoutes).toEqual([
+      { reason: "invalid_key" },
+      { reason: "invalid_key" },
+      { reason: "missing_endpoint" },
+    ]);
+    expect(collected.observedRoutes).toHaveLength(0);
+  });
+
+  it("rejects credential assignments in invalid observed routes instead of masking as rejection", async () => {
+    const secret = "Bearer token-secret-val";
+
+    await expect(collect({}, {
+      observedRoutes: [{ runId: "bad-key-no-colon", endpointId: secret }],
+    })).rejects.toThrow("credential-like label value rejected");
+
+    await expect(collect({}, {
+      observedRoutes: [{ requestId: secret }],
+    })).rejects.toThrow("credential-like label value rejected");
+  });
+
+  it("isolates per-route malformed timestamps in rejectedRoutes and preserves scraped snapshots", async () => {
+    const collected = await collect({}, {
+      observedRoutes: [
+        { requestId: "bad-time-route", endpointId: "ml1-id", timestamp: "not-a-timestamp" },
+        { requestId: "good-time-route", endpointId: "ml1-id", timestamp: "2026-09-22T13:30:00Z" },
+      ],
+    });
+    expect(collected.rejectedRoutes).toEqual([{ reason: "malformed_timestamp" }]);
+    expect(collected.observedRoutes).toHaveLength(1);
+    expect(collected.observedRoutes[0]!.requestId).toBe("olla:good-time-route");
+    expect(collected.snapshots.length).toBeGreaterThan(0);
+  });
+
+  it("rejects credential assignments in route timestamp before persistence", async () => {
+    let capturedError: unknown = null;
+    try {
+      await collect({}, {
+        observedRoutes: [{
+          requestId: "secret-timestamp-route",
+          endpointId: "ml1-id",
+          timestamp: "Bearer token-in-time",
+        }],
+      });
+    } catch (error) {
+      capturedError = error;
+    }
+    expect(capturedError).toBeInstanceOf(PrivacyError);
+    expect((capturedError as Error).message).toBe("credential-like label value rejected");
+    expect((capturedError as Error).message).not.toContain("token-in-time");
+    expect((capturedError as Error).stack).not.toContain("token-in-time");
+  });
+
+  it("defaults rejectedRoutes to empty array when observedRoutes is empty or omitted", async () => {
+    const unobserved = await collect();
+    expect(unobserved.rejectedRoutes).toEqual([]);
+
+    const empty = await collect({}, { observedRoutes: [] });
+    expect(empty.rejectedRoutes).toEqual([]);
   });
 
   const FAKE_SECRET = "FAKE-EXAMPLE-TOKEN";
