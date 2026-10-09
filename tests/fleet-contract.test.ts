@@ -360,15 +360,30 @@ describe("fleet schema v1 contract", () => {
   });
 
   it("rejects unsupported and missing envelope fields, naming the offending keys", () => {
-    expect(() => parseFleetRecord({ ...fixture.usage_event, cost_usd: 1 }))
-      .toThrow("usage event has unsupported or missing fields (unexpected: cost_usd)");
+    const messageOf = (value: unknown): string => {
+      try {
+        parseFleetRecord(value);
+      } catch (error) {
+        return (error as Error).message;
+      }
+      throw new Error("expected parseFleetRecord to throw");
+    };
+    expect(messageOf({ ...fixture.usage_event, cost_usd: 1 }))
+      .toBe("usage event has unsupported or missing fields (unexpected: cost_usd)");
     const { model: _model, ...withoutModel } = fixture.usage_event;
-    expect(() => parseFleetRecord(withoutModel))
-      .toThrow("usage event has unsupported or missing fields (missing: model)");
-    expect(() => parseFleetRecord({
+    expect(messageOf(withoutModel))
+      .toBe("usage event has unsupported or missing fields (missing: model)");
+    expect(messageOf({
       ...fixture.usage_event,
       usage: { ...fixture.usage_event.usage, total_tokens: 144 },
-    })).toThrow("usage has unsupported or missing fields (unexpected: total_tokens)");
+    })).toBe("usage has unsupported or missing fields (unexpected: total_tokens)");
+  });
+
+  it("lists unexpected before missing keys, each sorted", () => {
+    const { model: _model, usage: _usage, ...withoutTwo } = fixture.usage_event;
+    expect(() => parseFleetRecord({ ...withoutTwo, zeta: 1, alpha: 2 })).toThrow(
+      /^usage event has unsupported or missing fields \(unexpected: alpha, zeta; missing: model, usage\)$/,
+    );
   });
 
   it("rejects empty, inverted, and future-ending snapshot windows", () => {
