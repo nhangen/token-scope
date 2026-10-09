@@ -58,10 +58,20 @@ export interface OllaSnapshotMetadata {
   routing: OllaRoutingMetadata | null;
 }
 
+export type OllaSourceReason =
+  | "stale"
+  | "missing"
+  | "unreadable"
+  | "malformed"
+  | "privacy"
+  | "dependency"
+  | "timeout"
+  | null;
+
 export interface OllaSourceObservation {
   path: OllaSourcePath;
   state: "available" | "partial" | "unavailable";
-  reason: "stale" | "missing" | "unreadable" | "malformed" | "privacy" | "dependency" | "timeout" | null;
+  reason: OllaSourceReason;
   errorClass: string | null;
   provenance: FleetProvenance;
 }
@@ -303,61 +313,61 @@ interface AdapterContext {
 
 export function errorClassName(error: unknown): string {
   if (typeof error === "object" && error !== null) {
-    const err = error as { name?: unknown; constructor?: { name?: unknown } };
-    let candidate: string | null = null;
-    if (typeof err.constructor?.name === "string") {
-      const ctor = err.constructor.name.trim();
-      if (/^[A-Za-z0-9_$]+$/.test(ctor) && ctor !== "Object" && ctor !== "Error") {
-        candidate = ctor;
-      }
-    }
-    if (candidate === "DOMException" && typeof err.name === "string") {
-      const name = err.name.trim();
-      if (/^[A-Za-z0-9_$]+$/.test(name) && name !== "Error") {
-        candidate = name;
-      }
-    }
-    if (candidate === null && typeof err.name === "string") {
-      const name = err.name.trim();
-      if (/^[A-Za-z0-9_$]+$/.test(name) && name !== "Error") {
-        candidate = name;
-      }
-    }
-    const raw = candidate ?? "Error";
     try {
+      const err = error as { name?: unknown; constructor?: { name?: unknown } };
+      let candidate: string | null = null;
+      if (typeof err.constructor?.name === "string") {
+        const ctor = err.constructor.name.trim();
+        if (/^[A-Za-z0-9_$]+$/.test(ctor) && ctor !== "Object" && ctor !== "Error") {
+          candidate = ctor;
+        }
+      }
+      if (candidate === "DOMException" && typeof err.name === "string") {
+        const name = err.name.trim();
+        if (/^[A-Za-z0-9_$]+$/.test(name) && name !== "Error") {
+          candidate = name;
+        }
+      }
+      if (candidate === null && typeof err.name === "string") {
+        const name = err.name.trim();
+        if (/^[A-Za-z0-9_$]+$/.test(name) && name !== "Error") {
+          candidate = name;
+        }
+      }
+      const raw = candidate ?? "Error";
       return privateSafeLabel(raw);
     } catch {
       return "Error";
     }
   }
-  try {
-    return privateSafeLabel(typeof error);
-  } catch {
-    return "Error";
-  }
+  return "Error";
 }
 
 export function isTimeoutError(error: unknown, signal?: AbortSignal): boolean {
-  if (error instanceof DOMException && error.name === "TimeoutError") return true;
-  if (typeof error === "object" && error !== null) {
-    const err = error as { name?: unknown; cause?: unknown };
-    if (err.name === "TimeoutError") return true;
-    if (err.cause instanceof DOMException && err.cause.name === "TimeoutError") return true;
-    if (err.cause instanceof Error && err.cause.name === "TimeoutError") return true;
+  try {
+    if (error instanceof DOMException && error.name === "TimeoutError") return true;
+    if (typeof error === "object" && error !== null) {
+      const err = error as { name?: unknown; cause?: unknown };
+      if (err.name === "TimeoutError") return true;
+      if (err.cause instanceof DOMException && err.cause.name === "TimeoutError") return true;
+      if (err.cause instanceof Error && err.cause.name === "TimeoutError") return true;
+    }
+    if (signal?.aborted) {
+      const reason = signal.reason;
+      if (reason instanceof DOMException && reason.name === "TimeoutError") return true;
+      if (reason instanceof Error && reason.name === "TimeoutError") return true;
+      if (typeof reason === "object" && reason !== null && (reason as { name?: unknown }).name === "TimeoutError") return true;
+    }
+    return false;
+  } catch {
+    return false;
   }
-  if (signal?.aborted) {
-    const reason = signal.reason;
-    if (reason instanceof DOMException && reason.name === "TimeoutError") return true;
-    if (reason instanceof Error && reason.name === "TimeoutError") return true;
-    if (typeof reason === "object" && reason !== null && (reason as { name?: unknown }).name === "TimeoutError") return true;
-  }
-  return false;
 }
 
 function setObservation(
   source: LoadedSource,
   state: OllaSourceObservation["state"],
-  reason: OllaSourceObservation["reason"],
+  reason: OllaSourceReason,
   errorClass: string | null = null,
 ): void {
   source.observation.state = state;
@@ -839,8 +849,8 @@ export async function collectOllaTelemetry(
     throw new Error("staleAfterMs must be non-negative");
   }
   const timeoutMs = options.timeoutMs ?? 10_000;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new Error("timeoutMs must be positive");
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) {
+    throw new Error("timeoutMs must be positive and fit within a 32-bit integer");
   }
   const fetcher = options.fetch ?? ((url: string, init?: RequestInit) => fetch(url, init));
   const loaded = await Promise.all(SOURCE_PATHS.map(async (path): Promise<LoadedSource> => {
