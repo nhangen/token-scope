@@ -359,16 +359,16 @@ describe("fleet schema v1 contract", () => {
     });
   });
 
-  it("rejects unsupported and missing envelope fields", () => {
+  it("rejects unsupported and missing envelope fields, naming the offending keys", () => {
     expect(() => parseFleetRecord({ ...fixture.usage_event, cost_usd: 1 }))
-      .toThrow("usage event has unsupported or missing fields");
+      .toThrow("usage event has unsupported or missing fields (unexpected: cost_usd)");
     const { model: _model, ...withoutModel } = fixture.usage_event;
     expect(() => parseFleetRecord(withoutModel))
-      .toThrow("usage event has unsupported or missing fields");
+      .toThrow("usage event has unsupported or missing fields (missing: model)");
     expect(() => parseFleetRecord({
       ...fixture.usage_event,
       usage: { ...fixture.usage_event.usage, total_tokens: 144 },
-    })).toThrow("usage has unsupported or missing fields");
+    })).toThrow("usage has unsupported or missing fields (unexpected: total_tokens)");
   });
 
   it("rejects empty, inverted, and future-ending snapshot windows", () => {

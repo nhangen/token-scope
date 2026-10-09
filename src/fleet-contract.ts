@@ -117,10 +117,15 @@ function assertExactKeys(
   expected: readonly string[],
   name: string,
 ): void {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
-    throw new Error(`${name} has unsupported or missing fields`);
+  const actual = new Set(Object.keys(value));
+  const wanted = new Set(expected);
+  const extra = [...actual].filter((key) => !wanted.has(key)).sort(compareCodeUnits);
+  const missing = [...wanted].filter((key) => !actual.has(key)).sort(compareCodeUnits);
+  if (extra.length > 0 || missing.length > 0) {
+    const parts: string[] = [];
+    if (extra.length > 0) parts.push(`unexpected: ${extra.join(", ")}`);
+    if (missing.length > 0) parts.push(`missing: ${missing.join(", ")}`);
+    throw new Error(`${name} has unsupported or missing fields (${parts.join("; ")})`);
   }
 }
 
