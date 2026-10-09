@@ -1210,4 +1210,107 @@ describe("Olla fleet telemetry adapter", () => {
       expect(source.errorClass).toBe("TimeoutError");
     });
   });
+
+  describe("Prometheus dimension preservation and duplicate prevention (#117)", () => {
+    it("preserves samples differing by extra label dimensions as distinct counters rather than overwriting", async () => {
+      const prom = [
+        'olla_endpoint_requests_total{endpoint="ml1-5080",status="ok"} 40',
+        'olla_endpoint_requests_total{endpoint="ml1-5080",status="error"} 3',
+        'olla_endpoint_requests_total{endpoint="ml2-5070"} 10',
+        'olla_endpoint_up{endpoint="ml1-5080",status="healthy"} 1',
+        'olla_endpoint_up{endpoint="ml2-5070",status="offline"} 0',
+      ].join("\n") + "\n";
+      const collected = await collect({ "/internal/metrics": prom });
+      expect(snapshot(collected, "metrics_endpoint", "ml1-id").counters).toMatchObject({
+        requests_status_ok: 40,
+        requests_status_error: 3,
+        health_up: 1,
+      });
+      expect(snapshot(collected, "metrics_endpoint", "ml2-id").counters).toMatchObject({
+        requests: 10,
+        health_up: 0,
+      });
+    });
+
+    it("preserves model and model-endpoint samples with extra labels as distinct counters", async () => {
+      const prom = [
+        'olla_model_requests_total{model="qwen3.8:27b",stream="true"} 35',
+        'olla_model_requests_total{model="qwen3.8:27b",stream="false"} 15',
+        'olla_model_endpoint_requests_total{model="qwen3.8:27b",endpoint="ml1-5080",code="200"} 38',
+        'olla_model_endpoint_requests_total{model="qwen3.8:27b",endpoint="ml1-5080",code="500"} 2',
+      ].join("\n") + "\n";
+      const collected = await collect({ "/internal/metrics": prom });
+      expect(snapshot(collected, "metrics_model", "qwen3.8:27b").counters).toMatchObject({
+        requests_stream_true: 35,
+        requests_stream_false: 15,
+      });
+      expect(snapshot(collected, "metrics_model_endpoint", "qwen3.8:27b").counters).toMatchObject({
+        requests_code_200: 38,
+        requests_code_500: 2,
+      });
+    });
+
+    it("retains system-level samples with labels rather than silently dropping them", async () => {
+      const prom = [
+        "olla_requests_total 50",
+        'olla_requests_total{status="500"} 3',
+        'olla_failures_total{category="timeout"} 1',
+      ].join("\n") + "\n";
+      const collected = await collect({ "/internal/metrics": prom });
+      expect(snapshot(collected, "metrics").counters).toMatchObject({
+        requests: 50,
+        requests_status_500: 3,
+        failures_category_timeout: 1,
+      });
+    });
+
+    it("canonically sorts multiple extra labels and sanitizes special characters", async () => {
+      const prom = 'olla_requests_total{zone="us-east",env="prod",tier="tier.1"} 12\n';
+      const collected = await collect({ "/internal/metrics": prom });
+      expect(snapshot(collected, "metrics").counters.requests_env_prod_tier_tier_1_zone_us_east).toBe(12);
+    });
+
+    it("marks source malformed on duplicate sample collision instead of silently overwriting", async () => {
+      const duplicateEndpoint = [
+        'olla_endpoint_requests_total{endpoint="ml1-5080",status="ok"} 40',
+        'olla_endpoint_requests_total{endpoint="ml1-5080",status="ok"} 42',
+      ].join("\n") + "\n";
+      const collectedEndpoint = await collect({ "/internal/metrics": duplicateEndpoint });
+      expect(collectedEndpoint.sources).toContainEqual(expect.objectContaining({
+        path: "/internal/metrics",
+        state: "partial",
+        reason: "malformed",
+        errorClass: "Error",
+      }));
+
+      const duplicateSystem = [
+        "olla_requests_total 50",
+        "olla_requests_total 51",
+      ].join("\n") + "\n";
+      const collectedSystem = await collect({ "/internal/metrics": duplicateSystem });
+      expect(collectedSystem.sources).toContainEqual(expect.objectContaining({
+        path: "/internal/metrics",
+        state: "partial",
+        reason: "malformed",
+        errorClass: "Error",
+      }));
+    });
+
+    it("marks source malformed when endpoint or model family lacks corresponding label", async () => {
+      for (const body of [
+        "olla_endpoint_requests_total 10\n",
+        "olla_model_requests_total 10\n",
+        'olla_model_endpoint_requests_total{model="qwen3.8:27b"} 10\n',
+        'olla_model_endpoint_requests_total{endpoint="ml1-5080"} 10\n',
+      ]) {
+        const collected = await collect({ "/internal/metrics": body });
+        expect(collected.sources, body).toContainEqual(expect.objectContaining({
+          path: "/internal/metrics",
+          state: "partial",
+          reason: "malformed",
+          errorClass: "Error",
+        }));
+      }
+    });
+  });
 });
