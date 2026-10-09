@@ -6,7 +6,9 @@ import {
   collectOllaTelemetry,
   correlateOllaRoute,
   errorClassName,
+  isTimeoutError,
   type OllaFetch,
+  type OllaSourceReason,
   type OllaTelemetryCollection,
 } from "@/fleet/olla";
 
@@ -223,10 +225,10 @@ describe("Olla fleet telemetry adapter", () => {
       "/internal/metrics": 404,
     });
     expect(collected.sources).toEqual(expect.arrayContaining([
-      expect.objectContaining({ path: "/internal/status", state: "partial", reason: "stale" }),
-      expect.objectContaining({ path: "/internal/status/endpoints", state: "unavailable", reason: "unreadable" }),
-      expect.objectContaining({ path: "/internal/status/models", state: "partial", reason: "malformed" }),
-      expect.objectContaining({ path: "/internal/metrics", state: "unavailable", reason: "missing" }),
+      expect.objectContaining({ path: "/internal/status", state: "partial", reason: "stale", errorClass: null }),
+      expect.objectContaining({ path: "/internal/status/endpoints", state: "unavailable", reason: "unreadable", errorClass: "Error" }),
+      expect.objectContaining({ path: "/internal/status/models", state: "partial", reason: "malformed", errorClass: "SyntaxError" }),
+      expect.objectContaining({ path: "/internal/metrics", state: "unavailable", reason: "missing", errorClass: null }),
     ]));
     for (const source of collected.sources) {
       expect(source.provenance.collected_at).toBe(COLLECTED_AT);
@@ -943,10 +945,52 @@ describe("Olla fleet telemetry adapter", () => {
   });
 
   describe("fetch timeout and failure class tracking (#119)", () => {
-    it("rejects invalid timeoutMs (negative, zero, or non-finite)", async () => {
+    it("rejects invalid timeoutMs (negative, zero, non-finite, or exceeding 32-bit int max)", async () => {
       await expect(collect({}, { timeoutMs: 0 })).rejects.toThrow("timeoutMs must be positive");
       await expect(collect({}, { timeoutMs: -10 })).rejects.toThrow("timeoutMs must be positive");
       await expect(collect({}, { timeoutMs: NaN })).rejects.toThrow("timeoutMs must be positive");
+      await expect(collect({}, { timeoutMs: 2_147_483_648 })).rejects.toThrow("timeoutMs must be positive");
+    });
+
+    it("applies default 10,000 ms timeout when timeoutMs is omitted", async () => {
+      const originalTimeout = AbortSignal.timeout;
+      let capturedTimeoutMs: number | undefined;
+      try {
+        AbortSignal.timeout = (ms: number) => {
+          capturedTimeoutMs = ms;
+          return originalTimeout.call(AbortSignal, ms);
+        };
+        await collect();
+        expect(capturedTimeoutMs).toBe(10_000);
+      } finally {
+        AbortSignal.timeout = originalTimeout;
+      }
+    });
+
+    it("forwards init and AbortSignal to global fetch when options.fetch is omitted", async () => {
+      const originalFetch = globalThis.fetch;
+      try {
+        let forwardedInit: RequestInit | undefined;
+        let callCount = 0;
+        globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+          callCount += 1;
+          forwardedInit = init;
+          return new Response("{}", {
+            status: 404,
+            headers: { "content-type": "application/json" },
+          });
+        }) as unknown as typeof fetch;
+        const collected = await collectOllaTelemetry({ baseUrl: "http://router.local:40114" });
+        expect(callCount).toBe(5);
+        expect(forwardedInit?.signal).toBeInstanceOf(AbortSignal);
+        for (const source of collected.sources) {
+          expect(source.state).toBe("unavailable");
+          expect(source.reason).toBe("missing");
+          expect(source.errorClass).toBeNull();
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
 
     it("marks source unavailable with reason timeout and errorClass TimeoutError on fetch timeout", async () => {
@@ -1020,16 +1064,31 @@ describe("Olla fleet telemetry adapter", () => {
       expect(source.errorClass).toBe("Error");
     });
 
-    it("preserves errorClass null on available and dependency sources", async () => {
+    it("preserves errorClass null on available, stale, and dependency sources", async () => {
       const collected = await collect();
       for (const source of collected.sources) {
         expect(source.state).toBe("available");
         expect(source.errorClass).toBeNull();
       }
 
+      const staleStatus = JSON.stringify({
+        ...JSON.parse(fixture("status.json")),
+        timestamp: "2026-09-22T14:00:00Z",
+      });
+      const collectedStale = await collect({ "/internal/status": staleStatus });
+      const staleSource = collectedStale.sources.find((s) => s.path === "/internal/status")!;
+      expect(staleSource.state).toBe("partial");
+      expect(staleSource.reason).toBe("stale");
+      expect(staleSource.errorClass).toBeNull();
+
       const status = JSON.parse(fixture("status.json"));
       delete status.system.start_time;
       const collectedDep = await collect({ "/internal/status": JSON.stringify(status) });
+      const statusSource = collectedDep.sources.find((s) => s.path === "/internal/status")!;
+      expect(statusSource.state).toBe("partial");
+      expect(statusSource.reason).toBe("malformed");
+      expect(statusSource.errorClass).toBe("Error");
+
       const depSource = collectedDep.sources.find((s) => s.path === "/internal/status/endpoints")!;
       expect(depSource.state).toBe("partial");
       expect(depSource.reason).toBe("dependency");
@@ -1048,16 +1107,16 @@ describe("Olla fleet telemetry adapter", () => {
 
     it("never leaks error message or URL text into errorClass", async () => {
       const secretUrl = "http://internal-db.local:5432/token=supersecret";
-      const customError = new TypeError(`Failed to fetch from ${secretUrl}`);
-      // Simulate library error formatting
-      customError.name = `FetchError: connect ECONNREFUSED ${secretUrl}`;
+      const customError = Object.assign(new Error(`Failed to fetch from ${secretUrl}`), {
+        name: `FetchError: connect ECONNREFUSED ${secretUrl}`,
+      });
       const collected = await collect({}, {
         fetch: async () => Promise.reject(customError),
       });
       const source = collected.sources.find((s) => s.path === "/internal/status/endpoints")!;
       expect(source.state).toBe("unavailable");
       expect(source.reason).toBe("unreadable");
-      expect(source.errorClass).toBe("TypeError");
+      expect(source.errorClass).toBe("Error");
       expect(JSON.stringify(source)).not.toContain("supersecret");
       expect(JSON.stringify(source)).not.toContain("5432");
     });
@@ -1087,11 +1146,45 @@ describe("Olla fleet telemetry adapter", () => {
       expect(errorClassName(new SyntaxError("syntax"))).toBe("SyntaxError");
       expect(errorClassName(new DOMException("timed out", "TimeoutError"))).toBe("TimeoutError");
       expect(errorClassName(new DOMException("aborted", "AbortError"))).toBe("AbortError");
+      expect(errorClassName(new Error("standard"))).toBe("Error");
       expect(errorClassName({ name: 404 })).toBe("Error");
       expect(errorClassName({ name: "token=leak" })).toBe("Error");
       expect(errorClassName({ name: "sk-secret1234567890123456" })).toBe("Error");
-      expect(errorClassName("failed")).toBe("string");
-      expect(errorClassName(null)).toBe("object");
+      expect(errorClassName("failed")).toBe("Error");
+      expect(errorClassName(null)).toBe("Error");
+      expect(errorClassName(undefined)).toBe("Error");
+
+      const poisonError = {
+        get name(): string { throw new Error("poison"); },
+        get constructor(): unknown { throw new Error("poison"); },
+      };
+      expect(errorClassName(poisonError)).toBe("Error");
+    });
+
+    it("evaluates isTimeoutError accurately across error types, causes, and signal reasons", () => {
+      expect(isTimeoutError(new DOMException("timed out", "TimeoutError"))).toBe(true);
+      expect(isTimeoutError(new Error("failed", { cause: new DOMException("timed out", "TimeoutError") }))).toBe(true);
+      expect(isTimeoutError(new Error("failed", { cause: Object.assign(new Error("timed out"), { name: "TimeoutError" }) }))).toBe(true);
+      expect(isTimeoutError({ name: "TimeoutError" })).toBe(true);
+
+      const abortedSignal = AbortSignal.abort(new DOMException("timed out", "TimeoutError"));
+      expect(isTimeoutError(new Error("aborted"), abortedSignal)).toBe(true);
+
+      const timeoutObjSignal = {
+        aborted: true,
+        reason: { name: "TimeoutError" },
+      } as unknown as AbortSignal;
+      expect(isTimeoutError(new Error("aborted"), timeoutObjSignal)).toBe(true);
+
+      expect(isTimeoutError(new Error("generic error"))).toBe(false);
+      expect(isTimeoutError(new DOMException("aborted", "AbortError"))).toBe(false);
+      expect(isTimeoutError(null)).toBe(false);
+      expect(isTimeoutError(undefined)).toBe(false);
+
+      const poisonCause = {
+        get cause(): unknown { throw new Error("poison"); },
+      };
+      expect(isTimeoutError(poisonCause)).toBe(false);
     });
 
     it("attaches default AbortSignal and normalizes errorClass to TimeoutError on client abort", async () => {
