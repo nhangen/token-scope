@@ -447,8 +447,9 @@ const TELEMETRY_TOKEN_PREFIXES = [
   "input", "output", "prompt", "completion", "reasoning", "cache", "cumulative", "max", "total",
 ];
 // Database and map key names, not credentials (sort_key, partition_key, public_key).
-// primary is left out: an Azure primary key is the access key itself.
-const NON_CREDENTIAL_KEY_PREFIXES = ["sort", "cache", "public", "partition", "routing", "foreign"];
+// primary and routing are left out: an Azure primary key is the access key,
+// and a PagerDuty routing_key is the integration secret.
+const NON_CREDENTIAL_KEY_PREFIXES = ["sort", "cache", "public", "partition", "foreign"];
 const COMPOUND_KEY_PREFIX =
   /(?:api|access|auth|secret|priv|private|client|app|signing|encryption|master|ssh|deploy|session|consumer|service|account|license|shared)keys?$/;
 
