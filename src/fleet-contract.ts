@@ -360,6 +360,7 @@ const CREDENTIAL_PARAM_KEYS = new Set([
   "accesskey",
   "accesstoken",
   "apikey",
+  "apitoken",
   "authkey",
   "authorization",
   "authtoken",
@@ -377,6 +378,7 @@ const CREDENTIAL_PARAM_KEYS = new Set([
   "password",
   "privkey",
   "privatekey",
+  "privatekeys",
   "pwd",
   "refreshtoken",
   "secret",
@@ -388,7 +390,7 @@ const CREDENTIAL_PARAM_KEYS = new Set([
 
 function isCredentialPair(keyRaw: string, valRaw: string): boolean {
   const key = keyRaw.toLowerCase().replace(/[-_]/g, "");
-  const val = valRaw.toLowerCase().replace(/^["\x27]+|["\x27]+$/g, "");
+  const val = valRaw.toLowerCase().replace(/^["\x27\[]+|["\x27\]]+$/g, "");
 
   if (CREDENTIAL_PARAM_KEYS.has(key)) {
     return true;
@@ -404,14 +406,43 @@ function isCredentialPair(keyRaw: string, valRaw: string): boolean {
       || key.startsWith("prompt")
       || key.startsWith("completion")
       || key.startsWith("cache")
+      || key.startsWith("max")
     ) {
       return false;
     }
     return true;
   }
 
-  if (/(?:secret|password|passwd|sig|signature)$/.test(key)) {
-    if (key.startsWith("sort") || key.startsWith("cache") || key.startsWith("public")) return false;
+  if (/(?:secret|secrets|password|passwd|sig|signature)$/.test(key)) {
+    if (
+      key.startsWith("sort")
+      || key.startsWith("cache")
+      || key.startsWith("public")
+      || key.startsWith("primary")
+      || key.startsWith("partition")
+      || key.startsWith("routing")
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  // Compound keys: client_key, app_key, signing_key, etc.
+  // Bare "key" alone (e.g. tag={"key": "env"}) and non-key words (monkey) are not credentials.
+  if (
+    /(?:^|[^a-z0-9])(?:[a-z0-9]+[-_]keys?)$/i.test(keyRaw)
+    || /(?:api|access|auth|secret|priv|private|client|app|signing|encryption|master|ssh|deploy)keys?$/.test(key)
+  ) {
+    if (
+      key.startsWith("sort")
+      || key.startsWith("cache")
+      || key.startsWith("public")
+      || key.startsWith("primary")
+      || key.startsWith("partition")
+      || key.startsWith("routing")
+    ) {
+      return false;
+    }
     return true;
   }
 
@@ -428,6 +459,7 @@ const CREDENTIAL_PATH_WORDS = new Set([
   "accesskey",
   "accesstoken",
   "apikey",
+  "apitoken",
   "authkey",
   "authorization",
   "authtoken",
@@ -472,7 +504,10 @@ function isCredentialPathWord(norm: string): boolean {
     }
     return true;
   }
-  if (/(?:secret|secrets|password|passwd|key|keys)$/.test(norm)) {
+  if (
+    /(?:secret|secrets|password|passwd)$/.test(norm)
+    || /(?:api|access|auth|secret|priv|private|client|app|signing|encryption|master|ssh|deploy)keys?$/.test(norm)
+  ) {
     if (
       norm.startsWith("sort")
       || norm.startsWith("cache")
@@ -513,7 +548,7 @@ function hasPositionalCredential(decoded: string): boolean {
     if (colonParts.length > 1) {
       for (let j = 0; j < colonParts.length - 1; j++) {
         const k = colonParts[j] ?? "";
-        const v = colonParts.slice(j + 1).join(":");
+        const v = colonParts[j + 1] ?? "";
         if (isCredentialPair(k, v)) return true;
       }
     }
@@ -523,7 +558,7 @@ function hasPositionalCredential(decoded: string): boolean {
       if (i + 1 < rawSegments.length) {
         const nextRaw = rawSegments[i + 1];
         const nextSegment = (nextRaw ? nextRaw.split(";")[0]?.trim().toLowerCase() : "") ?? "";
-        if (norm === "token" || norm === "tokens" || norm.endsWith("token") || norm.endsWith("tokens")) {
+        if (norm === "token" || norm === "tokens") {
           if (TOKEN_TELEMETRY_QUALIFIERS.has(nextSegment)) continue;
         }
         return true;
@@ -542,7 +577,7 @@ function hasCredentialValue(decoded: string): boolean {
       const parts = val.split(/\s*:\s*/);
       for (let j = 0; j < parts.length - 1; j++) {
         const nestedK = parts[j] ?? "";
-        const nestedV = parts.slice(j + 1).join(":");
+        const nestedV = parts[j + 1] ?? "";
         if (isCredentialPair(nestedK, nestedV)) return true;
       }
     }
