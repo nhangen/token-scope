@@ -224,6 +224,7 @@ function parseRollout(text: string, provenance: string): ParsedRollout {
     } catch {
       continue;
     }
+    if (rec === null || typeof rec !== "object") continue;
     const useOrdinal = validOrdinal(rec.ordinal) && !seenOrdinals.has(rec.ordinal);
     if (validOrdinal(rec.ordinal)) seenOrdinals.add(rec.ordinal);
     const recordKey = useOrdinal ? `ordinal-${rec.ordinal}` : `line-${lineIndex}`;
@@ -386,9 +387,12 @@ export function codexEvents(
           reasons.add("unreadable");
           continue;
         }
-        // parseRollout skips unparseable lines internally (never throws),
-        // so a readable file is a parse success for skip-counting purposes.
-        rollouts.push(parseRollout(text, p));
+        try {
+          rollouts.push(parseRollout(text, p));
+        } catch {
+          skipped += 1;
+          reasons.add("malformed");
+        }
       }
     }
   };

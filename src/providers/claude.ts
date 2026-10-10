@@ -46,6 +46,7 @@ export function claudeEventsFromTranscript(
     } catch {
       continue; // torn tail line: skip, never fabricate
     }
+    if (rec === null || typeof rec !== "object") continue;
     index += 1;
     if (rec.type !== "assistant") continue;
     const msg = rec.message ?? {};
@@ -136,9 +137,12 @@ export function claudeEvents(
         reasons.add("unreadable");
         continue;
       }
-      // Parse errors are counted per-line inside claudeEventsFromTranscript
-      // and never throw, so a file that reads is never "malformed" here.
-      out.push(...claudeEventsFromTranscript(text, p));
+      try {
+        out.push(...claudeEventsFromTranscript(text, p));
+      } catch {
+        skipped += 1;
+        reasons.add("malformed");
+      }
     }
   }
   return { events: out, skipped, reasons: [...reasons] };
