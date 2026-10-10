@@ -529,15 +529,18 @@ const SLACK_WEBHOOK_PATH = /(?:^|\/)services(?:;[^/]*)?\/T[0-9A-Z]+(?:;[^/]*)?\/
 // may be the value the path was built to carry.
 const TELEMETRY_PATH_TAIL = /^(?:[a-z]+|\d+(?:\.\d+)?|\d+[smhdw]|\d{4}-\d{2}(?:-\d{2})?)$/;
 
+const ABSOLUTE_FILE_PATH = /^(?:\/(?!\/)|~\/|[a-z]:\/(?!\/)|file:)/i;
+
 function hasPositionalCredential(decoded: string): boolean {
   const normalized = decoded.replaceAll("\\", "/");
   const [pathPart = ""] = normalized.split(/[?#]/, 1);
   const pathMatch = pathPart.match(/^(?:[a-z][a-z0-9+.-]*:\/\/[^/?#]+)?([^?#]*)/i);
   const pathname = pathMatch ? (pathMatch[1] ?? "") : pathPart;
   if (SLACK_WEBHOOK_PATH.test(pathname)) return true;
-  // A file locator's directories are the user's project names (design-tokens,
-  // my-secrets), so only an exact credential word counts there, not a compound.
-  const urlLocator = /^[a-z][a-z0-9+.-]*:\/\//i.test(normalized) && !/^file:/i.test(normalized);
+  // An absolute file path's directories are the user's project names
+  // (design-tokens, my-secrets), so only an exact credential word counts there.
+  // Anything else, including //host and host:port/ forms, keeps the compound rules.
+  const fileLocator = ABSOLUTE_FILE_PATH.test(normalized.trim());
 
   const rawSegments = pathname.split("/").filter((s) => s.length > 0);
   for (let i = 0; i < rawSegments.length; i++) {
@@ -550,7 +553,7 @@ function hasPositionalCredential(decoded: string): boolean {
     if (colonParts.length > 1 && hasCredentialColonChain(colonParts)) return true;
 
     const norm = segment.toLowerCase().replace(/[-_]/g, "");
-    if (urlLocator ? isCredentialPathWord(segment, norm) : CREDENTIAL_PATH_WORDS.has(norm)) {
+    if (fileLocator ? CREDENTIAL_PATH_WORDS.has(norm) : isCredentialPathWord(segment, norm)) {
       if (i + 1 < rawSegments.length) {
         const nextRaw = rawSegments[i + 1];
         const nextSegment = (nextRaw ? nextRaw.split(";")[0]?.trim().toLowerCase() : "") ?? "";

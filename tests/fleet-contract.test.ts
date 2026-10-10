@@ -572,6 +572,17 @@ describe("fleet schema v1 contract", () => {
         expect(() => parseFleetRecord(withLocator(locator))).toThrow(positional);
       });
 
+      it.each([
+        "//ml1/metrics/session_key/FAKE-EXAMPLE",
+        "ml1:40114/metrics/client_secret/FAKE-EXAMPLE",
+        "ml1/metrics/signing_key/FAKE-EXAMPLE",
+        " https://ml1/metrics/session_key/FAKE-EXAMPLE",
+        "https:\\\\ml1\\metrics\\session_key\\FAKE-EXAMPLE",
+        "c://ml1/metrics/session_key/FAKE-EXAMPLE",
+      ])("keeps compound credential words in a locator that is not an absolute file path: %s", (locator) => {
+        expect(() => parseFleetRecord(withLocator(locator))).toThrow(positional);
+      });
+
       it("rejects a positional secret whose name starts like a database key name", () => {
         expect(() => parseFleetRecord(withLocator("http://ml1/metrics/primary_password/FAKE-EXAMPLE")))
           .toThrow(positional);
