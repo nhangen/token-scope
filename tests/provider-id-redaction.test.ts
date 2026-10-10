@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
+import { claudeEventsFromTranscript } from "@/providers/claude";
 import { codexEventsFromRollout } from "@/providers/codex";
 import { geminiCliEventsFromTranscript } from "@/providers/gemini-cli";
 import { opencodeEventsFromDb } from "@/providers/opencode";
@@ -7,6 +8,26 @@ import { opencodeEventsFromDb } from "@/providers/opencode";
 const secret = `ghp_${"c".repeat(36)}`;
 
 describe("credential-shaped provider ids mark the event partial", () => {
+  it("claude session id", () => {
+    const events = claudeEventsFromTranscript(JSON.stringify({
+      type: "assistant", sessionId: secret, timestamp: "2026-09-22T14:02:00.000Z",
+      message: { id: "claude-request", model: "claude-opus-4-8", usage: { input_tokens: 1, output_tokens: 1 } },
+    }), "session.jsonl");
+    expect(events).toHaveLength(1);
+    expect(events[0]!.sessionId).toBeNull();
+    expect(events[0]!.partial).toContain("privacy-redaction");
+  });
+
+  it("gemini-cli session id", () => {
+    const { events } = geminiCliEventsFromTranscript([
+      JSON.stringify({ sessionId: secret, projectHash: "p", startTime: "2026-09-22T14:02:00.000Z", kind: "main" }),
+      JSON.stringify({ id: "gemini-request", timestamp: "2026-09-22T14:02:40.000Z", type: "gemini", model: "gemini-3-flash-preview", tokens: { input: 1000, output: 120, cached: 200, thoughts: 30, tool: 10, total: 1150 } }),
+    ].join("\n"), "session.jsonl");
+    expect(events).toHaveLength(1);
+    expect(events[0]!.sessionId).toBeNull();
+    expect(events[0]!.partial).toContain("privacy-redaction");
+  });
+
   it("codex session id", () => {
     const events = codexEventsFromRollout([
       JSON.stringify({ timestamp: "2026-09-22T14:02:10.000Z", type: "session_meta", payload: { id: secret, timestamp: "2026-09-22T14:02:10.000Z", model_provider: "openai" } }),
