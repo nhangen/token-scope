@@ -255,8 +255,15 @@ function routeFor(
   return { state: "matched", snapshot: joined.snapshot };
 }
 
-function sourceStates(collections: FleetCollections): FleetSourceState[] {
+function isContractRejection(error: unknown): boolean {
+  return error instanceof PrivacyError || (error instanceof Error && error.constructor === Error);
+}
+
+function sourceStates(collections: FleetCollections, rejected: Map<string, number>): FleetSourceState[] {
   const states: FleetSourceState[] = [];
+  for (const [source, count] of rejected) {
+    states.push({ source: `provider-${source}`, state: "partial", reason: `${count} event(s) rejected by fleet contract` });
+  }
   for (const source of collections.providers.unavailable) {
     states.push({ source: `provider-${source}`, state: "unavailable", reason: "unreadable" });
   }
@@ -294,13 +301,21 @@ export function fleetReportJson(
     promptOriginHost: string | null;
   },
 ): FleetReportJson {
+  const rejected = new Map<string, number>();
   const rows = collections.providers.events
     .filter((event) => {
       const timestamp = tsMs(event);
       return timestamp !== null && timestamp >= options.sinceMs;
     })
-    .map((event): FleetReportRow => {
-      const usage = usageRecord(event, options.collectedAt, options.promptOriginHost);
+    .flatMap((event): FleetReportRow[] => {
+      let usage: FleetUsageEvent;
+      try {
+        usage = usageRecord(event, options.collectedAt, options.promptOriginHost);
+      } catch (error) {
+        if (!isContractRejection(error)) throw error;
+        rejected.set(event.harness, (rejected.get(event.harness) ?? 0) + 1);
+        return [];
+      }
       const placement = placementFor(usage, collections.orca);
       const route = routeFor(event, usage, collections.olla, options.collectedAt, collections.routeFilePartial);
       const routeSnapshot = route.snapshot;
@@ -313,7 +328,7 @@ export function fleetReportJson(
       if (routeSnapshot !== null) {
         provenance.push({ ...routeSnapshot.provenance, scope: "aggregate" });
       }
-      return {
+      return [{
         event_id: fleetEventId(event),
         timestamp: usage.timestamp,
         prompt_origin_host: usage.prompt_origin_host,
@@ -341,14 +356,14 @@ export function fleetReportJson(
         total_latency: requestMeasurement(event.totalLatencyMs, "ms")
           ?? (routeSnapshot === null ? null : aggregateMeasurement(routeSnapshot, ["avg_latency_ms", "latency_ms"], "ms")),
         provenance,
-      };
+      }];
     })
     .sort((a, b) => a.event_id.localeCompare(b.event_id));
   return {
     schema_version: FLEET_SCHEMA_VERSION,
     window: options.window,
     rows,
-    sources: sourceStates(collections),
+    sources: sourceStates(collections, rejected),
   };
 }
 

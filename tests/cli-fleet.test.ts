@@ -545,4 +545,17 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     expect(claude.status).toBe("incomplete");
     expect(claude.provenance[0]).toMatchObject({ scope: "usage", locator: null, completeness: "partial" });
   });
+  it("drops an out-of-contract usage event and names its source instead of aborting", async () => {
+    const line = { ...claudeLine, message: { ...claudeLine.message, usage: { input_tokens: 100.5, output_tokens: 20 } } };
+    const result = await runFleet({ claudeRoot: claudeRootWith("project-a", line) });
+    expect(result.code).toBe(0);
+    const report = JSON.parse(result.out);
+    expect(report.rows.some((row: any) => row.harness === "claude")).toBe(false);
+    expect(report.rows.length).toBeGreaterThan(0);
+    expect(report.sources).toContainEqual({
+      source: "provider-claude",
+      state: "partial",
+      reason: "1 event(s) rejected by fleet contract",
+    });
+  });
 });
