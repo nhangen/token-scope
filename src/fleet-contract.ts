@@ -286,7 +286,12 @@ function hasCredentialSegment(name: string): boolean {
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .map((segment) => segment.replace(/(?<!\d)\d+$/, ""));
-  return segments.some((segment, index) => isCredentialSegment(segment, segments[index + 1]));
+  return segments.some((segment, index) =>
+    !isNonCredentialKeyName(segment, segments[index - 1]) && isCredentialSegment(segment, segments[index + 1]));
+}
+
+function isNonCredentialKeyName(segment: string, previous: string | undefined): boolean {
+  return (segment === "key" || segment === "keys") && previous !== undefined && NON_CREDENTIAL_KEY_PREFIXES.includes(previous);
 }
 
 // The camelCase split catches tokenValue and apiKeyId, but it also breaks a

@@ -360,6 +360,23 @@ describe("fleet schema v1 contract", () => {
     });
 
     it.each([
+      "http://ml1/metrics?sort_key=asc&sort_keys=asc",
+      "http://ml1/metrics?partition_key=p1&primary_key=id&routing_key=events",
+      "http://ml1/metrics?foreign_key=parent&cache_key=k1&publicKey=pk1",
+    ])("accepts database and map key names as query parameters in %s", (locator) => {
+      expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);
+    });
+
+    it.each([
+      "http://ml1/metrics?key=FAKE-EXAMPLE",
+      "http://ml1/metrics?keys=FAKE-EXAMPLE",
+      "http://ml1/metrics?api_keys=FAKE-EXAMPLE",
+      "http://ml1/metrics?sort=asc&key=FAKE-EXAMPLE",
+    ])("still rejects a credential key name next to the exemptions in %s", (locator) => {
+      expect(() => parseFleetRecord(withLocator(locator))).toThrow(rejected);
+    });
+
+    it.each([
       "http://ml1/metrics?cursor=abc==&q=a=b&filter=max_tokens>=5",
       "http://ml1/metrics?q=%E4%B8%AD%E6%96%87&note=caf%C3%A9&q=100%25",
     ])("accepts ordinary encoded telemetry locator %s", (locator) => {
@@ -683,6 +700,8 @@ describe("shared label privacy check", () => {
     "ghp_staging-runner",
     "glpat-something-x",
     "asiapacificgateway01",
+    "sort_keys=asc",
+    "partition_key=p1",
   ])("accepts model names and paths that only resemble token prefixes: %s", (value) => {
     expect(() => assertSafeLabelValue(value)).not.toThrow();
   });
