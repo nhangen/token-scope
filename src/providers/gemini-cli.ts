@@ -17,7 +17,7 @@ import {
   realpathSync,
 } from "fs";
 import { isAbsolute, join, relative, resolve, sep } from "path";
-import { stableId, type ProviderEvent } from "./types";
+import { stableId, type PartialReason, type ProviderEvent } from "./types";
 
 export const GEMINI_CLI_SOURCE_CONTRACT = Object.freeze({
   surface: "gemini-cli-session-jsonl",
@@ -62,6 +62,9 @@ export interface GeminiCliCollection {
   skipped: number;
   partialFiles: number;
   affectedFiles: number;
+  /** Why the source is partial, when it is (#125). Distinct from the
+   * single `source.reason` headline so the report can name every cause. */
+  reasons: PartialReason[];
   source: GeminiCliSourceObservation;
 }
 
@@ -256,15 +259,15 @@ export function geminiCliEvents(root: string, sinceMs?: number): GeminiCliCollec
     rootStat = lstatSync(configuredRoot);
   } catch (error) {
     if (errorCode(error) === "ENOENT") {
-      return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 0, source: source("available", null) };
+      return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 0, reasons: [], source: source("available", null) };
     }
-    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 1, source: source("unavailable", "unreadable") };
+    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 1, reasons: ["unreadable"], source: source("unavailable", "unreadable") };
   }
   if (rootStat.isSymbolicLink()) {
-    return { events: [], skipped: 1, partialFiles: 0, affectedFiles: 1, source: source("unavailable", "unsafe_path") };
+    return { events: [], skipped: 1, partialFiles: 0, affectedFiles: 1, reasons: ["unsafe_path"], source: source("unavailable", "unsafe_path") };
   }
   if (!rootStat.isDirectory()) {
-    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 1, source: source("unavailable", "unreadable") };
+    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 1, reasons: ["unreadable"], source: source("unavailable", "unreadable") };
   }
 
   const tmpRoot = join(configuredRoot, "tmp");
@@ -273,15 +276,15 @@ export function geminiCliEvents(root: string, sinceMs?: number): GeminiCliCollec
     tmpStat = lstatSync(tmpRoot);
   } catch (error) {
     if (errorCode(error) === "ENOENT") {
-      return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 0, source: source("available", null) };
+      return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 0, reasons: [], source: source("available", null) };
     }
-    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 1, source: source("unavailable", "unreadable") };
+    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 1, reasons: ["unreadable"], source: source("unavailable", "unreadable") };
   }
   if (tmpStat.isSymbolicLink()) {
-    return { events: [], skipped: 1, partialFiles: 0, affectedFiles: 1, source: source("unavailable", "unsafe_path") };
+    return { events: [], skipped: 1, partialFiles: 0, affectedFiles: 1, reasons: ["unsafe_path"], source: source("unavailable", "unsafe_path") };
   }
   if (!tmpStat.isDirectory()) {
-    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 1, source: source("unavailable", "unreadable") };
+    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 1, reasons: ["unreadable"], source: source("unavailable", "unreadable") };
   }
 
   let resolvedRoot: string;
@@ -290,22 +293,22 @@ export function geminiCliEvents(root: string, sinceMs?: number): GeminiCliCollec
     resolvedRoot = realpathSync(configuredRoot);
     resolvedTmpRoot = realpathSync(tmpRoot);
     if (!containedBy(resolvedRoot, resolvedTmpRoot)) {
-      return { events: [], skipped: 1, partialFiles: 0, affectedFiles: 1, source: source("unavailable", "unsafe_path") };
+      return { events: [], skipped: 1, partialFiles: 0, affectedFiles: 1, reasons: ["unsafe_path"], source: source("unavailable", "unsafe_path") };
     }
   } catch {
-    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 1, source: source("unavailable", "unreadable") };
+    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 1, reasons: ["unreadable"], source: source("unavailable", "unreadable") };
   }
 
   const files: string[] = [];
   const affectedPaths = new Set<string>();
-  let unreadable = false;
+  const reasons = new Set<PartialReason>();
   let unsafePaths = 0;
   const walk = (dir: string, scope: "tmp" | "project" | "chats"): void => {
     let entries;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {
-      unreadable = true;
+      reasons.add("unreadable");
       affectedPaths.add(dir);
       return;
     }
@@ -316,23 +319,26 @@ export function geminiCliEvents(root: string, sinceMs?: number): GeminiCliCollec
       try {
         stat = lstatSync(path);
       } catch {
-        unreadable = true;
+        reasons.add("unreadable");
         affectedPaths.add(path);
         continue;
       }
       if (scope === "tmp" && !stat.isDirectory() && !stat.isSymbolicLink()) continue;
       if (stat.isSymbolicLink()) {
         unsafePaths += 1;
+        reasons.add("unsafe_path");
         affectedPaths.add(path);
         continue;
       }
       if (scope === "project" && !stat.isDirectory()) {
         unsafePaths += 1;
+        reasons.add("unsafe_path");
         affectedPaths.add(path);
         continue;
       }
       if (scope === "chats" && !stat.isDirectory() && !stat.isFile()) {
         unsafePaths += 1;
+        reasons.add("unsafe_path");
         affectedPaths.add(path);
         continue;
       }
@@ -346,12 +352,13 @@ export function geminiCliEvents(root: string, sinceMs?: number): GeminiCliCollec
       try {
         resolvedPath = realpathSync(path);
       } catch {
-        unreadable = true;
+        reasons.add("unreadable");
         affectedPaths.add(path);
         continue;
       }
       if (!containedBy(resolvedRoot, resolvedPath) || !containedBy(resolvedTmpRoot, resolvedPath)) {
         unsafePaths += 1;
+        reasons.add("unsafe_path");
         affectedPaths.add(path);
         continue;
       }
@@ -374,48 +381,61 @@ export function geminiCliEvents(root: string, sinceMs?: number): GeminiCliCollec
   };
   walk(resolvedTmpRoot, "tmp");
 
-  if (unreadable && files.length === 0 && unsafePaths === 0) {
-    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: affectedPaths.size, source: source("unavailable", "unreadable") };
+  if (reasons.has("unreadable") && files.length === 0 && unsafePaths === 0) {
+    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: affectedPaths.size, reasons: [...reasons], source: source("unavailable", "unreadable") };
   }
   if (files.length === 0 && unsafePaths === 0) {
-    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 0, source: source("available", null) };
+    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 0, reasons: [], source: source("available", null) };
   }
 
   const events: ProviderEvent[] = [];
   let skipped = unsafePaths;
   let partialFiles = 0;
-  let malformed = unreadable;
+  let malformed = false;
   for (const file of files.sort()) {
+    let text: string | null;
     try {
-      const text = readRegularFile(file, sinceMs);
-      if (text === null) continue;
-      const parsed = geminiCliEventsFromTranscript(text, file);
-      events.push(...parsed.events);
-      if (parsed.errors > 0) {
-        skipped += 1;
-        malformed = true;
-        affectedPaths.add(file);
-      }
-      if (parsed.partialRecords > 0) {
-        partialFiles += 1;
-        affectedPaths.add(file);
-      }
+      text = readRegularFile(file, sinceMs);
     } catch {
+      // Only a filesystem failure (open/fstat/readFileSync errno) reaches
+      // this branch: the parser below never throws, so a read problem can no
+      // longer be conflated with a parse problem (#125).
+      reasons.add("unreadable");
+      skipped += 1;
+      affectedPaths.add(file);
+      continue;
+    }
+    if (text === null) continue;
+    const parsed = geminiCliEventsFromTranscript(text, file);
+    events.push(...parsed.events);
+    if (parsed.errors > 0) {
       skipped += 1;
       malformed = true;
+      reasons.add("malformed");
+      affectedPaths.add(file);
+    }
+    if (parsed.partialRecords > 0) {
+      partialFiles += 1;
+      reasons.add("partial_records");
       affectedPaths.add(file);
     }
   }
   const uniqueEvents = [...new Map(events.map((event) => [event.eventId, event])).values()];
-
+  const reasonList = [...reasons];
   if (unsafePaths > 0) {
-    return { events: uniqueEvents, skipped, partialFiles, affectedFiles: affectedPaths.size, source: source("partial", "unsafe_path") };
+    return { events: uniqueEvents, skipped, partialFiles, affectedFiles: affectedPaths.size, reasons: reasonList, source: source("partial", "unsafe_path") };
   }
   if (malformed) {
-    return { events: uniqueEvents, skipped, partialFiles, affectedFiles: affectedPaths.size, source: source("partial", "malformed") };
+    return { events: uniqueEvents, skipped, partialFiles, affectedFiles: affectedPaths.size, reasons: reasonList, source: source("partial", "malformed") };
   }
   if (partialFiles > 0) {
-    return { events: uniqueEvents, skipped, partialFiles, affectedFiles: affectedPaths.size, source: source("partial", "partial_records") };
+    return { events: uniqueEvents, skipped, partialFiles, affectedFiles: affectedPaths.size, reasons: reasonList, source: source("partial", "partial_records") };
   }
-  return { events: uniqueEvents, skipped, partialFiles, affectedFiles: 0, source: source("available", null) };
+  // Files that could not be read (filesystem error) but are not classified
+  // as malformed or partial-records. Surface them as partial with the
+  // "unreadable" reason so the cause is not lost (#125).
+  if (skipped > 0 && uniqueEvents.length === 0) {
+    return { events: uniqueEvents, skipped, partialFiles, affectedFiles: affectedPaths.size, reasons: reasonList, source: source("partial", "unreadable") };
+  }
+  return { events: uniqueEvents, skipped, partialFiles, affectedFiles: 0, reasons: [], source: source("available", null) };
 }

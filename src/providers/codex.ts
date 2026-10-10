@@ -12,7 +12,7 @@
  */
 import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
-import { stableId, type ProviderEvent } from "./types";
+import { stableId, type PartialReason, type ProviderEvent } from "./types";
 
 interface CodexTotals {
   input_tokens?: unknown;
@@ -352,17 +352,19 @@ function removeForkReplays(rollouts: ParsedRollout[]): ProviderEvent[] {
 export function codexEvents(
   root: string,
   sinceMs?: number,
-): { events: ProviderEvent[]; skipped: number } {
+): { events: ProviderEvent[]; skipped: number; reasons: PartialReason[] } {
   const sessionsDir = join(root, ".codex", "sessions");
-  if (!existsSync(sessionsDir)) return { events: [], skipped: 0 };
+  if (!existsSync(sessionsDir)) return { events: [], skipped: 0, reasons: [] };
   const rollouts: ParsedRollout[] = [];
   let skipped = 0;
+  const reasons = new Set<PartialReason>();
   const walk = (dir: string) => {
     let entries;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {
       skipped += 1; // unreadable subdir: skip it, don't lose the whole source
+      reasons.add("unreadable");
       return;
     }
     for (const e of entries) {
@@ -376,14 +378,20 @@ export function codexEvents(
             continue;
           }
         }
+        let text: string;
         try {
-          rollouts.push(parseRollout(readFileSync(p, "utf8"), p));
+          text = readFileSync(p, "utf8");
         } catch {
           skipped += 1;
+          reasons.add("unreadable");
+          continue;
         }
+        // parseRollout skips unparseable lines internally (never throws),
+        // so a readable file is a parse success for skip-counting purposes.
+        rollouts.push(parseRollout(text, p));
       }
     }
   };
   walk(sessionsDir);
-  return { events: removeForkReplays(rollouts), skipped };
+  return { events: removeForkReplays(rollouts), skipped, reasons: [...reasons] };
 }

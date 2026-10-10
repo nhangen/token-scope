@@ -16,7 +16,7 @@
  */
 import { readFileSync, readdirSync, existsSync, statSync } from "fs";
 import { join } from "path";
-import { stableId, type ProviderEvent } from "./types";
+import { stableId, type PartialReason, type ProviderEvent } from "./types";
 
 interface ClaudeUsage {
   input_tokens?: number;
@@ -109,11 +109,12 @@ function walkJsonl(dir: string, out: string[], sinceMs?: number): void {
 export function claudeEvents(
   root: string,
   sinceMs?: number,
-): { events: ProviderEvent[]; skipped: number } {
+): { events: ProviderEvent[]; skipped: number; reasons: PartialReason[] } {
   const projectsDir = join(root, "projects");
-  if (!existsSync(projectsDir)) return { events: [], skipped: 0 };
+  if (!existsSync(projectsDir)) return { events: [], skipped: 0, reasons: [] };
   const out: ProviderEvent[] = [];
   let skipped = 0;
+  const reasons = new Set<PartialReason>();
   for (const proj of readdirSync(projectsDir)) {
     const dir = join(projectsDir, proj);
     // Stray files (.DS_Store) live alongside project dirs; stat, don't assume.
@@ -127,12 +128,18 @@ export function claudeEvents(
     const files: string[] = [];
     walkJsonl(dir, files, sinceMs);
     for (const p of files) {
+      let text: string;
       try {
-        out.push(...claudeEventsFromTranscript(readFileSync(p, "utf8"), p));
+        text = readFileSync(p, "utf8");
       } catch {
         skipped += 1; // unreadable file: volume unknown, surfaced not swallowed
+        reasons.add("unreadable");
+        continue;
       }
+      // Parse errors are counted per-line inside claudeEventsFromTranscript
+      // and never throw, so a file that reads is never "malformed" here.
+      out.push(...claudeEventsFromTranscript(text, p));
     }
   }
-  return { events: out, skipped };
+  return { events: out, skipped, reasons: [...reasons] };
 }

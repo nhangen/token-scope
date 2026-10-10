@@ -7,7 +7,7 @@
  * group report and others omit is aggregated but marked partial: summing
  * known values while hiding the gaps would overstate measurement (#37 audit).
  */
-import type { Collected, ProviderEvent } from "@/providers";
+import type { Collected, ProviderEvent, PartialReason } from "@/providers";
 import { tsMs } from "@/providers/types";
 
 export interface ProviderRow {
@@ -133,6 +133,8 @@ export interface ProviderReportJson {
   unavailable: string[];
   /** Files that were skipped or contained partial records, by harness. */
   partial: Record<string, number>;
+  /** Why each partially-read source is partial, by harness (#125). */
+  partialReasons: Record<string, PartialReason[]>;
   /** Events outside --since only because they carry no timestamp. */
   untimedExcluded: number;
   /** False when source records have malformed or incomplete observations. */
@@ -151,6 +153,7 @@ export function renderProviderReport(
   unavailable: string[],
   partial: Record<string, number> = {},
   unsupported: string[] = [],
+  partialReasons: Record<string, PartialReason[]> = {},
 ): string {
   const lines: string[] = [];
   lines.push("provider usage by harness / provider / billing route / model");
@@ -197,7 +200,11 @@ export function renderProviderReport(
     lines.push("all values measured from source records; no estimates");
   }
   if (Object.keys(partial).length > 0) {
-    const parts = Object.entries(partial).map(([h, n]) => `${h}: ${n} affected file(s)`);
+    const parts = Object.entries(partial).map(([h, n]) => {
+      const reasons = partialReasons[h] ?? [];
+      const suffix = reasons.length > 0 ? ` [${reasons.join(", ")}]` : "";
+      return `${h}: ${n} affected file(s)${suffix}`;
+    });
     lines.push(`partially read (${parts.join(", ")}); unreported volume unknown`);
   }
   if (unavailable.length > 0) {
@@ -215,11 +222,13 @@ export function providerReportJson(
   partial: Record<string, number> = {},
   untimedExcluded = 0,
   unsupported: string[] = [],
+  partialReasons: Record<string, PartialReason[]> = {},
 ): ProviderReportJson {
   return {
     rows,
     unavailable,
     partial,
+    partialReasons,
     untimedExcluded,
     measured: rows.every((row) => row.malformedEvents === 0
       && row.partialEvents === 0

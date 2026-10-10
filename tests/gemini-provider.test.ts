@@ -476,6 +476,85 @@ describe("Gemini CLI source contract", () => {
     }
   });
 
+  it("names the reason for a partial source: malformed line => malformed (#125)", () => {
+    const root = mkdtempSync(join(tmpdir(), "token-scope-gemini-reason-malformed-"));
+    try {
+      const chats = join(root, "tmp", "project-a", "chats");
+      mkdirSync(chats, { recursive: true });
+      writeFileSync(join(chats, "mixed.jsonl"), [
+        JSON.stringify({ sessionId: "session-reason-malformed", messages: [] }),
+        "not-json",
+      ].join("\n"));
+
+      const collected = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: root,
+      });
+      expect(collected.partial["gemini-cli"]).toBe(1);
+      expect(collected.partialReasons?.["gemini-cli"] ?? []).toContain("malformed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("names the reason for an unavailable source: unreadable file => unreadable, not malformed (#125)", () => {
+    const root = mkdtempSync(join(tmpdir(), "token-scope-gemini-reason-unreadable-"));
+    const file = join(root, "tmp", "project-a", "chats", "secret.jsonl");
+    try {
+      const chats = join(root, "tmp", "project-a", "chats");
+      mkdirSync(chats, { recursive: true });
+      writeFileSync(file, JSON.stringify({
+        sessionId: "session-reason-unreadable",
+        messages: [{
+          id: "r1", type: "gemini", model: "gemini-3-flash-preview",
+          tokens: { input: 100, output: 20, cached: 0, thoughts: 0, tool: 0, total: 120 },
+        }],
+      }) + "\n");
+      chmodSync(file, 0);
+
+      const collected = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: root,
+      });
+      // The unreadable file is the only file in the tree; the walk's
+      // realpathSync fails with EACCES, so the source is unavailable.
+      expect(collected.unavailable).toContain("gemini-cli");
+      const reasons = collected.partialReasons?.["gemini-cli"] ?? [];
+      expect(reasons).toContain("unreadable");
+      // The core of #125: a filesystem read failure must NOT be labeled
+      // malformed (the parser never saw this file).
+      expect(reasons).not.toContain("malformed");
+    } finally {
+      try { chmodSync(file, 0o600); } catch {}
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports reason codes in the text and JSON report (#125)", () => {
+    const rows = providerRows({ events: [], unavailable: [], partial: {}, partialReasons: {} });
+    const text = renderProviderReport(
+      rows, [],
+      { "gemini-cli": 2 },
+      [],
+      { "gemini-cli": ["unreadable", "malformed"] },
+    );
+    expect(text).toContain("gemini-cli: 2 affected file(s) [unreadable, malformed]");
+
+    const json = providerReportJson(
+      rows, [],
+      { "gemini-cli": 2 },
+      0, [],
+      { "gemini-cli": ["unreadable", "malformed"] },
+    );
+    expect(json.partialReasons).toEqual({ "gemini-cli": ["unreadable", "malformed"] });
+  });
+
   it("counts imported historical messages once by their durable message id", () => {
     const root = mkdtempSync(join(tmpdir(), "token-scope-gemini-imported-history-"));
     try {
