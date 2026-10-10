@@ -598,4 +598,13 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     expect(olla.state).toBe("unavailable");
     expect(olla.reason).toStartWith("invalid configuration");
   });
+  it("does not attribute a rejected route provider to olla", async () => {
+    const telemetry = join(temp, "route-private-provider.jsonl");
+    const record = JSON.parse(readFileSync(join(FX, "providers", "olla-routing.jsonl"), "utf8").split("\n")[0]!);
+    writeFileSync(telemetry, `${JSON.stringify({ ...record, provider: `ghp_${"b".repeat(36)}` })}\n`);
+    const result = await runFleet({ routes: "olla-routes-empty.json", routeTelemetry: telemetry });
+    expect(result.code).toBe(0);
+    const local = JSON.parse(result.out).rows.find((row: any) => row.harness === "ollama-route");
+    expect(local).toMatchObject({ provider: "unknown", status: "incomplete" });
+  });
 });

@@ -45,7 +45,9 @@ function readRecord(value: unknown, provenance: string, line: number): ProviderE
   const model = privateSafeProviderIdentity(
     typeof record.model_served === "string" ? record.model_served : record.model,
   );
-  const provider = privateSafeProviderIdentity(record.provider) ?? "olla";
+  const safeProvider = privateSafeProviderIdentity(record.provider);
+  const providerRejected = record.provider !== undefined && record.provider !== null && safeProvider === null;
+  const provider = safeProvider ?? (providerRejected ? "unknown" : "olla");
   const endpointName = privateSafeProviderIdentity(record.endpoint_served);
   const inputTokens = nonNegativeInteger(record.prompt_tokens);
   const outputTokens = nonNegativeInteger(record.output_tokens);
@@ -62,7 +64,7 @@ function readRecord(value: unknown, provenance: string, line: number): ProviderE
   const status: ProviderEvent["status"] =
     decision === "failed" || (exitCode !== null && exitCode !== 0) ? "error" : "ok";
   const partial = requestId === null || model === null || endpointName === null
-    || inputTokens === null || outputTokens === null;
+    || inputTokens === null || outputTokens === null || providerRejected;
   return {
     eventId: privateSafeEventId("ollama-route", wrapperRequestId, rawTimestamp, line),
     harness: "ollama-route",
