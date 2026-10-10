@@ -238,7 +238,6 @@ describe("Orca fleet placement adapter", () => {
   it("marks a non-array worktree agents field partial instead of silently dropping it", async () => {
     const source = fixture("local.json");
     source.worktrees.result.worktrees[0].agents = "not-an-array";
-    delete source.terminals.result.terminals[0].agentIdentity;
     const collected = await collectOrcaPlacement({
       collectedAt: COLLECTED_AT,
       runner: fixtureRunner(source).runner,
@@ -293,6 +292,7 @@ describe("Orca fleet placement adapter", () => {
     const result = await defaultRunner("/bin/sleep", ["60"], 200);
     const elapsed = Date.now() - started;
 
+    expect(result.exitCode).not.toBe(0);
     expect(elapsed).toBeLessThan(5_000);
     expect(elapsed).toBeGreaterThanOrEqual(150);
   });
