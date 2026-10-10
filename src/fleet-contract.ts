@@ -445,7 +445,7 @@ function isCredentialPair(keyRaw: string, valRaw: string): boolean {
 
   if (key === "token" || key === "tokens" || key.endsWith("token") || key.endsWith("tokens")) {
     if (val === "" || val === "null" || val === "[]") return false;
-    const valParts = val.split(/[:=]/).map((s) => s.trim()).filter((s) => s.length > 0);
+    const valParts = val.split(/[\s:=]+/).map((s) => s.trim()).filter((s) => s.length > 0);
     if (valParts.length > 0 && valParts.every((part) => TOKEN_TELEMETRY_QUALIFIERS.has(part) || /^\d+(?:\.\d+)?$/.test(part))) {
       return false;
     }
@@ -632,7 +632,7 @@ function hasPositionalCredential(decoded: string): boolean {
         if (partNorm === "token" || partNorm === "tokens") {
           for (let k = j + 1; k < colonParts.length; k++) {
             const nextVal = colonParts[k]?.toLowerCase().trim() ?? "";
-            const nextParts = nextVal.split(/[:=]/).map((s) => s.trim()).filter((s) => s.length > 0);
+            const nextParts = nextVal.split(/[\s:=]+/).map((s) => s.trim()).filter((s) => s.length > 0);
             if (!nextParts.every((p) => TOKEN_TELEMETRY_QUALIFIERS.has(p) || /^\d+(?:\.\d+)?$/.test(p))) {
               return true;
             }
@@ -674,7 +674,7 @@ function hasPositionalCredential(decoded: string): boolean {
 
 function hasCredentialValue(decoded: string): boolean {
   if (BARE_CREDENTIAL.test(decoded)) return true;
-  if (SLACK_WEBHOOK_PATH.test(decoded)) return true;
+  if (SLACK_WEBHOOK_PATH.test(decoded.replaceAll("\\", "/"))) return true;
 
   const checkPair = (key: string, val: string): boolean => {
     if (isCredentialPair(key, val)) return true;
@@ -685,7 +685,7 @@ function hasCredentialValue(decoded: string): boolean {
         if (partNorm === "token" || partNorm === "tokens") {
           for (let k = j + 1; k < parts.length; k++) {
             const nextVal = parts[k]?.toLowerCase().trim() ?? "";
-            const nextParts = nextVal.split(/[:=]/).map((s) => s.trim()).filter((s) => s.length > 0);
+            const nextParts = nextVal.split(/[\s:=]+/).map((s) => s.trim()).filter((s) => s.length > 0);
             if (!nextParts.every((p) => TOKEN_TELEMETRY_QUALIFIERS.has(p) || /^\d+(?:\.\d+)?$/.test(p))) {
               return true;
             }
@@ -702,16 +702,17 @@ function hasCredentialValue(decoded: string): boolean {
   };
 
   const checkTextValues = (text: string): boolean => {
-    const pattern = /["\x27]?([a-z0-9_-]+)["\x27]?\s*[:=]\s*["\x27]?([^\s,}"\x27&]+)/gi;
-    for (const match of text.matchAll(pattern)) {
+    const unescaped = text.replace(/\\(["\x27\\])/g, "$1");
+    const pattern = /["\x27]?([a-z0-9_-]+)["\x27]?\s*[:=]\s*(?:"([^"]*)"|'([^']*)'|([^\s,}"\x27&]+))/gi;
+    for (const match of unescaped.matchAll(pattern)) {
       const key = match[1];
-      const val = match[2];
+      const val = match[2] ?? match[3] ?? match[4];
       if (key && val && checkPair(key, val)) return true;
     }
 
-    if (text.includes("[")) {
+    if (unescaped.includes("[")) {
       const arrayPattern = /["\x27]?([a-z0-9_-]+)["\x27]?\s*[:=]\s*\[([^\]]*)\]/gi;
-      for (const match of text.matchAll(arrayPattern)) {
+      for (const match of unescaped.matchAll(arrayPattern)) {
         const key = match[1];
         const rawList = match[2];
         if (key && rawList) {
