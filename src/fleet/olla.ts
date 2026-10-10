@@ -669,6 +669,9 @@ function counterName(metric: string, prefix: string): string {
 
 class MetricCollisionError extends Error {}
 
+// Upstream Olla emits olla_info with exactly these labels; version and commit are build identity, not routing, and are not retained.
+const OLLA_INFO_LABELS = new Set(["version", "commit", "engine", "profile", "balancer"]);
+
 function setCounter(counters: Record<string, number>, key: string, value: number): void {
   if (Object.hasOwn(counters, key)) throw new MetricCollisionError("duplicate Prometheus metric sample");
   Object.defineProperty(counters, key, { value, enumerable: true, writable: true, configurable: true });
@@ -732,9 +735,8 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
       if (sample.value !== 1) {
         throw new Error("olla_info must be 1");
       }
-      const knownRoutingLabels = ["engine", "profile", "balancer"];
       const unknownLabels = Object.entries(sample.labels)
-        .filter(([key]) => !knownRoutingLabels.includes(key))
+        .filter(([key]) => !OLLA_INFO_LABELS.has(key))
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([key]) => key);
       if (unknownLabels.length > 0) {
