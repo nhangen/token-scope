@@ -619,7 +619,7 @@ For each observed run, the report surfaces:
 
 1. **Launch agents via Orca**: Orca manages execution terminals across local and remote hosts (`orca:local`, `orca:ssh:gpu-box`).
 2. **Route local inference through Olla**: Agents targeting local models dispatch requests through Olla proxy/router with telemetry enabled.
-3. **Capture routing observations**: Routes are recorded via `TOKEN_SCOPE_OLLAMA_ROUTING_TELEMETRY` (JSONL stream) or `TOKEN_SCOPE_OLLA_ROUTES` (JSON array of observed correlations).
+3. **Capture routing observations**: Routes are recorded via `TOKEN_SCOPE_OLLAMA_ROUTING_TELEMETRY` (JSONL stream, default `$XDG_STATE_HOME/ollama-agent/routing.jsonl`, falling back to `~/.local/state`) or `TOKEN_SCOPE_OLLA_ROUTES` (JSON array of observed correlations, read only when `TOKEN_SCOPE_OLLA_URL` is set).
 4. **Inspect fleet operations**: Run `token-scope --fleet --since 1h` to inspect placement hosts, router endpoints, backend execution, and aggregate latency/throughput.
 
 #### Limitations
@@ -633,7 +633,7 @@ For each observed run, the report surfaces:
 
 Fleet records contain metadata and measured numeric telemetry only. They must not contain prompt text, terminal content or scrollback, credentials, authorization values, raw authorization headers, or arbitrary header collections. The v1 parser rejects fields with those names at any depth, and rejects a `provenance.locator` that embeds URL credentials, credential-like query parameters or named pairs, positional credential path segments (such as `/token/<secret>` or Slack-style webhook paths), or credential values (such as Bearer schemes, known token prefixes, or credentials carried inside parameter values). Token telemetry paths and names (`/tokens/usage/daily`, `reasoning_tokens`, `token_max`) pass, and in a file path under a filesystem root (`/Users`, `/home`, `~/`, a drive letter, `file:`) a plural collection directory such as `design-tokens` or `my-secrets` does not count as a positional segment, while a singular credential word such as `db_password` still does. It does not scan other string values, so adapters must keep that content out of them.
 
-This contract does not replace `ProviderEvent` or alter `--providers`. Existing adapters and nullable token/cost behavior remain unchanged. New fleet adapters should emit v1 envelopes alongside the existing provider events where both views are supported. Historical provider records must not be upgraded by guessing host, route, request, run, or session identity; unavailable fleet fields stay null. A future schema change uses a new `schema_version` and an explicit adapter rather than changing v1 interpretation in place.
+This contract does not replace `ProviderEvent`. `--providers` gains an `ollama-route` harness when route telemetry is present, and adapters mark an event `privacy-redaction` partial when a privacy check rejects its request, run, or session identity; nullable token/cost behavior is unchanged. New fleet adapters should emit v1 envelopes alongside the existing provider events where both views are supported. Historical provider records must not be upgraded by guessing host, route, request, run, or session identity; unavailable fleet fields stay null. A future schema change uses a new `schema_version` and an explicit adapter rather than changing v1 interpretation in place.
 
 ---
 

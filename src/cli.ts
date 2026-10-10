@@ -129,6 +129,7 @@ ENVIRONMENT
   TOKEN_SCOPE_PROMPT_ORIGIN_HOST Explicit origin label for --fleet; unset stays null
   TOKEN_SCOPE_OLLA_URL     Olla base URL for --fleet telemetry
   TOKEN_SCOPE_OLLA_ROUTES  JSON file of exact request/run-to-endpoint observations
+  TOKEN_SCOPE_OLLAMA_ROUTING_TELEMETRY Route telemetry JSONL (default $XDG_STATE_HOME/ollama-agent/routing.jsonl)
   TOKEN_SCOPE_FLEET_COLLECTED_AT Reproducible collection timestamp override
   NO_COLOR                 Disable ANSI color output
 
