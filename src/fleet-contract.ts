@@ -558,7 +558,7 @@ function hasPositionalCredential(decoded: string): boolean {
 
     const norm = segment.toLowerCase().replace(/[-_]/g, "");
     const collectionDir = fileLocator && PLURAL_CREDENTIAL_WORD.test(norm)
-      && !CREDENTIAL_PARAM_STEMS.some((stem) => norm.includes(stem));
+      && !CREDENTIAL_PARAM_STEMS.some((stem) => norm.includes(stem)) && !CREDENTIAL_TOKEN_SUFFIX.test(norm);
     if (isCredentialPathWord(segment, norm) && !collectionDir) {
       if (i + 1 < rawSegments.length) {
         const nextRaw = rawSegments[i + 1];
