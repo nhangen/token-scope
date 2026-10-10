@@ -679,6 +679,9 @@ function addTerminalRecords(
         observedAt: collectedAt,
       };
     } catch (error) {
+      // A source data/privacy fault stays partial; a contract rejection of
+      // the adapter's own record arrives as OrcaInvariantError and must
+      // propagate instead of surfacing as partial telemetry.
       if (error instanceof OrcaInvariantError) throw error;
       markPartial(source, error instanceof PrivacyError ? "privacy" : "partial_records");
     }
