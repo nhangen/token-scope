@@ -527,25 +527,6 @@ describe("Gemini CLI source contract", () => {
     }
   });
 
-  it("reports reason codes in the text and JSON report (#125)", () => {
-    const rows = providerRows({ events: [], unavailable: [], partial: {}, partialReasons: {} });
-    const text = renderProviderReport(
-      rows, [],
-      { "gemini-cli": 2 },
-      [],
-      { "gemini-cli": ["unreadable", "malformed"] },
-    );
-    expect(text).toContain("gemini-cli: 2 affected file(s) [unreadable, malformed]");
-
-    const json = providerReportJson(
-      rows, [],
-      { "gemini-cli": 2 },
-      0, [],
-      { "gemini-cli": ["unreadable", "malformed"] },
-    );
-    expect(json.partialReasons).toEqual({ "gemini-cli": ["unreadable", "malformed"] });
-  });
-
   it("counts imported historical messages once by their durable message id", () => {
     const root = mkdtempSync(join(tmpdir(), "token-scope-gemini-imported-history-"));
     try {

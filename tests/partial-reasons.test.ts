@@ -138,3 +138,61 @@ describe("partialReasons describes partial sources only", () => {
     }
   });
 });
+
+describe("partialReasons names each harness's cause", () => {
+  const collect = (over: Partial<Parameters<typeof collectProviderEvents>[0]>) => collectProviderEvents({
+    claudeRoot: "/nonexistent",
+    ledgerPath: "/nonexistent.jsonl",
+    codexHome: "/nonexistent",
+    opencodeDb: "/nonexistent.db",
+    geminiRoot: "/nonexistent",
+    ...over,
+  });
+
+  it.skipIf(isRoot)("claude: an unreadable transcript is unreadable", () => {
+    const root = mkdtempSync(join(tmpdir(), "token-scope-claude-unreadable-"));
+    const locked = join(root, "projects", "p", "locked.jsonl");
+    try {
+      mkdirSync(join(root, "projects", "p"), { recursive: true });
+      copyFileSync(join(FX, "claude-root", "projects", "-Users-x-proj", "t.jsonl"), join(root, "projects", "p", "good.jsonl"));
+      writeFileSync(locked, "{}\n");
+      chmodSync(locked, 0);
+      const collected = collect({ claudeRoot: root });
+      expect(collected.partial["claude"]).toBe(1);
+      expect(collected.partialReasons?.["claude"]).toEqual(["unreadable"]);
+    } finally {
+      try { chmodSync(locked, 0o600); } catch {}
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(isRoot)("codex: an unreadable rollout is unreadable", () => {
+    const root = mkdtempSync(join(tmpdir(), "token-scope-codex-unreadable-"));
+    const locked = join(root, ".codex", "sessions", "locked.jsonl");
+    try {
+      mkdirSync(join(root, ".codex", "sessions"), { recursive: true });
+      copyFileSync(join(FX, "codex-rollout.jsonl"), join(root, ".codex", "sessions", "good.jsonl"));
+      writeFileSync(locked, "{}\n");
+      chmodSync(locked, 0);
+      const collected = collect({ codexHome: root });
+      expect(collected.partial["codex"]).toBe(1);
+      expect(collected.partialReasons?.["codex"]).toEqual(["unreadable"]);
+    } finally {
+      try { chmodSync(locked, 0o600); } catch {}
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("ollama: a ledger with content but no parseable runs is corrupt_store", () => {
+    const dir = mkdtempSync(join(tmpdir(), "token-scope-ledger-corrupt-"));
+    try {
+      const ledger = join(dir, "runs.jsonl");
+      writeFileSync(ledger, "not-json\nalso not json\n");
+      const collected = collect({ ledgerPath: ledger });
+      expect(collected.partial["ollama-claude"]).toBe(2);
+      expect(collected.partialReasons?.["ollama-claude"]).toEqual(["corrupt_store"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

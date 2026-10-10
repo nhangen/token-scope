@@ -755,3 +755,24 @@ describe("collect integration over fixtures (#38 panel)", () => {
     expect(rows[0]!.provenance).toEqual(["f.jsonl"]);
   });
 });
+
+describe("partial reason rendering (#125)", () => {
+  it("reports reason codes in the text and JSON report", () => {
+    const rows = providerRows({ events: [], unavailable: [], partial: {}, partialReasons: {} });
+    const text = renderProviderReport(
+      rows, [],
+      { "gemini-cli": 2 },
+      [],
+      { "gemini-cli": ["unreadable", "malformed"] },
+    );
+    expect(text).toContain("gemini-cli: 2 affected file(s) [unreadable, malformed]");
+
+    const json = providerReportJson(
+      rows, [],
+      { "gemini-cli": 2 },
+      0, [],
+      { "gemini-cli": ["unreadable", "malformed"] },
+    );
+    expect(json.partialReasons).toEqual({ "gemini-cli": ["unreadable", "malformed"] });
+  });
+});

@@ -120,3 +120,27 @@ describe("--providers production CLI path", () => {
     }
   });
 });
+
+describe("--providers names partial reasons", () => {
+  it("prints the reason in text and carries partialReasons in --json", () => {
+    const root = mkdtempSync(join(tmpdir(), "token-scope-cli-reasons-"));
+    try {
+      const chats = join(root, "tmp", "project-a", "chats");
+      mkdirSync(chats, { recursive: true });
+      writeFileSync(join(chats, "mixed.jsonl"), [
+        JSON.stringify({ sessionId: "cli-reasons", messages: [] }),
+        "not-json",
+      ].join("\n"));
+
+      const text = runProviders([], root);
+      expect(text.code).toBe(0);
+      expect(text.out).toContain("gemini-cli: 1 affected file(s) [malformed]");
+
+      const json = runProviders(["--json"], root);
+      expect(json.code).toBe(0);
+      expect(JSON.parse(json.out).partialReasons["gemini-cli"]).toEqual(["malformed"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
