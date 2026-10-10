@@ -75,8 +75,8 @@ export function collectProviderEvents(opts?: {
   try {
     const c = claudeEvents(claudeRoot, sinceMs);
     events.push(...c.events);
-    if (c.skipped > 0) partial["claude"] = c.skipped;
     if (c.skipped > 0) {
+      partial["claude"] = c.skipped;
       for (const r of c.reasons) addReason("claude", r);
     }
   } catch {
@@ -98,9 +98,6 @@ export function collectProviderEvents(opts?: {
       const raw = readFileSync(resolved, "utf8");
       if (raw.split("\n").some((l) => l.trim())) {
         partial["ollama-claude"] = raw.split("\n").filter((l) => l.trim()).length;
-        // readLedger returns [] when its parse of the ledger fails; we
-        // cannot distinguish an empty ledger from a corrupt one, so name
-        // the cause rather than leaving it implicit (#125).
         addReason("ollama-claude", "corrupt_store");
       }
     }
@@ -110,8 +107,8 @@ export function collectProviderEvents(opts?: {
   try {
     const cx = codexEvents(codexHome, sinceMs);
     events.push(...cx.events);
-    if (cx.skipped > 0) partial["codex"] = cx.skipped;
     if (cx.skipped > 0) {
+      partial["codex"] = cx.skipped;
       for (const r of cx.reasons) addReason("codex", r);
     }
   } catch {
