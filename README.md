@@ -529,7 +529,7 @@ Per-file production cost: which artifacts (files written or edited) cost the mos
 
 ## Provider Report (`--providers`)
 
-`token-scope --providers --since 7d` normalizes the active coding harnesses into one provider-neutral table: per harness / provider / billing route / model usage with nullable token classes (absent classes print `—`, never `0`), retry counts, and a measured-not-estimated footer. `--json` emits `{ rows, unavailable, unsupported, measured }`.
+`token-scope --providers --since 7d` normalizes the active coding harnesses into one provider-neutral table: per harness / provider / billing route / model usage with nullable token classes (absent classes print `—`, never `0`), retry counts, and a measured-not-estimated footer. `--json` emits `{ rows, unavailable, partial, untimedExcluded, measured, unsupported, redactedLabels }`. Model and provider labels pass the fleet contract's credential screen before grouping: a credential-shaped value prints as `[redacted]`, distinct redacted values merge into one row, and `redactedLabels` (per row and in total) plus a footer line count the withheld event labels.
 
 ### Data sources and limitations
 
