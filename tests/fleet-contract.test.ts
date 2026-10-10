@@ -357,6 +357,100 @@ describe("fleet schema v1 contract", () => {
       expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);
       expect(performance.now() - started).toBeLessThan(500);
     });
+
+    describe("provenance.locator positional and value-shaped credentials", () => {
+      const positional = "provenance.locator cannot contain a positional credential segment";
+      const valueShaped = "provenance.locator cannot carry a credential value";
+
+      it.each([
+        "http://ml1/metrics/token/FAKE-EXAMPLE",
+        "http://ml1/tokens/FAKE-EXAMPLE",
+        "http://ml1/metrics/TOKEN/FAKE-EXAMPLE",
+        "http://ml1/metrics/tok​en/FAKE-EXAMPLE",
+        "http://ml1/metrics/%74oken/FAKE-EXAMPLE",
+        "http://ml1/metrics;foo=bar/token/FAKE-EXAMPLE",
+        "http://ml1/metrics/api_key/FAKE-EXAMPLE",
+        "http://ml1/metrics/api-key/FAKE-EXAMPLE",
+        "http://ml1/metrics/private_key/FAKE-EXAMPLE",
+        "http://ml1/metrics/access_key/FAKE-EXAMPLE",
+        "http://ml1/metrics/password/FAKE-EXAMPLE",
+        "http://ml1/metrics/passwd/FAKE-EXAMPLE",
+        "http://ml1/metrics/api_key:FAKE-EXAMPLE",
+        "http://ml1/metrics/api_key:%20FAKE-EXAMPLE",
+      ])("rejects a positional credential segment in %s", (locator) => {
+        expect(() => parseFleetRecord(withLocator(locator))).toThrow(positional);
+      });
+
+      it.each([
+        "http://hooks.slack.example/services/T000/B000/FAKE-EXAMPLE",
+        "http://hooks.slack.example/services;x=1/T000/B000/FAKE-EXAMPLE",
+      ])("rejects a Slack-style webhook path (token-shaped final segment) in %s", (locator) => {
+        // The last segment is the token; the path is fully specified by it.
+        expect(() => parseFleetRecord(withLocator(locator))).toThrow(positional);
+      });
+
+      const namedPair = "provenance.locator cannot contain credential query parameters";
+      it.each([
+        "http://ml1/metrics?api_key:FAKE-EXAMPLE",
+        "http://ml1/metrics?sessiontoken:FAKE-EXAMPLE",
+        "http://ml1/metrics?session_token:FAKE-EXAMPLE",
+        "http://ml1/metrics?pwd:FAKE-EXAMPLE",
+      ])("rejects a credential named value pair in %s", (locator) => {
+        expect(() => parseFleetRecord(withLocator(locator))).toThrow(namedPair);
+      });
+
+      it.each([
+        "http://ml1/metrics?q=sk-FAKE-EXAMPLE",
+        "http://ml1/metrics?q=sk-FAKE-EXAM",
+        "http://ml1/metrics?q=ghp_FAKE-EXAMPLE-FAKE-EXAMPLE-0000",
+        "http://ml1/metrics?q=AKIAFAKEFAKEFAKEFAKEF",
+        "http://ml1/metrics?w=%7B%22token%22%3A%22FAKE-EXAMPLE%22%7D",
+        "http://ml1/metrics?w=%7B%22token%22%3A%20%22FAKE-EXAMPLE%22%7D",
+        "http://ml1/metrics?w=%7B%22filter%22%3A%22a%3Bb%22%2C%22token%22%3A%22FAKE-EXAMPLE%22%7D",
+        "http://ml1/metrics?w=%7B%22filter%22%3A%22a%26b%22%2C%22token%22%3A%22FAKE-EXAMPLE%22%7D",
+        "http://ml1/metrics?state=%7B%22access_token%22%3A%22FAKE-EXAMPLE%22%7D",
+        "http://ml1/metrics?state=%7B%22access_token%22%3A%20%22FAKE-EXAMPLE%22%7D",
+        "http://ml1/metrics?h=Authorization%3ABearer%20FAKE-EXAMPLE",
+        "http://ml1/metrics?h=token%3A%20FAKE-EXAMPLE",
+        "http://ml1/metrics?h=api_key%3A%20FAKE-EXAMPLE",
+        "http://ml1/metrics?w=Bearer+FAKE-EXAMPLE",
+        "http://ml1/metrics?w=bearer FAKE-EXAMPLE",
+        "http://ml1/metrics?q=Bearer:FAKE-EXAMPLE",
+        "http://ml1/metrics?w=eyJFAKEFAKEFAKE.FAKEFAKEFAKE",
+        "http://ml1/metrics?w=sk_live_FAKEFAKEFAKEFAKE",
+      ])("rejects a credential value under a neutral name in %s", (locator) => {
+        expect(() => parseFleetRecord(withLocator(locator))).toThrow(valueShaped);
+      });
+
+      it.each([
+        "http://ml1/metrics?tokenCount=1&window=5m",
+        "http://ml1/metrics?tokens_total=5&token_type=input&max_tokens=4096",
+        "http://ml1/metrics?filter=max_tokens>=5",
+        "http://ml1/metrics?token:budget=1",
+        "http://ml1/metrics?window=5m:30m",
+        "http://ml1/metrics?model=qwen3.8:27b&cursor=abc==",
+        "http://ml1/metrics?note=secretary wrote it&primarykey=b",
+        "s3://bucket/token-counts/date=2026-09-22/run-3.jsonl",
+        "http://ml1/auth/callback?state=abc123&maxTokens=2",
+        "http://ml1/metrics?h=Content-Type%3Aapplication%2Fjson",
+        "file:///home/n/workspaces/token-scope/sessions/run-1.jsonl",
+        "http://ml1/metrics/token-cost",
+        "http://ml1/tokens/total",
+        "http://ml1/token-metrics/run.jsonl",
+        "s3://bucket/token-data/run-3.jsonl",
+        "http://ml1/metrics?stats=%7B%22tokens%22%3A%20100%7D",
+        "http://ml1/metrics?stats=%7B%22token%22%3A%204096%7D",
+        "http://ml1/metrics?stats=%7B%22input_token%22%3A%20100%7D",
+        "http://ml1/metrics?stats=%7B%22prompt_token%22%3A%20100%7D",
+        "http://ml1/metrics?stats=%7B%22output_tokens%22%3A%2050%7D",
+        "http://ml1/metrics?tag=%7B%22key%22%3A%20%22env%22%7D",
+        "http://ml1/metrics?filter=%7B%22partition_key%22%3A%20%22user_1%22%7D",
+        "http://ml1/metrics?filter=%7B%22primary_key%22%3A%20%22item_1%22%7D",
+        "http://ml1/metrics?filter=%7B%22routing_key%22%3A%20%22events%22%7D",
+      ])("accepts a telemetry locator without a credential value in %s", (locator) => {
+        expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);
+      });
+    });
   });
 
   it("rejects unsupported and missing envelope fields, naming the offending keys", () => {
@@ -447,6 +541,16 @@ describe("shared label privacy check", () => {
     for (const value of [
       "github_pat_FAKE_EXAMPLE_000000000000",
       "host-glpat-FAKE-EXAMPLE-0000000000000",
+    ]) {
+      expect(() => assertSafeLabelValue(value)).toThrow(PrivacyError);
+    }
+  });
+
+  it("rejects credential names and values in labels", () => {
+    for (const value of [
+      "host:token:FAKE-EXAMPLE",
+      "host:api_key:FAKE-EXAMPLE",
+      "host:secret:FAKE-EXAMPLE",
     ]) {
       expect(() => assertSafeLabelValue(value)).toThrow(PrivacyError);
     }

@@ -244,8 +244,8 @@ const CREDENTIAL_PARAM_STEMS = [
 const CREDENTIAL_PARAM_SUFFIXES = ["secret", "secrets", "signature", "token"];
 
 // A token segment followed by one of these names a count or class, not a
-// credential (tokenCount, token_type) — core telemetry for a token-accounting tool.
-const TOKEN_TELEMETRY_QUALIFIERS = new Set(["budget", "count", "counts", "kind", "limit", "total", "type", "usage"]);
+// credential (tokenCount, token_type, maxTokens) — core telemetry for a token-accounting tool.
+const TOKEN_TELEMETRY_QUALIFIERS = new Set(["budget", "count", "counts", "kind", "limit", "max", "total", "type", "usage"]);
 
 function isCredentialSegment(segment: string, next: string | undefined): boolean {
   if (segment === "token" && next !== undefined && TOKEN_TELEMETRY_QUALIFIERS.has(next)) return false;
@@ -340,16 +340,171 @@ const SPACED_ASSIGNMENT = new RegExp(
 );
 const EMBEDDED_USERINFO = /(?:^|[\s/])[^/?#@\s:]+:[^/?#@\s]*@/;
 const BARE_CREDENTIAL = new RegExp([
-  String.raw`\b(?:bearer|basic)[\s+]+\S`,
+  String.raw`\b(?:bearer|basic)[\s+:]+\S`,
   String.raw`\beyJ[\w-]{8,}\.[\w-]{8,}`,
-  String.raw`(?:^|[^a-z0-9])sk-[\w-]{16,}`,
+  // The placeholder is a value a human wrote by hand: FAKE-EXAMPLE is exactly
+  // the shape a real sk- key has minus length, so the gate must be length-free.
+  String.raw`(?:^|[^a-z0-9])sk-[\w-]{6,}`,
   String.raw`\b(?:sk|rk|pk)_(?:live|test)_\w{8,}`,
-  String.raw`\bgh[pousr]_\w{20,}`,
-  String.raw`\bgithub_pat_\w{20,}`,
-  String.raw`\bglpat-[\w-]{20,}`,
+  // ghp_/gho_/... and github_pat_ personal access tokens: FAKE-EXAMPLE is a
+  // hand-written placeholder with the same shape as a real token minus
+  // length, so the gate is length-free here too.
+  String.raw`\bgh[pousr]_[\w-]{10,}`,
+  String.raw`\bgithub_pat_[\w-]{10,}`,
+  String.raw`\bAKIA[0-9A-Z]{16}`,
+  String.raw`\bglpat-[\w-]{10,}`,
   String.raw`\bxox[abposr]-[\w-]{10,}`,
-  String.raw`\bAKIA[0-9A-Z]{16}\b`,
 ].join("|"), "i");
+
+// A locator path that names a credential class as a segment.
+// A Slack-style webhook path (/services/T000/B000/<token>) is fully specified
+// by the last segment, so it is one positional credential of its own.
+// "token" and "tokens" are the only words the positional check rejects on
+// their own, because they are the only credential words that also appear in
+// telemetry names; the name scanner's qualifiers decide which token is which.
+const CREDENTIAL_PATH_WORDS = new Set([
+  "accesskey",
+  "apikey",
+  "authkey",
+  "clientsecret",
+  "credential",
+  "credentials",
+  "passphrase",
+  "passwd",
+  "password",
+  "privkey",
+  "privatekey",
+  "privatekeys",
+  "secret",
+  "secrets",
+  "secretkey",
+  "token",
+  "tokens",
+]);
+// "auth" names a mechanism (Authorization: Bearer <token>) and is not a
+// credential class, and the adapter's base URL may legally end in it
+// (an /auth or /oauth mount) — so it is a positional credential only with a
+// value to carry it, which hasUserinfo already rejects.
+
+const SLACK_WEBHOOK_PATH = /(?:^|\/)services(?:;[^/]*)?\/T[0-9A-Z]+(?:;[^/]*)?\/B[0-9A-Z]+(?:;[^/]*)?\/[^/?#\s]+/i;
+
+function hasPositionalCredential(decoded: string): boolean {
+  const [pathPart = ""] = decoded.split(/[?#]/, 1);
+  const pathMatch = pathPart.match(/^(?:[a-z][a-z0-9+.-]*:\/\/[^/?#]+)?([^?#]*)/i);
+  const pathname = pathMatch ? (pathMatch[1] ?? "") : pathPart;
+  if (SLACK_WEBHOOK_PATH.test(pathname)) return true;
+
+  const rawSegments = pathname.split("/").filter((s) => s.length > 0);
+  for (let i = 0; i < rawSegments.length; i++) {
+    const rawSegment = rawSegments[i];
+    if (!rawSegment) continue;
+    const segment = rawSegment.split(";")[0]?.trim() ?? "";
+    if (!segment) continue;
+
+    const colonMatch = segment.match(/^([a-z0-9_-]+)\s*:\s*(\S.*)$/i);
+    if (colonMatch) {
+      const keyNorm = colonMatch[1]?.toLowerCase().replace(/[-_]/g, "") ?? "";
+      const val = colonMatch[2]?.toLowerCase() ?? "";
+      if (keyNorm === "token" || keyNorm === "tokens") {
+        if (!TOKEN_TELEMETRY_QUALIFIERS.has(val) && !/^\d+(?:\.\d+)?$/.test(val)) {
+          return true;
+        }
+      } else if (CREDENTIAL_PATH_WORDS.has(keyNorm)) {
+        return true;
+      }
+    }
+
+    const norm = segment.toLowerCase().replace(/[-_]/g, "");
+    if (CREDENTIAL_PATH_WORDS.has(norm)) {
+      if (i + 1 < rawSegments.length) {
+        const nextRaw = rawSegments[i + 1];
+        const nextSegment = (nextRaw ? nextRaw.split(";")[0]?.trim().toLowerCase() : "") ?? "";
+        if (norm === "token" || norm === "tokens") {
+          if (TOKEN_TELEMETRY_QUALIFIERS.has(nextSegment)) continue;
+        }
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+const CREDENTIAL_PARAM_KEYS = new Set([
+  "accesskey",
+  "accesstoken",
+  "apikey",
+  "authkey",
+  "clientsecret",
+  "credential",
+  "credentials",
+  "idtoken",
+  "passphrase",
+  "passwd",
+  "password",
+  "privkey",
+  "privatekey",
+  "refreshtoken",
+  "secret",
+  "secretkey",
+  "sessiontoken",
+]);
+
+function isCredentialPair(keyRaw: string, valRaw: string): boolean {
+  const key = keyRaw.toLowerCase().replace(/[-_]/g, "");
+  const val = valRaw.toLowerCase().replace(/^["\x27]+|["\x27]+$/g, "");
+
+  if (key === "token" || key === "tokens" || key.endsWith("token") || key.endsWith("tokens")) {
+    if (TOKEN_TELEMETRY_QUALIFIERS.has(val)) return false;
+    if (/^\d+(?:\.\d+)?$/.test(val)) return false;
+    if (CREDENTIAL_PARAM_KEYS.has(key)) return true;
+    if (
+      key.startsWith("input")
+      || key.startsWith("output")
+      || key.startsWith("prompt")
+      || key.startsWith("completion")
+      || key.startsWith("cache")
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  if (CREDENTIAL_PARAM_KEYS.has(key)) {
+    return true;
+  }
+
+  if (/(?:secret|password|passwd)$/.test(key)) {
+    if (key.startsWith("sort") || key.startsWith("cache") || key.startsWith("public")) return false;
+    return true;
+  }
+
+  return false;
+}
+
+function hasCredentialValue(decoded: string): boolean {
+  if (BARE_CREDENTIAL.test(decoded)) return true;
+
+  const pattern = /["\x27]?([a-z0-9_-]+)["\x27]?\s*[:=]\s*["\x27]?([^\s,}"\x27&]+)/gi;
+  for (const match of decoded.matchAll(pattern)) {
+    const key = match[1];
+    const val = match[2];
+    if (key && val && isCredentialPair(key, val)) return true;
+  }
+
+  // Parameter values scan specifically catches assignments like w=token:FAKE-EXAMPLE
+  const params = decoded.split(/[&;?#]/);
+  for (const param of params) {
+    const eqIdx = param.indexOf("=");
+    if (eqIdx === -1) continue;
+    const paramVal = param.slice(eqIdx + 1);
+    for (const match of paramVal.matchAll(pattern)) {
+      const key = match[1];
+      const val = match[2];
+      if (key && val && isCredentialPair(key, val)) return true;
+    }
+  }
+  return false;
+}
 
 export function assertSafeLabelValue(value: string): void {
   const decoded = decodeLocator(value);
@@ -375,6 +530,12 @@ function locatorValue(value: unknown): string | null {
   const decoded = decodeLocator(locator);
   if (decoded === null || locatorParams(decoded).some(isCredentialParam)) {
     throw new Error("provenance.locator cannot contain credential query parameters");
+  }
+  if (hasPositionalCredential(decoded)) {
+    throw new Error("provenance.locator cannot contain a positional credential segment");
+  }
+  if (hasCredentialValue(decoded)) {
+    throw new Error("provenance.locator cannot carry a credential value");
   }
   return locator;
 }
