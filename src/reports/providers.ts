@@ -9,6 +9,8 @@
  */
 import type { Collected, ProviderEvent } from "@/providers";
 import { tsMs } from "@/providers/types";
+import { assertSafeLabelValue } from "@/fleet-contract";
+
 
 export interface ProviderRow {
   harness: string;
@@ -167,7 +169,10 @@ export function renderProviderReport(
           r.harness.padEnd(14),
           (r.provider ?? "unknown").padEnd(13),
           r.billingRoute.padEnd(13),
-          (r.model === null ? "—" : r.model.slice(0, 26)).padEnd(26),
+          (() => {
+            try { assertSafeLabelValue(r.model ?? ""); return (r.model === null ? "—" : r.model.slice(0, 26)).padEnd(26); }
+            catch (e: unknown) { const err = e as Error; return "[redacted]"; }
+          })(),
           String(r.events).padStart(6),
           dash(r.input).padStart(11),
           dash(r.output).padStart(10),
@@ -216,12 +221,19 @@ export function providerReportJson(
   untimedExcluded = 0,
   unsupported: string[] = [],
 ): ProviderReportJson {
+  const sanitizedRows = rows.map((row) => ({
+    ...row,
+    model: (() => {
+      try { assertSafeLabelValue(row.model ?? ""); return row.model ?? null; }
+      catch (e: unknown) { const err = e as Error; return "[redacted]"; }
+    })(),
+  }));
   return {
-    rows,
+    rows: sanitizedRows,
     unavailable,
     partial,
     untimedExcluded,
-    measured: rows.every((row) => row.malformedEvents === 0
+    measured: sanitizedRows.every((row) => row.malformedEvents === 0
       && row.partialEvents === 0
       && row.legacyCumulativeEvents === 0),
     unsupported,
