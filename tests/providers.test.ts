@@ -553,7 +553,7 @@ describe("dedup + report", () => {
 
   it("renders nulls as em-dashes and lists unavailable sources", () => {
     const out = renderProviderReport(
-      [{ harness: "x", billingRoute: "local", model: "m", events: 1, input: 5, output: null, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, malformedEvents: 0, partialEvents: 0, legacyCumulativeEvents: 0, cashUsd: null, partialClasses: [], provenance: ["a.jsonl"] }],
+      [{ harness: "x", billingRoute: "local", model: "m", events: 1, input: 5, output: null, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, malformedEvents: 0, partialEvents: 0, legacyCumulativeEvents: 0, cashUsd: null, partialClasses: [], provenance: ["a.jsonl"], redactedLabels: 0 }],
       ["opencode"],
     );
     expect(out).toContain("—");
@@ -589,7 +589,7 @@ describe("dedup + report", () => {
 
   it("sum() treats genuine zero as measured and all-null as unknown (#38 panel)", () => {
     const rows = renderProviderReport(
-      [{ harness: "x", billingRoute: "local", model: "m", events: 2, input: 7, output: 0, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, malformedEvents: 0, partialEvents: 0, legacyCumulativeEvents: 0, cashUsd: null, partialClasses: ["output"], provenance: ["a"] }],
+      [{ harness: "x", billingRoute: "local", model: "m", events: 2, input: 7, output: 0, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, malformedEvents: 0, partialEvents: 0, legacyCumulativeEvents: 0, cashUsd: null, partialClasses: ["output"], provenance: ["a"], redactedLabels: 0 }],
       [],
     );
     expect(rows).toContain("  0  "); // zero renders as 0, not an em-dash
@@ -774,5 +774,96 @@ describe("partial reason rendering (#125)", () => {
       { "gemini-cli": ["unreadable", "malformed"] },
     );
     expect(json.partialReasons).toEqual({ "gemini-cli": ["unreadable", "malformed"] });
+  });
+});
+
+describe("credential-shaped labels in provider reports (#126)", () => {
+  const SECRET = "github_pat_FAKE_EXAMPLE_000000000000";
+  const ev = (over: object): any => ({
+    eventId: "x", harness: "opencode", billingRoute: "api",
+    modelProvider: "anthropic", model: "claude-opus-4-1", ts: "2026-08-22T00:00:00Z",
+    status: "ok", retryOf: null, inputTokens: 10, outputTokens: 5,
+    cacheReadTokens: null, cacheWriteTokens: null, reasoningTokens: null,
+    cashChargeUsd: null, provenance: "p", ...over,
+  });
+  const collect = (events: any[]) => ({ events, unavailable: [] as string[], partial: {} });
+
+  it("redacts a credential-shaped model in the JSON report and discloses it", () => {
+    const rows = providerRows(collect([ev({ model: SECRET })]));
+    const json = providerReportJson(rows, []);
+    expect(JSON.stringify(json)).not.toContain(SECRET);
+    expect(json.rows[0]!.model).toBe("[redacted]");
+    expect(json.redactedLabels).toBe(1);
+  });
+
+  it("redacts a credential-shaped provider in both reports", () => {
+    const rows = providerRows(collect([ev({ modelProvider: `x?token=${SECRET}` })]));
+    expect(JSON.stringify(providerReportJson(rows, []))).not.toContain(SECRET);
+    expect(renderProviderReport(rows, [])).not.toContain(SECRET);
+  });
+
+  it("redacts in the text report without breaking column alignment", () => {
+    const rows = providerRows(collect([ev({ eventId: "a", model: SECRET }), ev({ eventId: "b" })]));
+    const out = renderProviderReport(rows, []);
+    expect(out).not.toContain(SECRET);
+    expect(out).toContain("[redacted]");
+    expect(out).toContain("1 event label(s) redacted");
+    const dataRows = out.split("\n").filter((l) => l.startsWith("opencode"));
+    expect(dataRows.length).toBe(2);
+    expect(dataRows[0]!.length).toBe(dataRows[1]!.length);
+  });
+
+  it("merges distinct unsafe models into one redacted row", () => {
+    const rows = providerRows(collect([
+      ev({ eventId: "a", model: `a?token=${SECRET}` }),
+      ev({ eventId: "b", model: `b?api_key=${SECRET}` }),
+    ]));
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.model).toBe("[redacted]");
+    expect(rows[0]!.events).toBe(2);
+  });
+
+  it.each(["qwen3.8:27b", "claude-opus-4-1", "gpt-5.2-codex", "kimi-k3", "unknown", "openrouter/meta-llama/llama-3:free"])(
+    "passes a normal model name through unchanged: %s",
+    (model) => {
+      const rows = providerRows(collect([ev({ model })]));
+      const json = providerReportJson(rows, []);
+      expect(json.rows[0]!.model).toBe(model);
+      expect(json.redactedLabels).toBe(0);
+    },
+  );
+
+  it("keeps a null model null in JSON and as an em dash in text", () => {
+    const rows = providerRows(collect([ev({ model: null })]));
+    expect(providerReportJson(rows, []).rows[0]!.model).toBeNull();
+    expect(renderProviderReport(rows, [])).toContain("—");
+  });
+
+  it("maps non-string opencode provider and model ids to unknown", () => {
+    const Database = require("bun:sqlite").Database;
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)");
+    db.prepare("INSERT INTO message (id, session_id, data) VALUES (?, ?, ?)").run("r1", "s", JSON.stringify({
+      role: "assistant", providerID: 42, modelID: { name: "m" },
+      tokens: { input: 1, output: 1 }, time: { created: 1755000000000 },
+    }));
+    const events = opencodeEventsFromDb(db);
+    db.close();
+    expect(events[0]!.modelProvider).toBe("unknown");
+    expect(events[0]!.model).toBe("unknown");
+    expect(providerReportJson(providerRows(collect(events)), []).rows[0]!.provider).toBe("unknown");
+  });
+
+  it("maps a non-string codex model_provider to unknown", () => {
+    const events = codexEventsFromRollout([
+      JSON.stringify({ type: "session_meta", payload: { id: "bad-provider", model_provider: 7 } }),
+      JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 1, output_tokens: 1 } } } }),
+    ].join("\n"), "codex.jsonl");
+    expect(events[0]!.modelProvider).toBe("unknown");
+    expect(() => providerRows(collect(events))).not.toThrow();
+  });
+
+  it("does not turn a non-privacy error into a redaction", () => {
+    expect(() => providerRows(collect([ev({ model: 42 })]))).toThrow(TypeError);
   });
 });

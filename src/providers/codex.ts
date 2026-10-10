@@ -271,7 +271,7 @@ function parseRollout(text: string, provenance: string): ParsedRollout {
       eventId: stableId("codex", provenance, recordKey),
       harness: "codex",
       billingRoute: "unknown",
-      modelProvider: meta?.model_provider ?? "unknown",
+      modelProvider: typeof meta?.model_provider === "string" && meta.model_provider ? meta.model_provider : "unknown",
       model: model ?? "unknown",
       reasoningEffort: effort ?? "unknown",
       ts: typeof rec.timestamp === "string" ? rec.timestamp : meta?.timestamp ?? null,

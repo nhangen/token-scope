@@ -9,6 +9,22 @@
  */
 import type { Collected, ProviderEvent, PartialReason } from "@/providers";
 import { tsMs } from "@/providers/types";
+import { assertSafeLabelValue, PrivacyError } from "@/fleet-contract";
+
+const REDACTED = "[redacted]";
+
+/** Source-derived labels pass the fleet contract's credential screen before
+ * any report sees them (#126). Only a privacy rejection becomes a redaction;
+ * any other failure is malformed data and propagates. */
+function screenLabel(value: string): string {
+  try {
+    assertSafeLabelValue(value);
+    return value;
+  } catch (e) {
+    if (e instanceof PrivacyError) return REDACTED;
+    throw e;
+  }
+}
 
 export interface ProviderRow {
   harness: string;
@@ -36,6 +52,8 @@ export interface ProviderRow {
   partialClasses: string[];
   /** Distinct source files/db behind this row, sorted. Provenance (#37 AC). */
   provenance: string[];
+  /** Event labels (model or provider, per event) withheld as credential-shaped (#126). */
+  redactedLabels: number;
 }
 
 interface ClassAgg {
@@ -68,17 +86,22 @@ export function providerRows(collected: Collected, sinceMs?: number): ProviderRo
     provider: string;
     model: string | null;
     events: ProviderEvent[];
+    redactedLabels: number;
   }>();
   for (const e of filtered) {
-    const key = JSON.stringify([e.harness, e.billingRoute, e.modelProvider, e.model]);
+    const provider = screenLabel(e.modelProvider);
+    const model = e.model === null ? null : screenLabel(e.model);
+    const key = JSON.stringify([e.harness, e.billingRoute, provider, model]);
     const group = groups.get(key) ?? {
       harness: e.harness,
       billingRoute: e.billingRoute,
-      provider: e.modelProvider,
-      model: e.model,
+      provider,
+      model,
       events: [],
+      redactedLabels: 0,
     };
     group.events.push(e);
+    group.redactedLabels += Number(provider !== e.modelProvider) + Number(model !== e.model);
     groups.set(key, group);
   }
   const rows: ProviderRow[] = [];
@@ -115,6 +138,7 @@ export function providerRows(collected: Collected, sinceMs?: number): ProviderRo
       cashUsd: cashVals.length > 0 ? cashVals.reduce((a, v) => a + v, 0) : null,
       partialClasses,
       provenance: [...new Set(evs.map((e) => e.provenance))].sort(),
+      redactedLabels: group.redactedLabels,
     });
   }
   return rows;
@@ -141,6 +165,8 @@ export interface ProviderReportJson {
   measured: boolean;
   /** Source surfaces intentionally excluded rather than conflated. */
   unsupported: string[];
+  /** Credential-shaped model/provider values withheld from the rows (#126). */
+  redactedLabels: number;
 }
 
 const dash = (v: number | null): string => (v === null ? "—" : String(v));
@@ -199,6 +225,10 @@ export function renderProviderReport(
   } else {
     lines.push("all values measured from source records; no estimates");
   }
+  const redacted = rows.reduce((sum, row) => sum + row.redactedLabels, 0);
+  if (redacted > 0) {
+    lines.push(`${redacted} event label(s) redacted: credential-shaped source values withheld`);
+  }
   if (Object.keys(partial).length > 0) {
     const parts = Object.entries(partial).map(([h, n]) => {
       const reasons = partialReasons[h] ?? [];
@@ -234,5 +264,6 @@ export function providerReportJson(
       && row.partialEvents === 0
       && row.legacyCumulativeEvents === 0),
     unsupported,
+    redactedLabels: rows.reduce((sum, row) => sum + row.redactedLabels, 0),
   };
 }
