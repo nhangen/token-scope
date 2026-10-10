@@ -328,9 +328,6 @@ async function loadCommand(
       if (error instanceof OrcaCommandError) {
         return { value: null, observation: observation(args, collectedAt, "unavailable", "command_failed") };
       }
-      if (error instanceof PrivacyError) {
-        return { value: null, observation: observation(args, collectedAt, "partial", "privacy") };
-      }
       return { value: null, observation: observation(args, collectedAt, "partial", "malformed") };
     }
   } catch (error) {
