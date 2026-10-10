@@ -9,8 +9,22 @@
  */
 import type { Collected, ProviderEvent } from "@/providers";
 import { tsMs } from "@/providers/types";
-import { assertSafeLabelValue } from "@/fleet-contract";
+import { assertSafeLabelValue, PrivacyError } from "@/fleet-contract";
 
+const REDACTED = "[redacted]";
+
+/** Source-derived labels pass the fleet contract's credential screen before
+ * any report sees them (#126). Only a privacy rejection becomes a redaction;
+ * any other failure is malformed data and propagates. */
+function screenLabel(value: string): string {
+  try {
+    assertSafeLabelValue(value);
+    return value;
+  } catch (e) {
+    if (e instanceof PrivacyError) return REDACTED;
+    throw e;
+  }
+}
 
 export interface ProviderRow {
   harness: string;
@@ -38,6 +52,8 @@ export interface ProviderRow {
   partialClasses: string[];
   /** Distinct source files/db behind this row, sorted. Provenance (#37 AC). */
   provenance: string[];
+  /** Credential-shaped model/provider values withheld from this row (#126). */
+  redactedLabels: number;
 }
 
 interface ClassAgg {
@@ -70,17 +86,22 @@ export function providerRows(collected: Collected, sinceMs?: number): ProviderRo
     provider: string;
     model: string | null;
     events: ProviderEvent[];
+    redactedLabels: number;
   }>();
   for (const e of filtered) {
-    const key = JSON.stringify([e.harness, e.billingRoute, e.modelProvider, e.model]);
+    const provider = screenLabel(e.modelProvider);
+    const model = e.model === null ? null : screenLabel(e.model);
+    const key = JSON.stringify([e.harness, e.billingRoute, provider, model]);
     const group = groups.get(key) ?? {
       harness: e.harness,
       billingRoute: e.billingRoute,
-      provider: e.modelProvider,
-      model: e.model,
+      provider,
+      model,
       events: [],
+      redactedLabels: 0,
     };
     group.events.push(e);
+    group.redactedLabels += Number(provider !== e.modelProvider) + Number(model !== e.model);
     groups.set(key, group);
   }
   const rows: ProviderRow[] = [];
@@ -117,6 +138,7 @@ export function providerRows(collected: Collected, sinceMs?: number): ProviderRo
       cashUsd: cashVals.length > 0 ? cashVals.reduce((a, v) => a + v, 0) : null,
       partialClasses,
       provenance: [...new Set(evs.map((e) => e.provenance))].sort(),
+      redactedLabels: group.redactedLabels,
     });
   }
   return rows;
@@ -141,6 +163,8 @@ export interface ProviderReportJson {
   measured: boolean;
   /** Source surfaces intentionally excluded rather than conflated. */
   unsupported: string[];
+  /** Credential-shaped model/provider values withheld from the rows (#126). */
+  redactedLabels: number;
 }
 
 const dash = (v: number | null): string => (v === null ? "—" : String(v));
@@ -169,10 +193,7 @@ export function renderProviderReport(
           r.harness.padEnd(14),
           (r.provider ?? "unknown").padEnd(13),
           r.billingRoute.padEnd(13),
-          (() => {
-            try { assertSafeLabelValue(r.model ?? ""); return (r.model === null ? "—" : r.model.slice(0, 26)).padEnd(26); }
-            catch (e: unknown) { const err = e as Error; return "[redacted]"; }
-          })(),
+          (r.model === null ? "—" : r.model.slice(0, 26)).padEnd(26),
           String(r.events).padStart(6),
           dash(r.input).padStart(11),
           dash(r.output).padStart(10),
@@ -201,6 +222,10 @@ export function renderProviderReport(
   } else {
     lines.push("all values measured from source records; no estimates");
   }
+  const redacted = rows.reduce((sum, row) => sum + row.redactedLabels, 0);
+  if (redacted > 0) {
+    lines.push(`${redacted} label(s) redacted: credential-shaped source values withheld`);
+  }
   if (Object.keys(partial).length > 0) {
     const parts = Object.entries(partial).map(([h, n]) => `${h}: ${n} affected file(s)`);
     lines.push(`partially read (${parts.join(", ")}); unreported volume unknown`);
@@ -221,21 +246,15 @@ export function providerReportJson(
   untimedExcluded = 0,
   unsupported: string[] = [],
 ): ProviderReportJson {
-  const sanitizedRows = rows.map((row) => ({
-    ...row,
-    model: (() => {
-      try { assertSafeLabelValue(row.model ?? ""); return row.model ?? null; }
-      catch (e: unknown) { const err = e as Error; return "[redacted]"; }
-    })(),
-  }));
   return {
-    rows: sanitizedRows,
+    rows,
     unavailable,
     partial,
     untimedExcluded,
-    measured: sanitizedRows.every((row) => row.malformedEvents === 0
+    measured: rows.every((row) => row.malformedEvents === 0
       && row.partialEvents === 0
       && row.legacyCumulativeEvents === 0),
     unsupported,
+    redactedLabels: rows.reduce((sum, row) => sum + row.redactedLabels, 0),
   };
 }
