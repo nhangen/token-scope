@@ -145,5 +145,5 @@ export function claudeEvents(
       }
     }
   }
-  return { events: out, skipped, reasons: [...reasons] };
+  return { events: out, skipped, reasons: [...reasons].sort() };
 }

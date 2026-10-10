@@ -397,5 +397,5 @@ export function codexEvents(
     }
   };
   walk(sessionsDir);
-  return { events: removeForkReplays(rollouts), skipped, reasons: [...reasons] };
+  return { events: removeForkReplays(rollouts), skipped, reasons: [...reasons].sort() };
 }

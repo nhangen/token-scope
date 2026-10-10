@@ -33,13 +33,7 @@ export const UNSUPPORTED_GOOGLE_SURFACES = Object.freeze([
   "vertex-ai",
 ] as const);
 
-export type GeminiCliSourceReason =
-  | "missing"
-  | "unreadable"
-  | "malformed"
-  | "partial_records"
-  | "unsafe_path"
-  | null;
+export type GeminiCliSourceReason = Exclude<PartialReason, "corrupt_store"> | "missing" | null;
 
 export interface GeminiCliSourceObservation {
   surface: typeof GEMINI_CLI_SOURCE_CONTRACT.surface;
