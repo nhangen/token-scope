@@ -462,15 +462,12 @@ function isTelemetryTokenName(norm: string): boolean {
 
 // keyRaw keeps its case so adminKey splits into admin_key; norm is lowercased with - and _ removed.
 function isCompoundCredentialKey(keyRaw: string, norm: string): boolean {
-  const named =
-    /(?:secret|secrets|password|passwords|passwd|passwds|sig|sigs|signature|signatures)$/.test(norm)
-    || (
-      (norm.endsWith("key") || norm.endsWith("keys")) && (
-        /(?:^|[^a-z0-9])[a-z0-9]+[-_]keys?$/i.test(keyRaw.replace(/([a-z0-9])([A-Z])/g, "$1_$2"))
-        || COMPOUND_KEY_PREFIX.test(norm)
-      )
-    );
-  return named && !NON_CREDENTIAL_KEY_PREFIXES.some((prefix) => norm.startsWith(prefix));
+  if (/(?:secret|secrets|password|passwords|passwd|passwds|sig|sigs|signature|signatures)$/.test(norm)) return true;
+  if (!(norm.endsWith("key") || norm.endsWith("keys"))) return false;
+  const compound =
+    /(?:^|[^a-z0-9])[a-z0-9]+[-_]keys?$/i.test(keyRaw.replace(/([a-z0-9])([A-Z])/g, "$1_$2"))
+    || COMPOUND_KEY_PREFIX.test(norm);
+  return compound && !NON_CREDENTIAL_KEY_PREFIXES.some((prefix) => norm.startsWith(prefix));
 }
 
 function isCredentialPair(keyRaw: string, valRaw: string): boolean {

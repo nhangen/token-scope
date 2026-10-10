@@ -542,6 +542,20 @@ describe("fleet schema v1 contract", () => {
       });
 
       it.each([
+        "http://ml1/metrics?w=%7B%22primary_password%22%3A%22FAKE-EXAMPLE%22%7D",
+        "http://ml1/metrics?w=%7B%22cache_secret%22%3A%22FAKE-EXAMPLE%22%7D",
+        "http://ml1/metrics?w=%7B%22public_secret%22%3A%22FAKE-EXAMPLE%22%7D",
+        "http://ml1/metrics?w=%7B%22routing_signature%22%3A%22FAKE-EXAMPLE%22%7D",
+      ])("rejects a secret whose name starts like a database key name in %s", (locator) => {
+        expect(() => parseFleetRecord(withLocator(locator))).toThrow(valueShaped);
+      });
+
+      it("rejects a positional secret whose name starts like a database key name", () => {
+        expect(() => parseFleetRecord(withLocator("http://ml1/metrics/primary_password/FAKE-EXAMPLE")))
+          .toThrow(positional);
+      });
+
+      it.each([
         "http://ml1/metrics?tokenCount=1&window=5m",
         "http://ml1/metrics?tokens_total=5&token_type=input&max_tokens=4096",
         "http://ml1/metrics?filter=max_tokens>=5",
