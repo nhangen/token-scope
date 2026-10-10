@@ -657,8 +657,43 @@ function parsePrometheus(body: string): MetricSample[] {
 
 function counterName(metric: string, prefix: string): string {
   if (!metric.startsWith(prefix)) throw new Error("Prometheus metric family does not match its labels");
+  if (prefix === "olla_" && (metric.startsWith("olla_endpoint_") || metric.startsWith("olla_model_"))) {
+    throw new Error("Prometheus metric family does not match its labels");
+  }
+  if (prefix === "olla_model_" && metric.startsWith("olla_model_endpoint_")) {
+    throw new Error("Prometheus metric family does not match its labels");
+  }
   const name = metric.slice(prefix.length).replace(/_total$/, "");
   return prefix === "olla_endpoint_" && name === "up" ? "health_up" : name;
+}
+
+class MetricCollisionError extends Error {}
+
+function setCounter(counters: Record<string, number>, key: string, value: number): void {
+  if (Object.hasOwn(counters, key)) throw new MetricCollisionError("duplicate Prometheus metric sample");
+  Object.defineProperty(counters, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
+function sampleCounterKey(
+  sample: MetricSample,
+  prefix: string,
+  partitionLabels: readonly string[],
+): string {
+  const baseName = counterName(sample.name, prefix);
+  const extraEntries = Object.entries(sample.labels)
+    .filter(([key]) => !partitionLabels.includes(key))
+    .sort(([a], [b]) => a.localeCompare(b));
+  if (extraEntries.length === 0) return baseName;
+  const parts = [baseName];
+  for (const [key, value] of extraEntries) {
+    const cleanKey = key.replace(/[^a-zA-Z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+    const cleanValue = value.replace(/[^a-zA-Z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+    parts.push(cleanKey.length > 0 ? cleanKey : "label");
+    parts.push(cleanValue.length > 0 ? cleanValue : "empty");
+  }
+  const key = safeLabel(parts.join("_"));
+  assertSafeLabelValue(key);
+  return key;
 }
 
 function buildMetrics(source: LoadedSource, context: AdapterContext): void {
@@ -671,6 +706,7 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
     model: string | null;
     counters: Record<string, number>;
     health: FleetRecordStatus;
+    routing: OllaRoutingMetadata | null;
   }>();
   const group = (
     key: string,
@@ -686,11 +722,22 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
       model,
       counters: {},
       health: "unknown" as FleetRecordStatus,
+      routing: null,
     };
     groups.set(key, existing);
     return existing;
   };
   for (const sample of samples) {
+    if (sample.name === "olla_info") {
+      const entry = group("system", "metrics", context.routerHost, null, null);
+      setCounter(entry.counters, "info", sample.value);
+      entry.routing = {
+        engine: optionalPrivateSafeLabel(sample.labels.engine),
+        profile: optionalPrivateSafeLabel(sample.labels.profile),
+        balancer: optionalPrivateSafeLabel(sample.labels.balancer),
+      };
+      continue;
+    }
     const endpointName = sample.labels.endpoint;
     const model = sample.labels.model === undefined ? null : privateSafeLabel(sample.labels.model);
     if (endpointName !== undefined && model !== null) {
@@ -703,7 +750,8 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
         endpoint,
         model,
       );
-      entry.counters[counterName(sample.name, "olla_model_endpoint_")] = sample.value;
+      const counter = sampleCounterKey(sample, "olla_model_endpoint_", ["endpoint", "model"]);
+      setCounter(entry.counters, counter, sample.value);
       continue;
     }
     if (endpointName !== undefined) {
@@ -716,18 +764,24 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
         endpoint,
         null,
       );
-      entry.counters[counterName(sample.name, "olla_endpoint_")] = sample.value;
-      if (sample.name === "olla_endpoint_up") entry.health = sample.value === 0 ? "error" : "ok";
+      const counter = sampleCounterKey(
+        sample,
+        "olla_endpoint_",
+        sample.name === "olla_endpoint_up" ? ["endpoint", "status"] : ["endpoint"],
+      );
+      setCounter(entry.counters, counter, sample.value);
+      if (sample.name === "olla_endpoint_up" && counter === "health_up") entry.health = sample.value === 0 ? "error" : "ok";
       continue;
     }
     if (model !== null) {
       const entry = group(`model:${model}`, "metrics_model", model, null, model);
-      entry.counters[counterName(sample.name, "olla_model_")] = sample.value;
+      const counter = sampleCounterKey(sample, "olla_model_", ["model"]);
+      setCounter(entry.counters, counter, sample.value);
       continue;
     }
-    if (Object.keys(sample.labels).length > 0) continue;
     const entry = group("system", "metrics", context.routerHost, null, null);
-    entry.counters[counterName(sample.name, "olla_")] = sample.value;
+    const counter = sampleCounterKey(sample, "olla_", []);
+    setCounter(entry.counters, counter, sample.value);
   }
   for (const entry of groups.values()) {
     addSnapshot(context, source, {
@@ -740,6 +794,7 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
       model: entry.model,
       counters: entry.counters,
       endpoint: entry.endpoint,
+      routing: entry.routing,
     });
   }
 }
