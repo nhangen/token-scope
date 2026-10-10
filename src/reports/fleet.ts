@@ -87,6 +87,7 @@ interface FleetCollections {
   olla: OllaTelemetryCollection | null;
   ollaState: FleetSourceState;
   routeFilePartial?: boolean;
+  routeFileState?: FleetSourceState | null;
 }
 
 const ORCA_MAX_AGE_MS = 5 * 60_000;
@@ -276,6 +277,7 @@ function sourceStates(collections: FleetCollections, rejected: Map<string, numbe
   for (const source of collections.orca.sources) {
     states.push({ source: source.command, state: source.state, reason: source.reason });
   }
+  if (collections.routeFileState) states.push(collections.routeFileState);
   if (collections.olla === null) {
     states.push(collections.ollaState);
   } else {
@@ -367,22 +369,43 @@ export function fleetReportJson(
   };
 }
 
-function readOllaRoutes(path: string | undefined): { routes: OllaRouteObservation[]; partial: boolean } {
-  if (path === undefined) return { routes: [], partial: false };
-  const value = JSON.parse(readFileSync(path, "utf8"));
-  if (!Array.isArray(value)) throw new Error("TOKEN_SCOPE_OLLA_ROUTES must contain a JSON array");
+interface OllaRoutesRead {
+  routes: OllaRouteObservation[];
+  partial: boolean;
+  state: FleetSourceState | null;
+}
+
+const ROUTE_FIELDS = ["requestId", "runId", "endpointId", "endpointName", "model", "timestamp"] as const;
+
+function readOllaRoutes(path: string | undefined): OllaRoutesRead {
+  if (!path) return { routes: [], partial: false, state: null };
+  const unavailable = (reason: string): OllaRoutesRead => ({
+    routes: [],
+    partial: true,
+    state: { source: "olla-routes", state: "unavailable", reason },
+  });
+  let value: unknown;
+  try {
+    value = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return unavailable("TOKEN_SCOPE_OLLA_ROUTES is unreadable or not JSON");
+  }
+  if (!Array.isArray(value)) return unavailable("TOKEN_SCOPE_OLLA_ROUTES must contain a JSON array");
   let partial = false;
   const routes: OllaRouteObservation[] = [];
-  for (const item of value) {
+  for (const item of value as unknown[]) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      partial = true;
+      continue;
+    }
+    const fields = item as Record<string, unknown>;
+    if (ROUTE_FIELDS.some((field) => fields[field] !== undefined && typeof fields[field] !== "string")) {
+      partial = true;
+      continue;
+    }
     try {
-      for (const val of [
-        item.requestId,
-        item.runId,
-        item.endpointId,
-        item.endpointName,
-        item.model,
-        item.timestamp,
-      ]) {
+      for (const field of ROUTE_FIELDS) {
+        const val = fields[field];
         if (typeof val === "string" && val.length > 0) assertSafeLabelValue(val);
       }
       routes.push(item as OllaRouteObservation);
@@ -394,7 +417,11 @@ function readOllaRoutes(path: string | undefined): { routes: OllaRouteObservatio
       throw error;
     }
   }
-  return { routes, partial };
+  return {
+    routes,
+    partial,
+    state: partial ? { source: "olla-routes", state: "partial", reason: "rejected route observation(s)" } : null,
+  };
 }
 
 function observedRoutesFromProviders(providers: Collected): OllaRouteObservation[] {
@@ -432,8 +459,9 @@ export async function collectFleetReport(options: {
     reason: "TOKEN_SCOPE_OLLA_URL not configured",
   };
   let olla: OllaTelemetryCollection | null = null;
-  const readRoutes = readOllaRoutes(process.env.TOKEN_SCOPE_OLLA_ROUTES);
+  let readRoutes: OllaRoutesRead = { routes: [], partial: false, state: null };
   if (ollaUrl) {
+    readRoutes = readOllaRoutes(process.env.TOKEN_SCOPE_OLLA_ROUTES);
     try {
       olla = await collectOllaTelemetry({
         baseUrl: ollaUrl,
@@ -454,7 +482,7 @@ export async function collectFleetReport(options: {
   }
   const orca = await orcaPromise;
   return fleetReportJson(
-    { providers, orca, olla, ollaState, routeFilePartial: readRoutes.partial },
+    { providers, orca, olla, ollaState, routeFilePartial: readRoutes.partial, routeFileState: readRoutes.state },
     { ...options, collectedAt, promptOriginHost },
   );
 }

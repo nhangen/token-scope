@@ -567,4 +567,28 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     const claude = JSON.parse(result.out).rows.find((row: any) => row.harness === "claude");
     expect(claude).toMatchObject({ request_id: null, status: "incomplete" });
   });
+  for (const [name, contents] of [
+    ["missing", null],
+    ["malformed", "{not json"],
+    ["non-array", "{}"],
+    ["non-object items", JSON.stringify([null, 42, { requestId: 42, endpointName: "ml1" }])],
+  ] as const) {
+    it(`reports a ${name} TOKEN_SCOPE_OLLA_ROUTES file as a source state`, async () => {
+      const routesPath = join(temp, `routes-${name.replaceAll(" ", "-")}.json`);
+      if (contents !== null) writeFileSync(routesPath, contents);
+      const result = await runFleet({ routesPath });
+      expect(result.code).toBe(0);
+      const report = JSON.parse(result.out);
+      expect(report.rows.length).toBeGreaterThan(0);
+      const routes = report.sources.find((source: any) => source.source === "olla-routes");
+      expect(routes?.state).toBe(contents === null || name !== "non-object items" ? "unavailable" : "partial");
+      expect(report.sources.find((source: any) => source.source === "olla")?.reason).not.toBe("collection failed");
+    });
+  }
+  it("ignores TOKEN_SCOPE_OLLA_ROUTES when Olla is not configured", async () => {
+    const result = await runFleet({ routesPath: join(temp, "no-such-routes.json"), ollaUrl: null });
+    expect(result.code).toBe(0);
+    const report = JSON.parse(result.out);
+    expect(report.sources.some((source: any) => source.source === "olla-routes")).toBe(false);
+  });
 });
