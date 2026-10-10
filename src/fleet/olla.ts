@@ -729,8 +729,19 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
   };
   for (const sample of samples) {
     if (sample.name === "olla_info") {
+      if (sample.value !== 1) {
+        throw new Error("olla_info must be 1");
+      }
+      const knownRoutingLabels = ["engine", "profile", "balancer"];
+      const unknownLabels = Object.entries(sample.labels)
+        .filter(([key]) => !knownRoutingLabels.includes(key))
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key]) => key);
+      if (unknownLabels.length > 0) {
+        throw new Error(`unknown olla_info labels: ${unknownLabels.join(", ")}`);
+      }
       const entry = group("system", "metrics", context.routerHost, null, null);
-      setCounter(entry.counters, "info", sample.value);
+      setCounter(entry.counters, "info", 1);
       entry.routing = {
         engine: optionalPrivateSafeLabel(sample.labels.engine),
         profile: optionalPrivateSafeLabel(sample.labels.profile),
