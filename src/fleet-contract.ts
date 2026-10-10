@@ -199,28 +199,52 @@ const URL_USERINFO = /^(?:[a-z][a-z0-9+.-]*:)?\/\/[^/?#]*@/i;
 const BARE_USERINFO = /^[^/?#:@]+:[^/?#@]*@/;
 const CREDENTIAL_PARAM_SEGMENTS = new Set([
   "accesstoken",
+  "accesstokens",
   "apikey",
+  "apikeys",
+  "apitoken",
+  "apitokens",
   "auth",
   "authorization",
   "authtoken",
+  "authtokens",
   "bearer",
   "clientsecret",
+  "clientsecrets",
   "cookie",
+  "cookies",
   "credential",
   "credentials",
   "hmac",
   "idtoken",
+  "idtokens",
   "jsessionid",
   "jwt",
   "key",
+  "keys",
   "pass",
+  "passphrase",
+  "passphrases",
   "passwd",
+  "passwds",
   "password",
+  "passwords",
+  "privkey",
+  "privkeys",
   "pwd",
+  "pwds",
   "refreshtoken",
+  "refreshtokens",
   "secret",
+  "secrets",
+  "secretkey",
+  "secretkeys",
+  "sessiontoken",
+  "sessiontokens",
   "sig",
+  "sigs",
   "signature",
+  "signatures",
   "token",
 ]);
 // Unseparated compounds (apitoken, apikeys, privatekeypem) have no segment
@@ -229,6 +253,7 @@ const CREDENTIAL_PARAM_SEGMENTS = new Set([
 const CREDENTIAL_PARAM_STEMS = [
   "accesskey",
   "apikey",
+  "apitoken",
   "authkey",
   "clientsecret",
   "credential",
@@ -241,11 +266,13 @@ const CREDENTIAL_PARAM_STEMS = [
 ];
 // These stems do appear inside telemetry names (max_tokens, tokenizer, secretary),
 // so they match only at the end of a segment.
-const CREDENTIAL_PARAM_SUFFIXES = ["secret", "secrets", "signature", "token"];
+const CREDENTIAL_PARAM_SUFFIXES = ["secret", "secrets", "signature", "signatures", "token"];
 
 // A token segment followed by one of these names a count or class, not a
-// credential (tokenCount, token_type) — core telemetry for a token-accounting tool.
-const TOKEN_TELEMETRY_QUALIFIERS = new Set(["budget", "count", "counts", "kind", "limit", "total", "type", "usage"]);
+// credential (tokenCount, token_type, token_max) — core telemetry for a token-accounting tool.
+const TOKEN_TELEMETRY_QUALIFIERS = new Set([
+  "avg", "budget", "count", "counts", "kind", "limit", "max", "min", "rate", "sum", "total", "type", "usage",
+]);
 
 function isCredentialSegment(segment: string, next: string | undefined): boolean {
   if (segment === "token" && next !== undefined && TOKEN_TELEMETRY_QUALIFIERS.has(next)) return false;
@@ -255,11 +282,18 @@ function isCredentialSegment(segment: string, next: string | undefined): boolean
 }
 
 function hasCredentialSegment(name: string): boolean {
+  const normNoDelim = name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (CREDENTIAL_PARAM_STEMS.some((stem) => normNoDelim.includes(stem))) return true;
   const segments = name
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .map((segment) => segment.replace(/(?<!\d)\d+$/, ""));
-  return segments.some((segment, index) => isCredentialSegment(segment, segments[index + 1]));
+  return segments.some((segment, index) =>
+    !isNonCredentialKeyName(segment, segments[index - 1]) && isCredentialSegment(segment, segments[index + 1]));
+}
+
+function isNonCredentialKeyName(segment: string, previous: string | undefined): boolean {
+  return (segment === "key" || segment === "keys") && previous !== undefined && NON_CREDENTIAL_KEY_PREFIXES.includes(previous);
 }
 
 // The camelCase split catches tokenValue and apiKeyId, but it also breaks a
@@ -348,8 +382,253 @@ const BARE_CREDENTIAL = new RegExp([
   String.raw`\bgithub_pat_\w{20,}`,
   String.raw`\bglpat-[\w-]{20,}`,
   String.raw`\bxox[abposr]-[\w-]{10,}`,
-  String.raw`\bAKIA[0-9A-Z]{16}\b`,
 ].join("|"), "i");
+// AWS key IDs are uppercase; under the shared /i flag "asiapacific..." would match.
+const AWS_ACCESS_KEY_ID = /\bA[SK]IA[0-9A-Z]{16}\b/;
+
+function hasBareCredential(text: string): boolean {
+  return BARE_CREDENTIAL.test(text) || AWS_ACCESS_KEY_ID.test(text);
+}
+
+const CREDENTIAL_PARAM_KEYS = new Set([
+  "accesskey",
+  "accesskeys",
+  "accesstoken",
+  "accesstokens",
+  "apikey",
+  "apikeys",
+  "apitoken",
+  "apitokens",
+  "authkey",
+  "authkeys",
+  "authorization",
+  "authtoken",
+  "authtokens",
+  "bearer",
+  "clientsecret",
+  "clientsecrets",
+  "cookie",
+  "cookies",
+  "credential",
+  "credentials",
+  "hmac",
+  "idtoken",
+  "idtokens",
+  "jsessionid",
+  "jwt",
+  "passphrase",
+  "passphrases",
+  "passwd",
+  "passwds",
+  "password",
+  "passwords",
+  "privkey",
+  "privkeys",
+  "privatekey",
+  "privatekeys",
+  "pwd",
+  "pwds",
+  "refreshtoken",
+  "refreshtokens",
+  "secret",
+  "secrets",
+  "secretkey",
+  "secretkeys",
+  "sessiontoken",
+  "sessiontokens",
+  "sig",
+  "sigs",
+  "signature",
+  "signatures",
+]);
+
+// Token counts and limits are named like credentials (input_tokens, max_tokens).
+const TELEMETRY_TOKEN_PREFIXES = [
+  "input", "output", "prompt", "completion", "reasoning", "cache", "cumulative", "max", "total",
+];
+// Database and map key names, not credentials (sort_key, partition_key, public_key).
+// primary and routing are left out: an Azure primary key is the access key,
+// and a PagerDuty routing_key is the integration secret.
+const NON_CREDENTIAL_KEY_PREFIXES = ["sort", "cache", "public", "partition", "foreign"];
+const COMPOUND_KEY_PREFIX =
+  /(?:api|access|auth|secret|priv|private|client|app|signing|encryption|master|ssh|deploy|session|consumer|service|account|license|shared)keys?$/;
+
+function isTelemetryValue(text: string): boolean {
+  const parts = text.split(/[\s:=]+/).map((s) => s.trim()).filter((s) => s.length > 0);
+  return parts.length > 0 && parts.every((part) => TOKEN_TELEMETRY_QUALIFIERS.has(part) || /^\d+(?:\.\d+)?$/.test(part));
+}
+
+function isTokenName(norm: string): boolean {
+  return norm.endsWith("token") || norm.endsWith("tokens");
+}
+
+// max_access_token is a credential behind a telemetry prefix, not a count.
+const CREDENTIAL_TOKEN_SUFFIX = /(?:access|api|auth|session|refresh|id|bot|bearer)tokens?$/;
+
+function isTelemetryTokenName(norm: string): boolean {
+  return TELEMETRY_TOKEN_PREFIXES.some((prefix) => norm.startsWith(prefix)) && !CREDENTIAL_TOKEN_SUFFIX.test(norm);
+}
+
+// keyRaw keeps its case so adminKey splits into admin_key; norm is lowercased with - and _ removed.
+function isCompoundCredentialKey(keyRaw: string, norm: string): boolean {
+  if (/(?:secret|secrets|password|passwords|passwd|passwds|sig|sigs|signature|signatures)$/.test(norm)) return true;
+  if (!(norm.endsWith("key") || norm.endsWith("keys"))) return false;
+  const compound =
+    /(?:^|[^a-z0-9])[a-z0-9]+[-_]keys?$/i.test(keyRaw.replace(/([a-z0-9])([A-Z])/g, "$1_$2"))
+    || COMPOUND_KEY_PREFIX.test(norm);
+  return compound && !NON_CREDENTIAL_KEY_PREFIXES.some((prefix) => norm.startsWith(prefix));
+}
+
+function isCredentialPair(keyRaw: string, valRaw: string): boolean {
+  const key = keyRaw.toLowerCase().replace(/[-_]/g, "");
+  const val = valRaw.toLowerCase().replace(/^["\x27\[\s]+|["\x27\]\s]+$/g, "").trim();
+
+  if (CREDENTIAL_PARAM_KEYS.has(key)) return true;
+  if (isTokenName(key)) {
+    if (val === "" || val === "null" || val === "[]" || isTelemetryValue(val)) return false;
+    return !isTelemetryTokenName(key);
+  }
+  // Bare "key" (tag={"key": "env"}) and words that merely end in key (monkey) are not credentials.
+  return isCompoundCredentialKey(keyRaw, key);
+}
+
+// A name:value chain (host:token:..., token:total:secret) carries a credential
+// when a token name is followed by anything other than telemetry, or when any
+// adjacent pair is a credential name and its value.
+function hasCredentialColonChain(parts: string[]): boolean {
+  for (let j = 0; j < parts.length; j++) {
+    const partNorm = parts[j]?.toLowerCase().replace(/[-_]/g, "") ?? "";
+    if (partNorm === "token" || partNorm === "tokens") {
+      for (let k = j + 1; k < parts.length; k++) {
+        if (!isTelemetryValue(parts[k]?.toLowerCase().trim() ?? "")) return true;
+      }
+    }
+    if (j < parts.length - 1 && isCredentialPair(parts[j] ?? "", parts[j + 1] ?? "")) return true;
+  }
+  return false;
+}
+
+// A path segment naming a credential class is a positional credential when
+// another segment follows it to carry the value. token/tokens followed by a
+// telemetry qualifier (/tokens/total) is exempt, as are telemetry token names
+// and compound words under a filesystem root. "auth" is left out on purpose:
+// it names a mechanism, and an adapter base URL can end in /auth.
+const CREDENTIAL_PATH_WORDS = new Set([...CREDENTIAL_PARAM_KEYS, "token", "tokens"]);
+
+function isCredentialPathWord(segment: string, norm: string): boolean {
+  if (CREDENTIAL_PATH_WORDS.has(norm)) return true;
+  if (isTokenName(norm)) return !isTelemetryTokenName(norm);
+  return isCompoundCredentialKey(segment, norm);
+}
+
+// A Slack-style webhook path (/services/T000/B000/<token>) is fully specified
+// by its last segment, so the whole path is one positional credential.
+const SLACK_WEBHOOK_PATH = /(?:^|\/)services(?:;[^/]*)?\/T[0-9A-Z]+(?:;[^/]*)?\/B[0-9A-Z]+(?:;[^/]*)?\/[^/?#\s]+/i;
+
+// After token/<qualifier>, the rest of a telemetry path is words, counts,
+// durations, and dates (/tokens/usage/daily, /token/count/5m); anything else
+// may be the value the path was built to carry.
+const TELEMETRY_PATH_TAIL = /^(?:[a-z]{1,16}|\d+(?:\.\d+)?|\d+[smhdw]|\d{4}-\d{2}(?:-\d{2})?)$/;
+
+const PLURAL_CREDENTIAL_WORD = /(?:tokens|keys|secrets|passwords|passwds|signatures|sigs|credentials|cookies)$/;
+// A bare /path can be a host-less URL path (/api/v1/github_token/...), so only
+// paths under a filesystem root count, plus ~/, a drive letter, and file:.
+const ABSOLUTE_FILE_PATH = /^(?:\/(?:Users|home|root|tmp|var|opt|srv|mnt|private|Volumes|Library|usr|nix|workspaces?|github|builds)\/|~\/|[a-z]:\/(?!\/)|file:)/i;
+
+function hasPositionalCredential(decoded: string): boolean {
+  const normalized = decoded.replaceAll("\\", "/");
+  const [pathPart = ""] = normalized.split(/[?#]/, 1);
+  const pathMatch = pathPart.match(/^(?:[a-z][a-z0-9+.-]*:\/\/[^/?#]+)?([^?#]*)/i);
+  const pathname = pathMatch ? (pathMatch[1] ?? "") : pathPart;
+  if (SLACK_WEBHOOK_PATH.test(pathname)) return true;
+  // Under a filesystem root, a plural credential word names a collection
+  // directory (design-tokens, my-secrets, signing-keys), not a slot for one
+  // value; a singular one (db_password, my_api_key) still counts.
+  const fileLocator = ABSOLUTE_FILE_PATH.test(normalized.trim());
+
+  const rawSegments = pathname.split("/").filter((s) => s.length > 0);
+  for (let i = 0; i < rawSegments.length; i++) {
+    const rawSegment = rawSegments[i];
+    if (!rawSegment) continue;
+    const segment = rawSegment.split(";")[0]?.trim() ?? "";
+    if (!segment) continue;
+
+    const colonParts = segment.split(/\s*:\s*/);
+    if (colonParts.length > 1 && hasCredentialColonChain(colonParts)) return true;
+
+    const norm = segment.toLowerCase().replace(/[-_]/g, "");
+    const collectionDir = fileLocator && PLURAL_CREDENTIAL_WORD.test(norm)
+      && !CREDENTIAL_PARAM_STEMS.some((stem) => norm.includes(stem)) && !CREDENTIAL_TOKEN_SUFFIX.test(norm);
+    if (isCredentialPathWord(segment, norm) && !collectionDir) {
+      if (i + 1 < rawSegments.length) {
+        const nextRaw = rawSegments[i + 1];
+        const nextSegment = (nextRaw ? nextRaw.split(";")[0]?.trim().toLowerCase() : "") ?? "";
+        if (norm === "token" || norm === "tokens") {
+          if (TOKEN_TELEMETRY_QUALIFIERS.has(nextSegment)) {
+            const tail = rawSegments.slice(i + 2).map((raw) => raw.split(";")[0]?.trim() ?? "");
+            if (tail.some((seg) => seg !== "" && !TELEMETRY_PATH_TAIL.test(seg))) return true;
+            continue;
+          }
+        }
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function hasCredentialValue(decoded: string): boolean {
+  if (hasBareCredential(decoded)) return true;
+  if (SLACK_WEBHOOK_PATH.test(decoded.replaceAll("\\", "/"))) return true;
+
+  const checkPair = (key: string, val: string): boolean => {
+    if (isCredentialPair(key, val)) return true;
+    return val.includes(":") && hasCredentialColonChain(val.split(/\s*:\s*/));
+  };
+
+  const checkTextValues = (text: string): boolean => {
+    const unescaped = text.replace(/\\(["\x27\\])/g, "$1");
+    const pattern = /["\x27]?([a-z0-9_-]+)["\x27]?\s*[:=]\s*(?:"([^"]*)"|'([^']*)'|([^\s,}"\x27&]+))/gi;
+    for (const match of unescaped.matchAll(pattern)) {
+      const key = match[1];
+      const val = match[2] ?? match[3] ?? match[4];
+      if (key && val && checkPair(key, val)) return true;
+    }
+
+    if (unescaped.includes("[")) {
+      const arrayPattern = /["\x27]?([a-z0-9_-]+)["\x27]?\s*[:=]\s*\[([^\]]*)\]/gi;
+      for (const match of unescaped.matchAll(arrayPattern)) {
+        const key = match[1];
+        const rawList = match[2];
+        if (key && rawList) {
+          const items = rawList
+            .split(",")
+            .map((s) => s.replace(/^["\x27\s]+|["\x27\s]+$/g, "").trim())
+            .filter((s) => s.length > 0);
+          for (const item of items) {
+            if (checkPair(key, item)) return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  if (checkTextValues(decoded)) return true;
+
+  // The whole-locator pass reads "https" as a key and the rest of the URL as its
+  // value, so a header-style value (h=Authorization:...) is only seen per parameter.
+  const params = decoded.split(/[&;?#]/);
+  for (const param of params) {
+    const eqIdx = param.indexOf("=");
+    if (eqIdx === -1) continue;
+    const paramKey = param.slice(0, eqIdx);
+    const paramVal = param.slice(eqIdx + 1);
+    if (checkPair(paramKey, paramVal)) return true;
+    if (checkTextValues(paramVal)) return true;
+  }
+  return false;
+}
 
 export function assertSafeLabelValue(value: string): void {
   const decoded = decodeLocator(value);
@@ -357,7 +636,7 @@ export function assertSafeLabelValue(value: string): void {
     decoded === null
     || hasUserinfo(decoded)
     || EMBEDDED_USERINFO.test(decoded)
-    || BARE_CREDENTIAL.test(decoded)
+    || hasBareCredential(decoded)
     || locatorParams(decoded).some(isCredentialParam)
     || [...decoded.matchAll(SPACED_ASSIGNMENT)]
       .some((match) => isCredentialParam(match[1]!))
@@ -370,11 +649,20 @@ function locatorValue(value: unknown): string | null {
   const locator = nullableString(value, "provenance.locator");
   if (locator === null) return null;
   if (hasUserinfo(locator)) {
-    throw new Error("provenance.locator cannot contain URL credentials");
+    throw new PrivacyError("provenance.locator cannot contain URL credentials");
   }
   const decoded = decodeLocator(locator);
+  if (decoded !== null && EMBEDDED_USERINFO.test(decoded.replaceAll("\\", "/"))) {
+    throw new PrivacyError("provenance.locator cannot contain URL credentials");
+  }
   if (decoded === null || locatorParams(decoded).some(isCredentialParam)) {
-    throw new Error("provenance.locator cannot contain credential query parameters");
+    throw new PrivacyError("provenance.locator cannot contain credential query parameters");
+  }
+  if (hasPositionalCredential(decoded)) {
+    throw new PrivacyError("provenance.locator cannot contain a positional credential segment");
+  }
+  if (hasCredentialValue(decoded)) {
+    throw new PrivacyError("provenance.locator cannot carry a credential value");
   }
   return locator;
 }
