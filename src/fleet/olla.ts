@@ -770,7 +770,7 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
         sample.name === "olla_endpoint_up" ? ["endpoint", "status"] : ["endpoint"],
       );
       setCounter(entry.counters, counter, sample.value);
-      if (counter === "health_up") entry.health = sample.value === 0 ? "error" : "ok";
+      if (sample.name === "olla_endpoint_up" && counter === "health_up") entry.health = sample.value === 0 ? "error" : "ok";
       continue;
     }
     if (model !== null) {
