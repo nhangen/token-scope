@@ -667,6 +667,13 @@ function counterName(metric: string, prefix: string): string {
   return prefix === "olla_endpoint_" && name === "up" ? "health_up" : name;
 }
 
+class MetricCollisionError extends Error {}
+
+function setCounter(counters: Record<string, number>, key: string, value: number): void {
+  if (Object.hasOwn(counters, key)) throw new MetricCollisionError("duplicate Prometheus metric sample");
+  Object.defineProperty(counters, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
 function sampleCounterKey(
   sample: MetricSample,
   prefix: string,
@@ -723,10 +730,7 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
   for (const sample of samples) {
     if (sample.name === "olla_info") {
       const entry = group("system", "metrics", context.routerHost, null, null);
-      if (entry.counters.info !== undefined) {
-        throw new Error("duplicate Prometheus metric sample");
-      }
-      entry.counters.info = sample.value;
+      setCounter(entry.counters, "info", sample.value);
       entry.routing = {
         engine: optionalPrivateSafeLabel(sample.labels.engine),
         profile: optionalPrivateSafeLabel(sample.labels.profile),
@@ -747,10 +751,7 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
         model,
       );
       const counter = sampleCounterKey(sample, "olla_model_endpoint_", ["endpoint", "model"]);
-      if (entry.counters[counter] !== undefined) {
-        throw new Error("duplicate Prometheus metric sample");
-      }
-      entry.counters[counter] = sample.value;
+      setCounter(entry.counters, counter, sample.value);
       continue;
     }
     if (endpointName !== undefined) {
@@ -768,28 +769,19 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
         "olla_endpoint_",
         sample.name === "olla_endpoint_up" ? ["endpoint", "status"] : ["endpoint"],
       );
-      if (entry.counters[counter] !== undefined) {
-        throw new Error("duplicate Prometheus metric sample");
-      }
-      entry.counters[counter] = sample.value;
+      setCounter(entry.counters, counter, sample.value);
       if (sample.name === "olla_endpoint_up") entry.health = sample.value === 0 ? "error" : "ok";
       continue;
     }
     if (model !== null) {
       const entry = group(`model:${model}`, "metrics_model", model, null, model);
       const counter = sampleCounterKey(sample, "olla_model_", ["model"]);
-      if (entry.counters[counter] !== undefined) {
-        throw new Error("duplicate Prometheus metric sample");
-      }
-      entry.counters[counter] = sample.value;
+      setCounter(entry.counters, counter, sample.value);
       continue;
     }
     const entry = group("system", "metrics", context.routerHost, null, null);
     const counter = sampleCounterKey(sample, "olla_", []);
-    if (entry.counters[counter] !== undefined) {
-      throw new Error("duplicate Prometheus metric sample");
-    }
-    entry.counters[counter] = sample.value;
+    setCounter(entry.counters, counter, sample.value);
   }
   for (const entry of groups.values()) {
     addSnapshot(context, source, {

@@ -1280,7 +1280,7 @@ describe("Olla fleet telemetry adapter", () => {
         path: "/internal/metrics",
         state: "partial",
         reason: "malformed",
-        errorClass: "Error",
+        errorClass: "MetricCollisionError",
       }));
 
       const duplicateSystem = [
@@ -1292,8 +1292,61 @@ describe("Olla fleet telemetry adapter", () => {
         path: "/internal/metrics",
         state: "partial",
         reason: "malformed",
-        errorClass: "Error",
+        errorClass: "MetricCollisionError",
       }));
+    });
+
+    it("rejects a duplicate in every sample family with a collision error class", async () => {
+      for (const body of [
+        'olla_info{engine="olla"} 1\nolla_info{engine="olla"} 1\n',
+        'olla_model_requests_total{model="qwen3.8:27b"} 1\nolla_model_requests_total{model="qwen3.8:27b"} 2\n',
+        [
+          'olla_model_endpoint_requests_total{model="qwen3.8:27b",endpoint="ml1-5080"} 1',
+          'olla_model_endpoint_requests_total{model="qwen3.8:27b",endpoint="ml1-5080"} 2',
+        ].join("\n") + "\n",
+        'olla_requests_total{a="1",b="2"} 1\nolla_requests_total{b="2",a="1"} 2\n',
+      ]) {
+        const collected = await collect({ "/internal/metrics": body });
+        expect(collected.sources, body).toContainEqual(expect.objectContaining({
+          path: "/internal/metrics",
+          state: "partial",
+          reason: "malformed",
+          errorClass: "MetricCollisionError",
+        }));
+      }
+    });
+
+    it("rejects samples whose label values sanitize to the same counter key", async () => {
+      for (const body of [
+        'olla_requests_total{status="a-b"} 1\nolla_requests_total{status="a_b"} 2\n',
+        'olla_requests_total{status="ok"} 1\nolla_requests_status_ok_total 2\n',
+      ]) {
+        const collected = await collect({ "/internal/metrics": body });
+        expect(collected.sources, body).toContainEqual(expect.objectContaining({
+          state: "partial",
+          reason: "malformed",
+          errorClass: "MetricCollisionError",
+        }));
+      }
+    });
+
+    it("does not read inherited object property names as duplicates", async () => {
+      const collected = await collect({
+        "/internal/metrics": "olla_constructor 1\nolla_toString 2\nolla___proto__ 3\n",
+      });
+      expect(collected.sources).toContainEqual(expect.objectContaining({
+        path: "/internal/metrics",
+        state: "available",
+      }));
+      expect(snapshot(collected, "metrics").counters).toMatchObject({ constructor: 1, toString: 2 });
+    });
+
+    it("falls back to placeholders for empty label keys and values", async () => {
+      const collected = await collect({ "/internal/metrics": 'olla_requests_total{status=""} 4\nolla_requests_total{_="x"} 5\n' });
+      expect(snapshot(collected, "metrics").counters).toMatchObject({
+        requests_status_empty: 4,
+        requests_label_x: 5,
+      });
     });
 
     it("marks source malformed when endpoint or model family lacks corresponding label", async () => {
