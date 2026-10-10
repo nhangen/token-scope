@@ -317,6 +317,10 @@ describe("fleet schema v1 contract", () => {
       "https:\\\\\\user:FAKE-EXAMPLE@ml1/metrics",
       "\u200B//user:FAKE-EXAMPLE@ml1/metrics",
       "https:/ghp_FAKE-EXAMPLE@github.com/x",
+      "https://app/login?next=https://admin:FAKE-EXAMPLE@db.internal/x",
+      "https://app/login?next=https%3A%2F%2Fadmin%3AFAKE-EXAMPLE%40db.internal",
+      "http://ml1/metrics?proxy=http://admin:FAKE-EXAMPLE@proxy:3128",
+      "sessions/run.jsonl via http://u:FAKE-EXAMPLE@h",
     ])("rejects disguised URL credentials in %s", (locator) => {
       expect(() => parseFleetRecord(withLocator(locator)))
         .toThrow("provenance.locator cannot contain URL credentials");

@@ -652,6 +652,9 @@ function locatorValue(value: unknown): string | null {
     throw new PrivacyError("provenance.locator cannot contain URL credentials");
   }
   const decoded = decodeLocator(locator);
+  if (decoded !== null && EMBEDDED_USERINFO.test(decoded.replaceAll("\\", "/"))) {
+    throw new PrivacyError("provenance.locator cannot contain URL credentials");
+  }
   if (decoded === null || locatorParams(decoded).some(isCredentialParam)) {
     throw new PrivacyError("provenance.locator cannot contain credential query parameters");
   }
