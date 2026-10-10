@@ -529,6 +529,7 @@ const SLACK_WEBHOOK_PATH = /(?:^|\/)services(?:;[^/]*)?\/T[0-9A-Z]+(?:;[^/]*)?\/
 // may be the value the path was built to carry.
 const TELEMETRY_PATH_TAIL = /^(?:[a-z]{1,16}|\d+(?:\.\d+)?|\d+[smhdw]|\d{4}-\d{2}(?:-\d{2})?)$/;
 
+const PLURAL_CREDENTIAL_WORD = /(?:tokens|keys|secrets|passwords|passwds|signatures|sigs|credentials|cookies)$/;
 // A bare /path can be a host-less URL path (/api/v1/github_token/...), so only
 // paths under a filesystem root count, plus ~/, a drive letter, and file:.
 const ABSOLUTE_FILE_PATH = /^(?:\/(?:Users|home|root|tmp|var|opt|srv|mnt|private|Volumes|Library|usr|nix|workspaces?|github|builds)\/|~\/|[a-z]:\/(?!\/)|file:)/i;
@@ -539,9 +540,9 @@ function hasPositionalCredential(decoded: string): boolean {
   const pathMatch = pathPart.match(/^(?:[a-z][a-z0-9+.-]*:\/\/[^/?#]+)?([^?#]*)/i);
   const pathname = pathMatch ? (pathMatch[1] ?? "") : pathPart;
   if (SLACK_WEBHOOK_PATH.test(pathname)) return true;
-  // An absolute file path's directories are the user's project names
-  // (design-tokens, my-secrets), so only an exact credential word counts there.
-  // Anything else, including //host and host:port/ forms, keeps the compound rules.
+  // Under a filesystem root, a plural credential word names a collection
+  // directory (design-tokens, my-secrets, signing-keys), not a slot for one
+  // value; a singular one (db_password, my_api_key) still counts.
   const fileLocator = ABSOLUTE_FILE_PATH.test(normalized.trim());
 
   const rawSegments = pathname.split("/").filter((s) => s.length > 0);
@@ -555,7 +556,9 @@ function hasPositionalCredential(decoded: string): boolean {
     if (colonParts.length > 1 && hasCredentialColonChain(colonParts)) return true;
 
     const norm = segment.toLowerCase().replace(/[-_]/g, "");
-    if (fileLocator ? CREDENTIAL_PATH_WORDS.has(norm) : isCredentialPathWord(segment, norm)) {
+    const collectionDir = fileLocator && PLURAL_CREDENTIAL_WORD.test(norm)
+      && !CREDENTIAL_PARAM_STEMS.some((stem) => norm.includes(stem));
+    if (isCredentialPathWord(segment, norm) && !collectionDir) {
       if (i + 1 < rawSegments.length) {
         const nextRaw = rawSegments[i + 1];
         const nextSegment = (nextRaw ? nextRaw.split(";")[0]?.trim().toLowerCase() : "") ?? "";

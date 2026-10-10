@@ -574,6 +574,13 @@ describe("fleet schema v1 contract", () => {
         "sessions/token/FAKE-EXAMPLE",
         "/home/n/api_key/FAKE-EXAMPLE",
         "file:///home/n/password/FAKE-EXAMPLE",
+        "/tmp/db_password/FAKE-EXAMPLE",
+        "/home/n/api_tokens/FAKE-EXAMPLE",
+        "/home/n/db_passwords/FAKE-EXAMPLE",
+        "/home/n/my_api_key/FAKE-EXAMPLE",
+        "~/aws_secret_key/FAKE-EXAMPLE",
+        "C:/x/github_token/FAKE-EXAMPLE",
+        "file://ml1/metrics/session_key/FAKE-EXAMPLE",
       ])("still rejects an exact credential word in a file locator: %s", (locator) => {
         expect(() => parseFleetRecord(withLocator(locator))).toThrow(positional);
       });
