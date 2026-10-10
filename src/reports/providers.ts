@@ -52,7 +52,7 @@ export interface ProviderRow {
   partialClasses: string[];
   /** Distinct source files/db behind this row, sorted. Provenance (#37 AC). */
   provenance: string[];
-  /** Credential-shaped model/provider values withheld from this row (#126). */
+  /** Event labels (model or provider, per event) withheld as credential-shaped (#126). */
   redactedLabels: number;
 }
 
@@ -224,7 +224,7 @@ export function renderProviderReport(
   }
   const redacted = rows.reduce((sum, row) => sum + row.redactedLabels, 0);
   if (redacted > 0) {
-    lines.push(`${redacted} label(s) redacted: credential-shaped source values withheld`);
+    lines.push(`${redacted} event label(s) redacted: credential-shaped source values withheld`);
   }
   if (Object.keys(partial).length > 0) {
     const parts = Object.entries(partial).map(([h, n]) => `${h}: ${n} affected file(s)`);

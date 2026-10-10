@@ -786,7 +786,7 @@ describe("credential-shaped labels in provider reports (#126)", () => {
     const out = renderProviderReport(rows, []);
     expect(out).not.toContain(SECRET);
     expect(out).toContain("[redacted]");
-    expect(out).toContain("1 label(s) redacted");
+    expect(out).toContain("1 event label(s) redacted");
     const dataRows = out.split("\n").filter((l) => l.startsWith("opencode"));
     expect(dataRows.length).toBe(2);
     expect(dataRows[0]!.length).toBe(dataRows[1]!.length);
@@ -816,6 +816,30 @@ describe("credential-shaped labels in provider reports (#126)", () => {
     const rows = providerRows(collect([ev({ model: null })]));
     expect(providerReportJson(rows, []).rows[0]!.model).toBeNull();
     expect(renderProviderReport(rows, [])).toContain("—");
+  });
+
+  it("maps non-string opencode provider and model ids to unknown", () => {
+    const Database = require("bun:sqlite").Database;
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)");
+    db.prepare("INSERT INTO message (id, session_id, data) VALUES (?, ?, ?)").run("r1", "s", JSON.stringify({
+      role: "assistant", providerID: 42, modelID: { name: "m" },
+      tokens: { input: 1, output: 1 }, time: { created: 1755000000000 },
+    }));
+    const events = opencodeEventsFromDb(db);
+    db.close();
+    expect(events[0]!.modelProvider).toBe("unknown");
+    expect(events[0]!.model).toBe("unknown");
+    expect(providerReportJson(providerRows(collect(events)), []).rows[0]!.provider).toBe("unknown");
+  });
+
+  it("maps a non-string codex model_provider to unknown", () => {
+    const events = codexEventsFromRollout([
+      JSON.stringify({ type: "session_meta", payload: { id: "bad-provider", model_provider: 7 } }),
+      JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 1, output_tokens: 1 } } } }),
+    ].join("\n"), "codex.jsonl");
+    expect(events[0]!.modelProvider).toBe("unknown");
+    expect(() => providerRows(collect(events))).not.toThrow();
   });
 
   it("does not turn a non-privacy error into a redaction", () => {
