@@ -526,9 +526,11 @@ const SLACK_WEBHOOK_PATH = /(?:^|\/)services(?:;[^/]*)?\/T[0-9A-Z]+(?:;[^/]*)?\/
 // After token/<qualifier>, the rest of a telemetry path is words, counts,
 // durations, and dates (/tokens/usage/daily, /token/count/5m); anything else
 // may be the value the path was built to carry.
-const TELEMETRY_PATH_TAIL = /^(?:[a-z]+|\d+(?:\.\d+)?|\d+[smhdw]|\d{4}-\d{2}(?:-\d{2})?)$/;
+const TELEMETRY_PATH_TAIL = /^(?:[a-z]{1,16}|\d+(?:\.\d+)?|\d+[smhdw]|\d{4}-\d{2}(?:-\d{2})?)$/;
 
-const ABSOLUTE_FILE_PATH = /^(?:\/(?!\/)|~\/|[a-z]:\/(?!\/)|file:)/i;
+// A bare /path can be a host-less URL path (/api/v1/github_token/...), so only
+// paths under a filesystem root count, plus ~/, a drive letter, and file:.
+const ABSOLUTE_FILE_PATH = /^(?:\/(?:Users|home|root|tmp|var|opt|srv|mnt|private|Volumes)\/|~\/|[a-z]:\/(?!\/)|file:)/i;
 
 function hasPositionalCredential(decoded: string): boolean {
   const normalized = decoded.replaceAll("\\", "/");

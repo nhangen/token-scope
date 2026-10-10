@@ -450,6 +450,7 @@ describe("fleet schema v1 contract", () => {
         "http://ml1/tokens/total/FAKEEXAMPLE0000",
         "http://ml1/metrics/token;v=1/FAKE-EXAMPLE",
         "http://ml1/token/usage/daily/FAKE-EXAMPLE",
+        "http://ml1/token/total/zxqwerasdfzxcvqwerty",
       ])("rejects a positional credential segment in %s", (locator) => {
         expect(() => parseFleetRecord(withLocator(locator))).toThrow(positional);
       });
@@ -581,6 +582,8 @@ describe("fleet schema v1 contract", () => {
         " https://ml1/metrics/session_key/FAKE-EXAMPLE",
         "https:\\\\ml1\\metrics\\session_key\\FAKE-EXAMPLE",
         "c://ml1/metrics/session_key/FAKE-EXAMPLE",
+        "/api/v1/github_token/FAKE-EXAMPLE",
+        "/hooks/bot_token/FAKE-EXAMPLE",
       ])("keeps compound credential words in a locator that is not an absolute file path: %s", (locator) => {
         expect(() => parseFleetRecord(withLocator(locator))).toThrow(positional);
       });
