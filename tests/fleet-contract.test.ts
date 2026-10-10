@@ -446,6 +446,7 @@ describe("fleet schema v1 contract", () => {
         "http://ml1/metrics/token/total/secret-val",
         "http://ml1/tokens/total/secret-val",
         "http://ml1/tokens/total/FAKEEXAMPLE0000",
+        "http://ml1/metrics/token;v=1/FAKE-EXAMPLE",
         "http://ml1/token/usage/daily/FAKE-EXAMPLE",
       ])("rejects a positional credential segment in %s", (locator) => {
         expect(() => parseFleetRecord(withLocator(locator))).toThrow(positional);
@@ -615,6 +616,11 @@ describe("fleet schema v1 contract", () => {
         "http://ml1/metrics?filter=%7B%22routing_key%22%3A%20%22events%22%7D",
         "http://ml1/v1/usage/reasoning_tokens/2026-09",
         "http://ml1/v1/tokens/usage/daily",
+        "http://ml1/metrics?token_max=4096",
+        "http://ml1/tokens/max",
+        'http://ml1/metrics?w={"prompt_tokens":"auto"}',
+        'http://ml1/metrics?w={"cache_tokens":"n/a"}',
+        'http://ml1/metrics?w={"completion_tokens":"auto","output_tokens":"auto","input_tokens":"auto"}',
         "http://ml1/v1/token/usage/daily",
         "http://ml1/metrics/token/count/5m",
         "http://ml1/tokens/total/2026-09-22",
