@@ -367,21 +367,21 @@ const SPACED_ASSIGNMENT = new RegExp(
 );
 const EMBEDDED_USERINFO = /(?:^|[\s/])[^/?#@\s:]+:[^/?#@\s]*@/;
 const BARE_CREDENTIAL = new RegExp([
-  String.raw`\b(?:bearer|basic)[\s+:]+\S`,
+  String.raw`\b(?:bearer|basic)[\s+]+\S`,
   String.raw`\beyJ[\w-]{8,}\.[\w-]{8,}`,
-  // The placeholder is a value a human wrote by hand: FAKE-EXAMPLE is exactly
-  // the shape a real sk- key has minus length, so the gate must be length-free.
-  String.raw`(?:^|[^a-z0-9])sk-[\w-]{6,}`,
+  String.raw`(?:^|[^a-z0-9])sk-[\w-]{16,}`,
   String.raw`\b(?:sk|rk|pk)_(?:live|test)_\w{8,}`,
-  // ghp_/gho_/... and github_pat_ personal access tokens: FAKE-EXAMPLE is a
-  // hand-written placeholder with the same shape as a real token minus
-  // length, so the gate is length-free here too.
-  String.raw`\bgh[pousr]_[\w-]{10,}`,
-  String.raw`\bgithub_pat_[\w-]{10,}`,
-  String.raw`\bA[SK]IA[0-9A-Z]{16}`,
-  String.raw`\bglpat-[\w-]{10,}`,
+  String.raw`\bgh[pousr]_\w{20,}`,
+  String.raw`\bgithub_pat_\w{20,}`,
+  String.raw`\bglpat-[\w-]{20,}`,
   String.raw`\bxox[abposr]-[\w-]{10,}`,
 ].join("|"), "i");
+// AWS key IDs are uppercase; under the shared /i flag "asiapacific..." would match.
+const AWS_ACCESS_KEY_ID = /\bA[SK]IA[0-9A-Z]{16}\b/;
+
+function hasBareCredential(text: string): boolean {
+  return BARE_CREDENTIAL.test(text) || AWS_ACCESS_KEY_ID.test(text);
+}
 
 const CREDENTIAL_PARAM_KEYS = new Set([
   "accesskey",
@@ -673,7 +673,7 @@ function hasPositionalCredential(decoded: string): boolean {
 }
 
 function hasCredentialValue(decoded: string): boolean {
-  if (BARE_CREDENTIAL.test(decoded)) return true;
+  if (hasBareCredential(decoded)) return true;
   if (SLACK_WEBHOOK_PATH.test(decoded.replaceAll("\\", "/"))) return true;
 
   const checkPair = (key: string, val: string): boolean => {
@@ -750,7 +750,7 @@ export function assertSafeLabelValue(value: string): void {
     decoded === null
     || hasUserinfo(decoded)
     || EMBEDDED_USERINFO.test(decoded)
-    || BARE_CREDENTIAL.test(decoded)
+    || hasBareCredential(decoded)
     || locatorParams(decoded).some(isCredentialParam)
     || [...decoded.matchAll(SPACED_ASSIGNMENT)]
       .some((match) => isCredentialParam(match[1]!))

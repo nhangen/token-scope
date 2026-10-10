@@ -461,11 +461,11 @@ describe("fleet schema v1 contract", () => {
       });
 
       it.each([
-        "http://ml1/metrics?q=sk-FAKE-EXAMPLE",
-        "http://ml1/metrics?q=sk-FAKE-EXAM",
-        "http://ml1/metrics?q=ghp_FAKE-EXAMPLE-FAKE-EXAMPLE-0000",
-        "http://ml1/metrics?q=AKIAFAKEFAKEFAKEFAKEF",
-        "http://ml1/metrics?q=ASIAFAKEFAKEFAKEFAKEF",
+        "http://ml1/metrics?q=sk-FAKE-EXAMPLE-0000000000",
+        "http://ml1/metrics?q=sk-proj-FAKEEXAMPLE00000",
+        "http://ml1/metrics?q=ghp_FAKEEXAMPLEFAKEEXAMPLE0000",
+        "http://ml1/metrics?q=AKIAFAKEFAKEFAKEFAKE",
+        "http://ml1/metrics?q=ASIAFAKEFAKEFAKEFAKE",
         "http://ml1/metrics?w=%7B%22token%22%3A%22FAKE-EXAMPLE%22%7D",
         "http://ml1/metrics?w=%7B%22token%22%3A%20%22FAKE-EXAMPLE%22%7D",
         "http://ml1/metrics?w=%7B%22tokens%22%3A%5B%22secret-password%22%5D%7D",
@@ -660,7 +660,7 @@ describe("shared label privacy check", () => {
     }
   });
 
-  it("rejects credential names and values in labels", () => {
+  it("rejects credential names in colon-qualified labels", () => {
     for (const value of [
       "host:token:FAKE-EXAMPLE",
       "host:api_key:FAKE-EXAMPLE",
@@ -668,6 +668,23 @@ describe("shared label privacy check", () => {
     ]) {
       expect(() => assertSafeLabelValue(value)).toThrow(PrivacyError);
     }
+  });
+
+  it("rejects AWS temporary access key IDs", () => {
+    expect(() => assertSafeLabelValue("host-ASIAFAKEFAKEFAKEFAKE")).toThrow(PrivacyError);
+  });
+
+  it.each([
+    "llama-basic:latest",
+    "qwen2.5-coder-basic:7b",
+    "sk-learn-fork",
+    "/Users/n/code/sk-ml-tools",
+    "/Users/n/orca/workspaces/app/SK-1234-fix-login",
+    "ghp_staging-runner",
+    "glpat-something-x",
+    "asiapacificgateway01",
+  ])("accepts model names and paths that only resemble token prefixes: %s", (value) => {
+    expect(() => assertSafeLabelValue(value)).not.toThrow();
   });
 
   it("accepts ordinary qualified labels", () => {
