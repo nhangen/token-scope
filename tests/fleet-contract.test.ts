@@ -552,6 +552,25 @@ describe("fleet schema v1 contract", () => {
         expect(() => parseFleetRecord(withLocator(locator))).toThrow(valueShaped);
       });
 
+      it.each([
+        "/Users/n/code/design-tokens/run.jsonl",
+        "/Users/n/code/my-secrets/run.jsonl",
+        "/Users/n/code/signing-keys/run.jsonl",
+        "/Users/n/.claude/projects/-Users-n-code-design-tokens/0b1c2d.jsonl",
+        "C:\\Users\\n\\code\\design-tokens\\run.jsonl",
+        "file:///home/n/code/my-secrets/run.jsonl",
+      ])("accepts a file locator under a project directory named like a credential: %s", (locator) => {
+        expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);
+      });
+
+      it.each([
+        "sessions/token/FAKE-EXAMPLE",
+        "/home/n/api_key/FAKE-EXAMPLE",
+        "file:///home/n/password/FAKE-EXAMPLE",
+      ])("still rejects an exact credential word in a file locator: %s", (locator) => {
+        expect(() => parseFleetRecord(withLocator(locator))).toThrow(positional);
+      });
+
       it("rejects a positional secret whose name starts like a database key name", () => {
         expect(() => parseFleetRecord(withLocator("http://ml1/metrics/primary_password/FAKE-EXAMPLE")))
           .toThrow(positional);

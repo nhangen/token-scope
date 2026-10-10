@@ -535,6 +535,9 @@ function hasPositionalCredential(decoded: string): boolean {
   const pathMatch = pathPart.match(/^(?:[a-z][a-z0-9+.-]*:\/\/[^/?#]+)?([^?#]*)/i);
   const pathname = pathMatch ? (pathMatch[1] ?? "") : pathPart;
   if (SLACK_WEBHOOK_PATH.test(pathname)) return true;
+  // A file locator's directories are the user's project names (design-tokens,
+  // my-secrets), so only an exact credential word counts there, not a compound.
+  const urlLocator = /^[a-z][a-z0-9+.-]*:\/\//i.test(normalized) && !/^file:/i.test(normalized);
 
   const rawSegments = pathname.split("/").filter((s) => s.length > 0);
   for (let i = 0; i < rawSegments.length; i++) {
@@ -547,7 +550,7 @@ function hasPositionalCredential(decoded: string): boolean {
     if (colonParts.length > 1 && hasCredentialColonChain(colonParts)) return true;
 
     const norm = segment.toLowerCase().replace(/[-_]/g, "");
-    if (isCredentialPathWord(segment, norm)) {
+    if (urlLocator ? isCredentialPathWord(segment, norm) : CREDENTIAL_PATH_WORDS.has(norm)) {
       if (i + 1 < rawSegments.length) {
         const nextRaw = rawSegments[i + 1];
         const nextSegment = (nextRaw ? nextRaw.split(";")[0]?.trim().toLowerCase() : "") ?? "";
