@@ -1,3 +1,5 @@
+# TYPE olla_info gauge
+olla_info{version="v0.0.28",commit="abc123de",engine="olla",profile="auto",balancer="least-connections"} 1
 # HELP olla_requests_total Total proxy requests processed
 # TYPE olla_requests_total counter
 olla_requests_total 50
