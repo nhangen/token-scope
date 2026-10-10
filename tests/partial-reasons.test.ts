@@ -28,8 +28,10 @@ describe("claude and codex keep good files when one record is null", () => {
       copyFileSync(join(FX, "claude-root", "projects", "-Users-x-proj", "t.jsonl"), join(proj, "good.jsonl"));
       writeFileSync(join(proj, "bad.jsonl"), "null\n");
 
-      const { events } = claudeEvents(root);
+      const { events, skipped, reasons } = claudeEvents(root);
       expect(events.length).toBeGreaterThan(0);
+      expect(skipped).toBe(0);
+      expect(reasons).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -43,8 +45,10 @@ describe("claude and codex keep good files when one record is null", () => {
       copyFileSync(join(FX, "codex-rollout.jsonl"), join(sessions, "good.jsonl"));
       writeFileSync(join(sessions, "bad.jsonl"), "null\n");
 
-      const { events } = codexEvents(root);
+      const { events, skipped, reasons } = codexEvents(root);
       expect(events.length).toBeGreaterThan(0);
+      expect(skipped).toBe(0);
+      expect(reasons).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
