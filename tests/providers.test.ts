@@ -756,6 +756,27 @@ describe("collect integration over fixtures (#38 panel)", () => {
   });
 });
 
+describe("partial reason rendering (#125)", () => {
+  it("reports reason codes in the text and JSON report", () => {
+    const rows = providerRows({ events: [], unavailable: [], partial: {}, partialReasons: {} });
+    const text = renderProviderReport(
+      rows, [],
+      { "gemini-cli": 2 },
+      [],
+      { "gemini-cli": ["unreadable", "malformed"] },
+    );
+    expect(text).toContain("gemini-cli: 2 affected file(s) [unreadable, malformed]");
+
+    const json = providerReportJson(
+      rows, [],
+      { "gemini-cli": 2 },
+      0, [],
+      { "gemini-cli": ["unreadable", "malformed"] },
+    );
+    expect(json.partialReasons).toEqual({ "gemini-cli": ["unreadable", "malformed"] });
+  });
+});
+
 describe("credential-shaped labels in provider reports (#126)", () => {
   const SECRET = "github_pat_FAKE_EXAMPLE_000000000000";
   const ev = (over: object): any => ({

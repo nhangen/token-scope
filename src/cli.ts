@@ -494,6 +494,7 @@ async function main() {
         collected.partial,
         untimed,
         collected.unsupported ?? [],
+        collected.partialReasons ?? {},
       );
       process.stdout.write(JSON.stringify(payload) + "\n");
     } else {
@@ -502,6 +503,7 @@ async function main() {
         collected.unavailable,
         collected.partial,
         collected.unsupported ?? [],
+        collected.partialReasons ?? {},
       );
       if (untimed > 0) {
         out += `\n${untimed} event(s) outside --since only because they carry no timestamp`;

@@ -476,6 +476,57 @@ describe("Gemini CLI source contract", () => {
     }
   });
 
+  it("names the reason for a partial source: malformed line => malformed (#125)", () => {
+    const root = mkdtempSync(join(tmpdir(), "token-scope-gemini-reason-malformed-"));
+    try {
+      const chats = join(root, "tmp", "project-a", "chats");
+      mkdirSync(chats, { recursive: true });
+      writeFileSync(join(chats, "mixed.jsonl"), [
+        JSON.stringify({ sessionId: "session-reason-malformed", messages: [] }),
+        "not-json",
+      ].join("\n"));
+
+      const collected = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: root,
+      });
+      expect(collected.partial["gemini-cli"]).toBe(1);
+      expect(collected.partialReasons?.["gemini-cli"]).toEqual(["malformed"]);
+      expect(geminiCliEvents(root).source.reason).toBe("malformed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("labels an unreadable file unreadable, not malformed (#125)", () => {
+    const root = mkdtempSync(join(tmpdir(), "token-scope-gemini-reason-unreadable-"));
+    const file = join(root, "tmp", "project-a", "chats", "secret.jsonl");
+    try {
+      const chats = join(root, "tmp", "project-a", "chats");
+      mkdirSync(chats, { recursive: true });
+      writeFileSync(file, JSON.stringify({
+        sessionId: "session-reason-unreadable",
+        messages: [{
+          id: "r1", type: "gemini", model: "gemini-3-flash-preview",
+          tokens: { input: 100, output: 20, cached: 0, thoughts: 0, tool: 0, total: 120 },
+        }],
+      }) + "\n");
+      chmodSync(file, 0);
+
+      // Bun on macOS fails realpath in the walk (unavailable); Linux fails
+      // the read itself (partial). Both must name the same cause.
+      const gemini = geminiCliEvents(root);
+      expect(gemini.reasons).toEqual(["unreadable"]);
+      expect(gemini.source.reason).toBe("unreadable");
+    } finally {
+      try { chmodSync(file, 0o600); } catch {}
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("counts imported historical messages once by their durable message id", () => {
     const root = mkdtempSync(join(tmpdir(), "token-scope-gemini-imported-history-"));
     try {

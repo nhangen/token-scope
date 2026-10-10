@@ -1,5 +1,21 @@
-/**
- * Provider-neutral usage event (#37).
+/** Why a source contributed partially rather than fully. Shared by every
+ * provider adapter so the report can name the cause, not just the count.
+ * - unreadable:      the filesystem refused to read a path (permissions,
+ *                    vanished mid-scan, non-regular special files)
+ * - malformed:       the file was readable but its contents did not parse
+ * - unsafe_path:     a symlink, FIFO, or resolved path escaped the root
+ * - partial_records: records parsed but omitted token classes or attribution
+ * - corrupt_store:   the store itself (db file, ledger) was present but
+ *                    unparseable end to end
+ */
+export type PartialReason =
+  | "unreadable"
+  | "malformed"
+  | "unsafe_path"
+  | "partial_records"
+  | "corrupt_store";
+
+/** Provider-neutral usage event (#37).
  *
  * One normalized record per source observation. Token classes a source does
  * not expose stay null — never coerced to zero (#37 acceptance criteria).

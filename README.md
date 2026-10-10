@@ -545,7 +545,7 @@ The first supported Google surface is specifically `gemini-cli-session-jsonl`, t
 
 Cross-cutting rules:
 
-- A source that exists but cannot be read is reported under **unavailable sources** — its volume is *unknown*, not zero. A source that reads partially names the skipped file count in the footer.
+- A source that exists but cannot be read is reported under **unavailable sources** — its volume is *unknown*, not zero. A source that reads partially names the skipped file count in the footer. The footer also names why in brackets, for example `gemini-cli: 1 affected file(s) [unreadable]`, and `--json` carries the same codes in `partialReasons` keyed by harness: `unreadable` (the filesystem refused a path), `malformed` (readable but did not parse), `unsafe_path` (a symlink or path outside the root), `partial_records` (records missing token classes or attribution), and `corrupt_store` (a store with content but nothing parseable). A harness appears in `partialReasons` only when it is partial.
 - A source surface that has no adapter is reported under **unsupported sources**. Unsupported is not treated as zero usage and is distinct from an adapter failing to read an otherwise supported source.
 - Without `--since`, timestamp-less events count like any other. With `--since`, an undated event cannot be placed in the window: it is excluded and counted (`untimedExcluded` in JSON, footer line in text) rather than silently kept or dropped.
 - `--since` bounds the SCAN, not just aggregation: file sources prefilter by mtime and sqlite filters at the storage layer. Files actually touched inside the window must still be parsed — on a machine with days of in-window transcript volume, expect seconds, not milliseconds.
