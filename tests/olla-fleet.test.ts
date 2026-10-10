@@ -1384,6 +1384,7 @@ describe("Olla fleet telemetry adapter", () => {
     it("extracts routing metadata and bare info counter from olla_info", async () => {
       const prom = 'olla_info{version="0.1.0",commit="abc123de",engine="olla",profile="auto",balancer="least-connections"} 1\n';
       const collected = await collect({ "/internal/metrics": prom });
+      expect(collected.sources).toContainEqual(expect.objectContaining({ path: "/internal/metrics", state: "available" }));
       const metricsSnapshot = snapshot(collected, "metrics");
       expect(metricsSnapshot.counters.info).toBe(1);
       expect(collected.metadata[metricsSnapshot.record_id]?.routing).toMatchObject({
@@ -1391,6 +1392,41 @@ describe("Olla fleet telemetry adapter", () => {
         profile: "auto",
         balancer: "least-connections",
       });
+    });
+
+    it("accepts a bare olla_info 1 with no labels", async () => {
+      const collected = await collect({ "/internal/metrics": "olla_info 1\n" });
+      expect(collected.sources).toContainEqual(expect.objectContaining({ path: "/internal/metrics", state: "available" }));
+      const metricsSnapshot = snapshot(collected, "metrics");
+      expect(metricsSnapshot.counters.info).toBe(1);
+      expect(collected.metadata[metricsSnapshot.record_id]?.routing).toEqual({ engine: null, profile: null, balancer: null });
+    });
+
+    it("marks the source partial/malformed when olla_info carries labels outside the upstream set", async () => {
+      for (const label of ['endpoint="ml1"', 'region="x"']) {
+        const prom = `olla_requests_total 5\nolla_info{engine="olla",${label}} 1\n`;
+        const collected = await collect({ "/internal/metrics": prom });
+        expect(collected.sources, label).toContainEqual(expect.objectContaining({
+          path: "/internal/metrics",
+          state: "partial",
+          reason: "malformed",
+          errorClass: "OllaInfoError",
+        }));
+        expect(collected.snapshots.filter((record) => collected.metadata[record.record_id]?.scope === "metrics"), label).toHaveLength(0);
+      }
+    });
+
+    it("marks the source partial/malformed when olla_info value is not 1", async () => {
+      const cases = ['olla_info{engine="olla"} 0\n', 'olla_info{engine="olla"} 2\n', 'olla_info{engine="olla"} 1.5\n'];
+      for (const prom of cases) {
+        const collected = await collect({ "/internal/metrics": prom });
+        expect(collected.sources, prom).toContainEqual(expect.objectContaining({
+          path: "/internal/metrics",
+          state: "partial",
+          reason: "malformed",
+          errorClass: "OllaInfoError",
+        }));
+      }
     });
   });
 });
