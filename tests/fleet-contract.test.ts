@@ -368,15 +368,24 @@ describe("fleet schema v1 contract", () => {
         "http://ml1/metrics/TOKEN/FAKE-EXAMPLE",
         "http://ml1/metrics/tok​en/FAKE-EXAMPLE",
         "http://ml1/metrics/%74oken/FAKE-EXAMPLE",
+        "http://ml1/metrics%5Ctoken%5CFAKE-EXAMPLE",
+        "C:\\Users\\n\\token\\FAKE-EXAMPLE",
         "http://ml1/metrics;foo=bar/token/FAKE-EXAMPLE",
         "http://ml1/metrics/api_key/FAKE-EXAMPLE",
         "http://ml1/metrics/api-key/FAKE-EXAMPLE",
+        "http://ml1/metrics/access_token/FAKE-EXAMPLE",
+        "http://ml1/metrics/session_token/FAKE-EXAMPLE",
+        "http://ml1/metrics/refresh_token/FAKE-EXAMPLE",
+        "http://ml1/metrics/id_token/FAKE-EXAMPLE",
+        "http://ml1/metrics/bearer/FAKE-EXAMPLE",
         "http://ml1/metrics/private_key/FAKE-EXAMPLE",
         "http://ml1/metrics/access_key/FAKE-EXAMPLE",
         "http://ml1/metrics/password/FAKE-EXAMPLE",
         "http://ml1/metrics/passwd/FAKE-EXAMPLE",
         "http://ml1/metrics/api_key:FAKE-EXAMPLE",
         "http://ml1/metrics/api_key:%20FAKE-EXAMPLE",
+        "http://ml1/metrics/access_token:FAKE-EXAMPLE",
+        "http://ml1/metrics/session_token:FAKE-EXAMPLE",
       ])("rejects a positional credential segment in %s", (locator) => {
         expect(() => parseFleetRecord(withLocator(locator))).toThrow(positional);
       });
@@ -384,6 +393,7 @@ describe("fleet schema v1 contract", () => {
       it.each([
         "http://hooks.slack.example/services/T000/B000/FAKE-EXAMPLE",
         "http://hooks.slack.example/services;x=1/T000/B000/FAKE-EXAMPLE",
+        "http://hooks.slack.example/services%5CT000%5CB000%5CFAKE-EXAMPLE",
       ])("rejects a Slack-style webhook path (token-shaped final segment) in %s", (locator) => {
         // The last segment is the token; the path is fully specified by it.
         expect(() => parseFleetRecord(withLocator(locator))).toThrow(positional);
@@ -404,6 +414,7 @@ describe("fleet schema v1 contract", () => {
         "http://ml1/metrics?q=sk-FAKE-EXAM",
         "http://ml1/metrics?q=ghp_FAKE-EXAMPLE-FAKE-EXAMPLE-0000",
         "http://ml1/metrics?q=AKIAFAKEFAKEFAKEFAKEF",
+        "http://ml1/metrics?q=ASIAFAKEFAKEFAKEFAKEF",
         "http://ml1/metrics?w=%7B%22token%22%3A%22FAKE-EXAMPLE%22%7D",
         "http://ml1/metrics?w=%7B%22token%22%3A%20%22FAKE-EXAMPLE%22%7D",
         "http://ml1/metrics?w=%7B%22filter%22%3A%22a%3Bb%22%2C%22token%22%3A%22FAKE-EXAMPLE%22%7D",

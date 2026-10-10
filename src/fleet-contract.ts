@@ -351,89 +351,18 @@ const BARE_CREDENTIAL = new RegExp([
   // length, so the gate is length-free here too.
   String.raw`\bgh[pousr]_[\w-]{10,}`,
   String.raw`\bgithub_pat_[\w-]{10,}`,
-  String.raw`\bAKIA[0-9A-Z]{16}`,
+  String.raw`\bA[SK]IA[0-9A-Z]{16}`,
   String.raw`\bglpat-[\w-]{10,}`,
   String.raw`\bxox[abposr]-[\w-]{10,}`,
 ].join("|"), "i");
-
-// A locator path that names a credential class as a segment.
-// A Slack-style webhook path (/services/T000/B000/<token>) is fully specified
-// by the last segment, so it is one positional credential of its own.
-// "token" and "tokens" are the only words the positional check rejects on
-// their own, because they are the only credential words that also appear in
-// telemetry names; the name scanner's qualifiers decide which token is which.
-const CREDENTIAL_PATH_WORDS = new Set([
-  "accesskey",
-  "apikey",
-  "authkey",
-  "clientsecret",
-  "credential",
-  "credentials",
-  "passphrase",
-  "passwd",
-  "password",
-  "privkey",
-  "privatekey",
-  "privatekeys",
-  "secret",
-  "secrets",
-  "secretkey",
-  "token",
-  "tokens",
-]);
-// "auth" names a mechanism (Authorization: Bearer <token>) and is not a
-// credential class, and the adapter's base URL may legally end in it
-// (an /auth or /oauth mount) — so it is a positional credential only with a
-// value to carry it, which hasUserinfo already rejects.
-
-const SLACK_WEBHOOK_PATH = /(?:^|\/)services(?:;[^/]*)?\/T[0-9A-Z]+(?:;[^/]*)?\/B[0-9A-Z]+(?:;[^/]*)?\/[^/?#\s]+/i;
-
-function hasPositionalCredential(decoded: string): boolean {
-  const [pathPart = ""] = decoded.split(/[?#]/, 1);
-  const pathMatch = pathPart.match(/^(?:[a-z][a-z0-9+.-]*:\/\/[^/?#]+)?([^?#]*)/i);
-  const pathname = pathMatch ? (pathMatch[1] ?? "") : pathPart;
-  if (SLACK_WEBHOOK_PATH.test(pathname)) return true;
-
-  const rawSegments = pathname.split("/").filter((s) => s.length > 0);
-  for (let i = 0; i < rawSegments.length; i++) {
-    const rawSegment = rawSegments[i];
-    if (!rawSegment) continue;
-    const segment = rawSegment.split(";")[0]?.trim() ?? "";
-    if (!segment) continue;
-
-    const colonMatch = segment.match(/^([a-z0-9_-]+)\s*:\s*(\S.*)$/i);
-    if (colonMatch) {
-      const keyNorm = colonMatch[1]?.toLowerCase().replace(/[-_]/g, "") ?? "";
-      const val = colonMatch[2]?.toLowerCase() ?? "";
-      if (keyNorm === "token" || keyNorm === "tokens") {
-        if (!TOKEN_TELEMETRY_QUALIFIERS.has(val) && !/^\d+(?:\.\d+)?$/.test(val)) {
-          return true;
-        }
-      } else if (CREDENTIAL_PATH_WORDS.has(keyNorm)) {
-        return true;
-      }
-    }
-
-    const norm = segment.toLowerCase().replace(/[-_]/g, "");
-    if (CREDENTIAL_PATH_WORDS.has(norm)) {
-      if (i + 1 < rawSegments.length) {
-        const nextRaw = rawSegments[i + 1];
-        const nextSegment = (nextRaw ? nextRaw.split(";")[0]?.trim().toLowerCase() : "") ?? "";
-        if (norm === "token" || norm === "tokens") {
-          if (TOKEN_TELEMETRY_QUALIFIERS.has(nextSegment)) continue;
-        }
-        return true;
-      }
-    }
-  }
-  return false;
-}
 
 const CREDENTIAL_PARAM_KEYS = new Set([
   "accesskey",
   "accesstoken",
   "apikey",
   "authkey",
+  "authtoken",
+  "bearer",
   "clientsecret",
   "credential",
   "credentials",
@@ -478,6 +407,96 @@ function isCredentialPair(keyRaw: string, valRaw: string): boolean {
     return true;
   }
 
+  return false;
+}
+
+// A locator path that names a credential class as a segment.
+// A Slack-style webhook path (/services/T000/B000/<token>) is fully specified
+// by the last segment, so it is one positional credential of its own.
+// "token" and "tokens" are the only words the positional check rejects on
+// their own, because they are the only credential words that also appear in
+// telemetry names; the name scanner's qualifiers decide which token is which.
+const CREDENTIAL_PATH_WORDS = new Set([
+  "accesskey",
+  "accesstoken",
+  "apikey",
+  "authkey",
+  "authtoken",
+  "bearer",
+  "clientsecret",
+  "credential",
+  "credentials",
+  "idtoken",
+  "passphrase",
+  "passwd",
+  "password",
+  "privkey",
+  "privatekey",
+  "privatekeys",
+  "refreshtoken",
+  "secret",
+  "secrets",
+  "secretkey",
+  "sessiontoken",
+  "token",
+  "tokens",
+]);
+
+function isCredentialPathWord(norm: string): boolean {
+  if (CREDENTIAL_PATH_WORDS.has(norm)) return true;
+  if (norm.endsWith("token") || norm.endsWith("tokens")) {
+    if (
+      norm.startsWith("input")
+      || norm.startsWith("output")
+      || norm.startsWith("prompt")
+      || norm.startsWith("completion")
+      || norm.startsWith("cache")
+    ) {
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+// "auth" names a mechanism (Authorization: Bearer <token>) and is not a
+// credential class, and the adapter's base URL may legally end in it
+// (an /auth or /oauth mount) — so it is a positional credential only with a
+// value to carry it, which hasUserinfo already rejects.
+
+const SLACK_WEBHOOK_PATH = /(?:^|\/)services(?:;[^/]*)?\/T[0-9A-Z]+(?:;[^/]*)?\/B[0-9A-Z]+(?:;[^/]*)?\/[^/?#\s]+/i;
+
+function hasPositionalCredential(decoded: string): boolean {
+  const normalized = decoded.replaceAll("\\", "/");
+  const [pathPart = ""] = normalized.split(/[?#]/, 1);
+  const pathMatch = pathPart.match(/^(?:[a-z][a-z0-9+.-]*:\/\/[^/?#]+)?([^?#]*)/i);
+  const pathname = pathMatch ? (pathMatch[1] ?? "") : pathPart;
+  if (SLACK_WEBHOOK_PATH.test(pathname)) return true;
+
+  const rawSegments = pathname.split("/").filter((s) => s.length > 0);
+  for (let i = 0; i < rawSegments.length; i++) {
+    const rawSegment = rawSegments[i];
+    if (!rawSegment) continue;
+    const segment = rawSegment.split(";")[0]?.trim() ?? "";
+    if (!segment) continue;
+
+    const colonMatch = segment.match(/^([a-z0-9_-]+)\s*:\s*(\S.*)$/i);
+    if (colonMatch && isCredentialPair(colonMatch[1] ?? "", colonMatch[2] ?? "")) {
+      return true;
+    }
+
+    const norm = segment.toLowerCase().replace(/[-_]/g, "");
+    if (isCredentialPathWord(norm)) {
+      if (i + 1 < rawSegments.length) {
+        const nextRaw = rawSegments[i + 1];
+        const nextSegment = (nextRaw ? nextRaw.split(";")[0]?.trim().toLowerCase() : "") ?? "";
+        if (norm === "token" || norm === "tokens" || norm.endsWith("token") || norm.endsWith("tokens")) {
+          if (TOKEN_TELEMETRY_QUALIFIERS.has(nextSegment)) continue;
+        }
+        return true;
+      }
+    }
+  }
   return false;
 }
 
