@@ -1,10 +1,12 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { parseFleetRecord } from "@/fleet-contract";
+import * as fleetContract from "@/fleet-contract";
+import { PrivacyError, parseFleetRecord } from "@/fleet-contract";
 import {
   ORCA_READ_ONLY_COMMANDS,
   ORCA_COMMAND_TIMEOUT_MS,
+  OrcaInvariantError,
   collectOrcaPlacement,
   defaultRunner,
   type OrcaCommandResult,
@@ -228,6 +230,42 @@ describe("Orca fleet placement adapter", () => {
       reason: "partial_records",
       provenance: expect.objectContaining({ completeness: "partial" }),
     }));
+  });
+
+  it("propagates a contract rejection of an adapter-built record instead of reporting partial data", async () => {
+    const source = fixture("local.json");
+    const spy = spyOn(fleetContract, "parseFleetRecord").mockImplementationOnce(() => {
+      throw new Error("snapshot window must be non-empty");
+    });
+    try {
+      const collecting = collectOrcaPlacement({
+        collectedAt: COLLECTED_AT,
+        runner: fixtureRunner(source).runner,
+      });
+      await expect(collecting).rejects.toBeInstanceOf(OrcaInvariantError);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("keeps a privacy rejection of an adapter-built record as a partial privacy fault", async () => {
+    const source = fixture("local.json");
+    const spy = spyOn(fleetContract, "parseFleetRecord").mockImplementationOnce(() => {
+      throw new PrivacyError("execution_host looks like a path");
+    });
+    try {
+      const collected = await collectOrcaPlacement({
+        collectedAt: COLLECTED_AT,
+        runner: fixtureRunner(source).runner,
+      });
+      expect(collected.sources).toContainEqual(expect.objectContaining({
+        command: "orca terminal list --json",
+        state: "partial",
+        reason: "privacy",
+      }));
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("kills a stalled process with the default runner and returns its result", async () => {

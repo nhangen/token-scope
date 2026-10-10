@@ -6,6 +6,7 @@ import {
   PrivacyError,
   type FleetOperationalSnapshot,
   type FleetProvenance,
+  type FleetRecord,
 } from "@/fleet-contract";
 
 const APPROVED_ORCA_COMMANDS = Object.freeze([
@@ -247,6 +248,22 @@ export class OrcaCommandError extends Error {}
 // A record-construction regression in the adapter itself. It must propagate
 // instead of being reported as a source data fault.
 export class OrcaInvariantError extends Error {}
+
+// Every field of an adapter-built snapshot is validated upstream (host ids via
+// `stableHostId`, harness via the agent allowlist), so a plain contract
+// rejection here means the adapter built a bad record. A PrivacyError still
+// reflects source content and stays a typed source fault.
+function parseOwnSnapshot(record: unknown): FleetOperationalSnapshot {
+  let parsed: FleetRecord;
+  try {
+    parsed = parseFleetRecord(record);
+  } catch (error) {
+    if (error instanceof PrivacyError) throw error;
+    throw new OrcaInvariantError("adapter built a record the fleet contract rejects", { cause: error });
+  }
+  if (parsed.record_type !== "operational_snapshot") throw new OrcaInvariantError("wrong fleet record type");
+  return parsed;
+}
 
 function parseJsonResult(output: string, name: string): Record<string, unknown> {
   const envelope = objectValue(JSON.parse(output), name);
@@ -551,15 +568,12 @@ function addTerminalRecords(
           || duplicate.invalidAgentIdentity !== directAgentType.invalid) {
           const existing = records[duplicate.recordIndex];
           if (existing !== undefined) {
-            const unattributed = parseFleetRecord({
+            const unattributed = parseOwnSnapshot({
               ...existing,
               harness: null,
               status: "partial",
               provenance: { ...existing.provenance, completeness: "partial" },
             });
-            if (unattributed.record_type !== "operational_snapshot") {
-              throw new OrcaInvariantError("wrong fleet record type");
-            }
             records[duplicate.recordIndex] = unattributed;
             const existingMetadata = metadata[existing.record_id];
             if (existingMetadata !== undefined) {
@@ -619,8 +633,7 @@ function addTerminalRecords(
         stale_after_ms: null,
         counters: {},
       };
-      const parsed = parseFleetRecord(record);
-      if (parsed.record_type !== "operational_snapshot") throw new OrcaInvariantError("wrong fleet record type");
+      const parsed = parseOwnSnapshot(record);
       records.push(parsed);
       metadata[parsed.record_id] = {
         terminalHandle: handle,
@@ -630,9 +643,8 @@ function addTerminalRecords(
         observedAt: collectedAt,
       };
     } catch (error) {
-      // A typed data/privacy fault is a source problem and stays partial;
-      // anything the adapter threw by itself (for example a contract
-      // rejection or a wrong fleet record type) is a regression and must
+      // A source data/privacy fault stays partial; a contract rejection of
+      // the adapter's own record arrives as OrcaInvariantError and must
       // propagate instead of surfacing as partial telemetry.
       if (error instanceof OrcaInvariantError) throw error;
       markPartial(source, error instanceof PrivacyError ? "privacy" : "partial_records");
@@ -641,13 +653,11 @@ function addTerminalRecords(
   if (source.state === "partial") {
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index]!;
-      const parsed = parseFleetRecord({
+      records[index] = parseOwnSnapshot({
         ...record,
         status: "partial",
         provenance: { ...record.provenance, completeness: "partial" },
       });
-      if (parsed.record_type !== "operational_snapshot") throw new OrcaInvariantError("wrong fleet record type");
-      records[index] = parsed;
     }
   }
   return { records, metadata };
