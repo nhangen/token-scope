@@ -763,17 +763,17 @@ function locatorValue(value: unknown): string | null {
   const locator = nullableString(value, "provenance.locator");
   if (locator === null) return null;
   if (hasUserinfo(locator)) {
-    throw new Error("provenance.locator cannot contain URL credentials");
+    throw new PrivacyError("provenance.locator cannot contain URL credentials");
   }
   const decoded = decodeLocator(locator);
   if (decoded === null || locatorParams(decoded).some(isCredentialParam)) {
-    throw new Error("provenance.locator cannot contain credential query parameters");
+    throw new PrivacyError("provenance.locator cannot contain credential query parameters");
   }
   if (hasPositionalCredential(decoded)) {
-    throw new Error("provenance.locator cannot contain a positional credential segment");
+    throw new PrivacyError("provenance.locator cannot contain a positional credential segment");
   }
   if (hasCredentialValue(decoded)) {
-    throw new Error("provenance.locator cannot carry a credential value");
+    throw new PrivacyError("provenance.locator cannot carry a credential value");
   }
   return locator;
 }

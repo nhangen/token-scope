@@ -242,6 +242,21 @@ describe("fleet schema v1 contract", () => {
     }
   });
 
+  it("classifies every locator credential rejection as a privacy error", () => {
+    const withLocator = (locator: string) => ({
+      ...fixture.operational_snapshot,
+      provenance: { ...fixture.operational_snapshot.provenance, locator },
+    });
+    for (const locator of [
+      "https://user:FAKE-EXAMPLE@ml1/metrics",
+      "http://ml1/metrics?api_key=FAKE-EXAMPLE",
+      "http://ml1/metrics/token/FAKE-EXAMPLE",
+      "http://ml1/metrics?w=%7B%22token%22%3A%22FAKE-EXAMPLE%22%7D",
+    ]) {
+      expect(() => parseFleetRecord(withLocator(locator))).toThrow(PrivacyError);
+    }
+  });
+
   describe("provenance.locator credential names", () => {
     const withLocator = (locator: string) => ({
       ...fixture.operational_snapshot,
