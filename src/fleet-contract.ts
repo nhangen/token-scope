@@ -361,31 +361,43 @@ const CREDENTIAL_PARAM_KEYS = new Set([
   "accesstoken",
   "apikey",
   "authkey",
+  "authorization",
   "authtoken",
   "bearer",
   "clientsecret",
+  "cookie",
   "credential",
   "credentials",
+  "hmac",
   "idtoken",
+  "jsessionid",
+  "jwt",
   "passphrase",
   "passwd",
   "password",
   "privkey",
   "privatekey",
+  "pwd",
   "refreshtoken",
   "secret",
   "secretkey",
   "sessiontoken",
+  "sig",
+  "signature",
 ]);
 
 function isCredentialPair(keyRaw: string, valRaw: string): boolean {
   const key = keyRaw.toLowerCase().replace(/[-_]/g, "");
   const val = valRaw.toLowerCase().replace(/^["\x27]+|["\x27]+$/g, "");
 
+  if (CREDENTIAL_PARAM_KEYS.has(key)) {
+    return true;
+  }
+
   if (key === "token" || key === "tokens" || key.endsWith("token") || key.endsWith("tokens")) {
-    if (TOKEN_TELEMETRY_QUALIFIERS.has(val)) return false;
+    const valStem = val.split(/[=:]/)[0] ?? val;
+    if (TOKEN_TELEMETRY_QUALIFIERS.has(val) || TOKEN_TELEMETRY_QUALIFIERS.has(valStem)) return false;
     if (/^\d+(?:\.\d+)?$/.test(val)) return false;
-    if (CREDENTIAL_PARAM_KEYS.has(key)) return true;
     if (
       key.startsWith("input")
       || key.startsWith("output")
@@ -398,11 +410,7 @@ function isCredentialPair(keyRaw: string, valRaw: string): boolean {
     return true;
   }
 
-  if (CREDENTIAL_PARAM_KEYS.has(key)) {
-    return true;
-  }
-
-  if (/(?:secret|password|passwd)$/.test(key)) {
+  if (/(?:secret|password|passwd|sig|signature)$/.test(key)) {
     if (key.startsWith("sort") || key.startsWith("cache") || key.startsWith("public")) return false;
     return true;
   }
@@ -421,23 +429,31 @@ const CREDENTIAL_PATH_WORDS = new Set([
   "accesstoken",
   "apikey",
   "authkey",
+  "authorization",
   "authtoken",
   "bearer",
   "clientsecret",
+  "cookie",
   "credential",
   "credentials",
+  "hmac",
   "idtoken",
+  "jsessionid",
+  "jwt",
   "passphrase",
   "passwd",
   "password",
   "privkey",
   "privatekey",
   "privatekeys",
+  "pwd",
   "refreshtoken",
   "secret",
   "secrets",
   "secretkey",
   "sessiontoken",
+  "sig",
+  "signature",
   "token",
   "tokens",
 ]);
@@ -451,6 +467,19 @@ function isCredentialPathWord(norm: string): boolean {
       || norm.startsWith("prompt")
       || norm.startsWith("completion")
       || norm.startsWith("cache")
+    ) {
+      return false;
+    }
+    return true;
+  }
+  if (/(?:secret|secrets|password|passwd|key|keys)$/.test(norm)) {
+    if (
+      norm.startsWith("sort")
+      || norm.startsWith("cache")
+      || norm.startsWith("public")
+      || norm.startsWith("primary")
+      || norm.startsWith("partition")
+      || norm.startsWith("routing")
     ) {
       return false;
     }
@@ -480,9 +509,13 @@ function hasPositionalCredential(decoded: string): boolean {
     const segment = rawSegment.split(";")[0]?.trim() ?? "";
     if (!segment) continue;
 
-    const colonMatch = segment.match(/^([a-z0-9_-]+)\s*:\s*(\S.*)$/i);
-    if (colonMatch && isCredentialPair(colonMatch[1] ?? "", colonMatch[2] ?? "")) {
-      return true;
+    const colonParts = segment.split(/\s*:\s*/);
+    if (colonParts.length > 1) {
+      for (let j = 0; j < colonParts.length - 1; j++) {
+        const k = colonParts[j] ?? "";
+        const v = colonParts.slice(j + 1).join(":");
+        if (isCredentialPair(k, v)) return true;
+      }
     }
 
     const norm = segment.toLowerCase().replace(/[-_]/g, "");
@@ -503,11 +536,24 @@ function hasPositionalCredential(decoded: string): boolean {
 function hasCredentialValue(decoded: string): boolean {
   if (BARE_CREDENTIAL.test(decoded)) return true;
 
+  const checkPair = (key: string, val: string): boolean => {
+    if (isCredentialPair(key, val)) return true;
+    if (val.includes(":")) {
+      const parts = val.split(/\s*:\s*/);
+      for (let j = 0; j < parts.length - 1; j++) {
+        const nestedK = parts[j] ?? "";
+        const nestedV = parts.slice(j + 1).join(":");
+        if (isCredentialPair(nestedK, nestedV)) return true;
+      }
+    }
+    return false;
+  };
+
   const pattern = /["\x27]?([a-z0-9_-]+)["\x27]?\s*[:=]\s*["\x27]?([^\s,}"\x27&]+)/gi;
   for (const match of decoded.matchAll(pattern)) {
     const key = match[1];
     const val = match[2];
-    if (key && val && isCredentialPair(key, val)) return true;
+    if (key && val && checkPair(key, val)) return true;
   }
 
   // Parameter values scan specifically catches assignments like w=token:FAKE-EXAMPLE
@@ -519,7 +565,7 @@ function hasCredentialValue(decoded: string): boolean {
     for (const match of paramVal.matchAll(pattern)) {
       const key = match[1];
       const val = match[2];
-      if (key && val && isCredentialPair(key, val)) return true;
+      if (key && val && checkPair(key, val)) return true;
     }
   }
   return false;
