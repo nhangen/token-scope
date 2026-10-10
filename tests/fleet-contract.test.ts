@@ -457,7 +457,6 @@ describe("fleet schema v1 contract", () => {
         "http://hooks.slack.example/services;x=1/T000/B000/FAKE-EXAMPLE",
         "http://hooks.slack.example/services%5CT000%5CB000%5CFAKE-EXAMPLE",
       ])("rejects a Slack-style webhook path (token-shaped final segment) in %s", (locator) => {
-        // The last segment is the token; the path is fully specified by it.
         expect(() => parseFleetRecord(withLocator(locator))).toThrow(positional);
       });
 

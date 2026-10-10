@@ -269,7 +269,7 @@ const CREDENTIAL_PARAM_STEMS = [
 const CREDENTIAL_PARAM_SUFFIXES = ["secret", "secrets", "signature", "signatures", "token"];
 
 // A token segment followed by one of these names a count or class, not a
-// credential (tokenCount, token_type, maxTokens) — core telemetry for a token-accounting tool.
+// credential (tokenCount, token_type, token_max) — core telemetry for a token-accounting tool.
 const TOKEN_TELEMETRY_QUALIFIERS = new Set([
   "avg", "budget", "count", "counts", "kind", "limit", "max", "min", "rate", "sum", "total", "type", "usage",
 ]);
@@ -503,12 +503,10 @@ function hasCredentialColonChain(parts: string[]): boolean {
   return false;
 }
 
-// A locator path that names a credential class as a segment.
-// A Slack-style webhook path (/services/T000/B000/<token>) is fully specified
-// by the last segment, so it is one positional credential of its own.
-// "token" and "tokens" are the only words the positional check rejects on
-// their own, because they are the only credential words that also appear in
-// telemetry names; the name scanner's qualifiers decide which token is which.
+// A path segment naming a credential class is a positional credential when
+// another segment follows it to carry the value. token/tokens followed by a
+// telemetry qualifier (/tokens/total) is the one exemption. "auth" is left out
+// on purpose: it names a mechanism, and an adapter base URL can end in /auth.
 const CREDENTIAL_PATH_WORDS = new Set([...CREDENTIAL_PARAM_KEYS, "token", "tokens"]);
 
 function isCredentialPathWord(segment: string, norm: string): boolean {
@@ -517,11 +515,8 @@ function isCredentialPathWord(segment: string, norm: string): boolean {
   return isCompoundCredentialKey(segment, norm);
 }
 
-// "auth" names a mechanism (Authorization: Bearer <token>) and is not a
-// credential class, and the adapter's base URL may legally end in it
-// (an /auth or /oauth mount) — so it is a positional credential only with a
-// value to carry it, which hasUserinfo already rejects.
-
+// A Slack-style webhook path (/services/T000/B000/<token>) is fully specified
+// by its last segment, so the whole path is one positional credential.
 const SLACK_WEBHOOK_PATH = /(?:^|\/)services(?:;[^/]*)?\/T[0-9A-Z]+(?:;[^/]*)?\/B[0-9A-Z]+(?:;[^/]*)?\/[^/?#\s]+/i;
 
 // After token/<qualifier>, the rest of a telemetry path is words, counts,
@@ -610,7 +605,8 @@ function hasCredentialValue(decoded: string): boolean {
 
   if (checkTextValues(decoded)) return true;
 
-  // Parameter values scan specifically catches assignments like w=token:FAKE-EXAMPLE
+  // The whole-locator pass reads "https" as a key and the rest of the URL as its
+  // value, so a header-style value (h=Authorization:...) is only seen per parameter.
   const params = decoded.split(/[&;?#]/);
   for (const param of params) {
     const eqIdx = param.indexOf("=");
