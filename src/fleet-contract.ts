@@ -461,8 +461,11 @@ function isTokenName(norm: string): boolean {
   return norm.endsWith("token") || norm.endsWith("tokens");
 }
 
+// max_access_token is a credential behind a telemetry prefix, not a count.
+const CREDENTIAL_TOKEN_SUFFIX = /(?:access|api|auth|session|refresh|id|bot|bearer)tokens?$/;
+
 function isTelemetryTokenName(norm: string): boolean {
-  return TELEMETRY_TOKEN_PREFIXES.some((prefix) => norm.startsWith(prefix));
+  return TELEMETRY_TOKEN_PREFIXES.some((prefix) => norm.startsWith(prefix)) && !CREDENTIAL_TOKEN_SUFFIX.test(norm);
 }
 
 // keyRaw keeps its case so adminKey splits into admin_key; norm is lowercased with - and _ removed.

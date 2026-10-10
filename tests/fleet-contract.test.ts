@@ -585,6 +585,19 @@ describe("fleet schema v1 contract", () => {
         expect(() => parseFleetRecord(withLocator(locator))).toThrow(positional);
       });
 
+      it.each([
+        'http://ml1/metrics?w={"max_access_token":"FAKE-EXAMPLE"}',
+        'http://ml1/metrics?w={"input_api_token":"FAKE-EXAMPLE"}',
+        'http://ml1/metrics?w={"cache_session_token":"FAKE-EXAMPLE"}',
+      ])("rejects a credential token name behind a telemetry prefix in %s", (locator) => {
+        expect(() => parseFleetRecord(withLocator(locator))).toThrow(valueShaped);
+      });
+
+      it("rejects a positional credential token name behind a telemetry prefix", () => {
+        expect(() => parseFleetRecord(withLocator("http://ml1/metrics/max_access_token/FAKE-EXAMPLE")))
+          .toThrow(positional);
+      });
+
       it("rejects a positional secret whose name starts like a database key name", () => {
         expect(() => parseFleetRecord(withLocator("http://ml1/metrics/primary_password/FAKE-EXAMPLE")))
           .toThrow(positional);
