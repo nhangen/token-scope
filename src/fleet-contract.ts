@@ -509,8 +509,9 @@ function hasCredentialColonChain(parts: string[]): boolean {
 
 // A path segment naming a credential class is a positional credential when
 // another segment follows it to carry the value. token/tokens followed by a
-// telemetry qualifier (/tokens/total) is the one exemption. "auth" is left out
-// on purpose: it names a mechanism, and an adapter base URL can end in /auth.
+// telemetry qualifier (/tokens/total) is exempt, as are telemetry token names
+// and compound words under a filesystem root. "auth" is left out on purpose:
+// it names a mechanism, and an adapter base URL can end in /auth.
 const CREDENTIAL_PATH_WORDS = new Set([...CREDENTIAL_PARAM_KEYS, "token", "tokens"]);
 
 function isCredentialPathWord(segment: string, norm: string): boolean {
