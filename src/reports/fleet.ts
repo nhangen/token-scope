@@ -126,7 +126,7 @@ function usageRecord(
     backend: null,
     model: event.model,
     timestamp: canonicalTimestamp(event.ts),
-    status: (event.partial || locator.redacted) && event.status === "ok" ? "incomplete" : event.status,
+    status: partial && event.status === "ok" ? "incomplete" : event.status,
     provenance: {
       source: `provider-${event.harness}`,
       locator: locator.value,

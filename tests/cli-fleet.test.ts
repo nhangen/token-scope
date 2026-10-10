@@ -190,6 +190,7 @@ describe("--fleet production CLI path", () => {
       session_id: "gemini-cli:gemini-session",
       provider: "google",
       billing_route: "unknown",
+      status: "ok",
     });
     expect(rows["ollama-claude"]).toMatchObject({
       execution_host: "orca:ssh:gpu-box",
