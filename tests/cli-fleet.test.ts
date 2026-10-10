@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -88,6 +88,8 @@ async function runFleet(options: {
   json?: boolean;
   server?: OllaServerName;
   routes?: string;
+  routesPath?: string;
+  ollaUrl?: string | null;
   routeTelemetry?: string;
   collectedAt?: string;
   promptOriginHost?: string | null;
@@ -117,8 +119,10 @@ async function runFleet(options: {
       TOKEN_SCOPE_ORCA_FIXTURE: options.orcaFixture === "orca-partial-terminals.json"
         ? partialOrcaFixture
         : join(FLEET_FX, options.orcaFixture ?? "orca.json"),
-      TOKEN_SCOPE_OLLA_URL: `http://127.0.0.1:${server.port}`,
-      TOKEN_SCOPE_OLLA_ROUTES: join(FLEET_FX, options.routes ?? "olla-routes.json"),
+      TOKEN_SCOPE_OLLA_URL: options.ollaUrl === undefined
+        ? `http://127.0.0.1:${server.port}`
+        : options.ollaUrl ?? "",
+      TOKEN_SCOPE_OLLA_ROUTES: options.routesPath ?? join(FLEET_FX, options.routes ?? "olla-routes.json"),
       TOKEN_SCOPE_OLLAMA_ROUTING_TELEMETRY: options.routeTelemetry ?? join(FLEET_FX, "missing-routing.jsonl"),
       TOKEN_SCOPE_FLEET_COLLECTED_AT: options.collectedAt ?? "2026-09-22T14:05:01.000Z",
       TZ: options.timezone ?? process.env.TZ,
@@ -511,5 +515,34 @@ describe("--fleet production CLI path", () => {
     expect(new Set(rows.map((row: any) => row.event_id)).size).toBe(2);
     expect(rows.every((row: any) => /^opencode:opaque:[a-f0-9]{64}$/.test(row.event_id))).toBe(true);
     expect(rows.every((row: any) => row.request_id === null && row.session_id === null)).toBe(true);
+  });
+});
+
+function claudeRootWith(projectDir: string, line: Record<string, unknown>): string {
+  const root = mkdtempSync(join(temp, "claude-"));
+  const dir = join(root, "projects", projectDir);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "session.jsonl"), `${JSON.stringify(line)}\n`);
+  return root;
+}
+
+const claudeLine = {
+  type: "assistant",
+  sessionId: "claude-session",
+  timestamp: "2026-09-22T14:02:00.000Z",
+  message: {
+    id: "claude-request",
+    model: "claude-opus-4-8",
+    usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 30, cache_creation_input_tokens: 4 },
+  },
+};
+
+describe("--fleet degrades bad input to partial instead of failing", () => {
+  it("redacts a credential-shaped transcript path and marks the row partial", async () => {
+    const result = await runFleet({ claudeRoot: claudeRootWith("-Users-x-code-github-token", claudeLine) });
+    expect(result.code).toBe(0);
+    const claude = JSON.parse(result.out).rows.find((row: any) => row.harness === "claude");
+    expect(claude.status).toBe("incomplete");
+    expect(claude.provenance[0]).toMatchObject({ scope: "usage", locator: null, completeness: "partial" });
   });
 });

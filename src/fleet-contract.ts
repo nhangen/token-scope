@@ -728,6 +728,15 @@ function locatorValue(value: unknown): string | null {
   return locator;
 }
 
+export function privateSafeLocator(value: string | null): SanitizedValue<string | null> {
+  try {
+    return { value: locatorValue(value), redacted: false };
+  } catch (error) {
+    if (error instanceof PrivacyError) return { value: null, redacted: true };
+    throw error;
+  }
+}
+
 function provenanceValue(value: unknown): SanitizedValue<FleetProvenance> {
   const provenance = objectValue(value, "provenance");
   assertExactKeys(provenance, ["source", "locator", "collected_at", "completeness"], "provenance");

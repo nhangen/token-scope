@@ -14,6 +14,7 @@ import {
   assertSafeLabelValue,
   classifySnapshotFreshness,
   parseFleetRecord,
+  privateSafeLocator,
   type FleetOperationalSnapshot,
   type FleetProvenance,
   type FleetUsageEvent,
@@ -106,6 +107,8 @@ function usageRecord(
   promptOriginHost: string | null,
 ): FleetUsageEvent {
   const eventId = fleetEventId(event);
+  const locator = privateSafeLocator(event.provenance);
+  const partial = (event.partial !== undefined && event.partial.length > 0) || locator.redacted;
   const candidate = {
     schema_version: FLEET_SCHEMA_VERSION,
     record_type: "usage_event",
@@ -122,12 +125,12 @@ function usageRecord(
     backend: null,
     model: event.model,
     timestamp: canonicalTimestamp(event.ts),
-    status: event.partial && event.status === "ok" ? "incomplete" : event.status,
+    status: (event.partial || locator.redacted) && event.status === "ok" ? "incomplete" : event.status,
     provenance: {
       source: `provider-${event.harness}`,
-      locator: event.provenance,
+      locator: locator.value,
       collected_at: collectedAt,
-      completeness: (event.partial && event.partial.length > 0) || event.status === "incomplete" ? "partial" : "complete",
+      completeness: partial || event.status === "incomplete" ? "partial" : "complete",
     },
     usage: {
       input_tokens: event.inputTokens,
