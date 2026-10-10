@@ -267,7 +267,8 @@ function parseOwnSnapshot(record: unknown): FleetOperationalSnapshot {
 
 function parseJsonResult(output: string, name: string): Record<string, unknown> {
   const envelope = objectValue(JSON.parse(output), name);
-  if (envelope.ok !== true) throw new OrcaCommandError(`${name} failed`);
+  if (envelope.ok === false) throw new OrcaCommandError(`${name} failed`);
+  if (envelope.ok !== true) throw new Error(`${name}.ok must be a boolean`);
   return objectValue(envelope.result, `${name}.result`);
 }
 

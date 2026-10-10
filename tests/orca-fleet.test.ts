@@ -181,6 +181,26 @@ describe("Orca fleet placement adapter", () => {
     }));
   });
 
+  it("reports an envelope without a boolean ok as malformed data, not a command failure", async () => {
+    const source = fixture("local.json");
+    const collected = await collectOrcaPlacement({
+      collectedAt: COLLECTED_AT,
+      runner: fixtureRunner(source, {
+        "worktree ps --json": {
+          exitCode: 0,
+          stdout: JSON.stringify({ id: "wt", ok: "true", result: source.worktrees.result }),
+          stderr: "",
+        },
+      }).runner,
+    });
+
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      command: "orca worktree ps --json",
+      state: "partial",
+      reason: "malformed",
+    }));
+  });
+
   it("still reports an unparsable exit-0 payload as malformed", async () => {
     const source = fixture("local.json");
     const collected = await collectOrcaPlacement({
