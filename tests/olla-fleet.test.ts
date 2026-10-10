@@ -1232,6 +1232,18 @@ describe("Olla fleet telemetry adapter", () => {
       });
     });
 
+    it("derives endpoint health only from the unlabeled-dimension up sample regardless of line order", async () => {
+      for (const lines of [
+        ['olla_endpoint_up{endpoint="ml1-5080",zone="x"} 0', 'olla_endpoint_up{endpoint="ml1-5080"} 1'],
+        ['olla_endpoint_up{endpoint="ml1-5080"} 1', 'olla_endpoint_up{endpoint="ml1-5080",zone="x"} 0'],
+      ]) {
+        const collected = await collect({ "/internal/metrics": lines.join("\n") + "\n" });
+        const entry = snapshot(collected, "metrics_endpoint", "ml1-id");
+        expect(entry.status, lines.join(" | ")).toBe("ok");
+        expect(entry.counters).toMatchObject({ health_up: 1, health_up_zone_x: 0 });
+      }
+    });
+
     it("preserves model and model-endpoint samples with extra labels as distinct counters", async () => {
       const prom = [
         'olla_model_requests_total{model="qwen3.8:27b",stream="true"} 35',
