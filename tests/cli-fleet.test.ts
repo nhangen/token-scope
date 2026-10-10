@@ -545,6 +545,7 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     expect(claude.status).toBe("incomplete");
     expect(claude.provenance[0]).toMatchObject({ scope: "usage", locator: null, completeness: "partial" });
   });
+
   it("drops an out-of-contract usage event and names its source instead of aborting", async () => {
     const line = { ...claudeLine, message: { ...claudeLine.message, usage: { input_tokens: 100.5, output_tokens: 20 } } };
     const result = await runFleet({ claudeRoot: claudeRootWith("project-a", line) });
@@ -558,6 +559,7 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
       reason: "1 event(s) rejected by fleet contract",
     });
   });
+
   it("marks a credential-shaped provider request id partial", async () => {
     const secret = `ghp_${"a".repeat(36)}`;
     const line = { ...claudeLine, message: { ...claudeLine.message, id: secret } };
@@ -567,6 +569,7 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     const claude = JSON.parse(result.out).rows.find((row: any) => row.harness === "claude");
     expect(claude).toMatchObject({ request_id: null, status: "incomplete" });
   });
+
   for (const [name, contents] of [
     ["missing", null],
     ["malformed", "{not json"],
@@ -585,12 +588,14 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
       expect(report.sources.find((source: any) => source.source === "olla")?.reason).not.toBe("collection failed");
     });
   }
+
   it("ignores TOKEN_SCOPE_OLLA_ROUTES when Olla is not configured", async () => {
     const result = await runFleet({ routesPath: join(temp, "no-such-routes.json"), ollaUrl: null });
     expect(result.code).toBe(0);
     const report = JSON.parse(result.out);
     expect(report.sources.some((source: any) => source.source === "olla-routes")).toBe(false);
   });
+
   it("names a misconfigured Olla URL instead of reporting a collection failure", async () => {
     const result = await runFleet({ ollaUrl: "127.0.0.1:1234" });
     expect(result.code).toBe(0);
@@ -598,6 +603,7 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     expect(olla.state).toBe("unavailable");
     expect(olla.reason).toStartWith("invalid configuration");
   });
+
   it("does not attribute a rejected route provider to olla", async () => {
     const telemetry = join(temp, "route-private-provider.jsonl");
     const record = JSON.parse(readFileSync(join(FX, "providers", "olla-routing.jsonl"), "utf8").split("\n")[0]!);
@@ -606,5 +612,27 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     expect(result.code).toBe(0);
     const local = JSON.parse(result.out).rows.find((row: any) => row.harness === "ollama-route");
     expect(local).toMatchObject({ provider: "unknown", status: "incomplete" });
+  });
+
+  it("keeps credential-shaped route telemetry request ids out of output", async () => {
+    const result = await runFleet({
+      routes: "olla-routes-empty.json",
+      routeTelemetry: join(FX, "providers", "olla-routing-private.jsonl"),
+    });
+    expect(result.code).toBe(0);
+    expect(result.out).not.toContain("route-secret");
+    const local = JSON.parse(result.out).rows.find((row: any) => row.harness === "ollama-route");
+    expect(local).toMatchObject({ request_id: null, status: "incomplete" });
+  });
+
+  it("reports request-scoped TTFT and decode TPS from route telemetry", async () => {
+    const result = await runFleet({
+      routes: "olla-routes-empty.json",
+      routeTelemetry: join(FX, "providers", "olla-routing.jsonl"),
+    });
+    const local = JSON.parse(result.out).rows.find((row: any) => row.harness === "ollama-route");
+    expect(local.ttft).toEqual({ value: 987.654321, unit: "ms", scope: "request" });
+    expect(local.decode_tps.scope).toBe("request");
+    expect(local.decode_tps.value).toBeCloseTo(40 / 0.000654321, 3);
   });
 });
