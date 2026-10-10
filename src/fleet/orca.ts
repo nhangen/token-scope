@@ -251,8 +251,9 @@ export class OrcaInvariantError extends Error {}
 
 // Every field of an adapter-built snapshot is validated upstream (host ids via
 // `stableHostId`, harness via the agent allowlist), so a plain contract
-// rejection here means the adapter built a bad record. A PrivacyError still
-// reflects source content and stays a typed source fault.
+// rejection here means the adapter built a bad record. The adapter sets no
+// locator, so the contract cannot raise PrivacyError today; if it ever does,
+// that stays a typed source fault.
 function parseOwnSnapshot(record: unknown): FleetOperationalSnapshot {
   let parsed: FleetRecord;
   try {
