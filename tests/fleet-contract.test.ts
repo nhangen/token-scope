@@ -398,6 +398,13 @@ describe("fleet schema v1 contract", () => {
         "http://ml1/metrics/host:client_key:FAKE-EXAMPLE",
         "http://ml1/metrics/host:secrets:FAKE-EXAMPLE",
         "http://ml1/metrics/host:api_token:12345",
+        "http://ml1/metrics/session_key/FAKE-EXAMPLE",
+        "http://ml1/metrics/consumer_key/FAKE-EXAMPLE",
+        "http://ml1/metrics/service_key/FAKE-EXAMPLE",
+        "http://ml1/metrics/account_key/FAKE-EXAMPLE",
+        "http://ml1/metrics/license_key/FAKE-EXAMPLE",
+        "http://ml1/metrics/token:total:secret-val",
+        "http://ml1/metrics/token:100:secret-val",
       ])("rejects a positional credential segment in %s", (locator) => {
         expect(() => parseFleetRecord(withLocator(locator))).toThrow(positional);
       });
@@ -414,6 +421,9 @@ describe("fleet schema v1 contract", () => {
       const namedPair = "provenance.locator cannot contain credential query parameters";
       it.each([
         "http://ml1/metrics?api_key:FAKE-EXAMPLE",
+        "http://ml1/metrics?api_keys=secret-token-12345",
+        "http://ml1/metrics?client_keys=secret-token-12345",
+        "http://ml1/metrics?private_keys=secret-token-12345",
         "http://ml1/metrics?sessiontoken:FAKE-EXAMPLE",
         "http://ml1/metrics?session_token:FAKE-EXAMPLE",
         "http://ml1/metrics?pwd:FAKE-EXAMPLE",
@@ -482,10 +492,14 @@ describe("fleet schema v1 contract", () => {
         "file:///home/n/workspaces/token-scope/sessions/run-1.jsonl",
         "http://ml1/metrics/token-cost",
         "http://ml1/tokens/total",
+        "http://ml1/metrics/max_tokens/4096",
         "http://ml1/token-metrics/run.jsonl",
         "s3://bucket/token-data/run-3.jsonl",
         "http://ml1/metrics?stats=%7B%22tokens%22%3A%20100%7D",
         "http://ml1/metrics?stats=%7B%22tokens%22%3A%5B100%2C200%5D%7D",
+        "http://ml1/metrics?stats=%7B%22tokens%22%3A%20%5B%20100%2C%20200%5D%7D",
+        "http://ml1/metrics?stats=%7B%22tokens%22%3A%20%5B%5D%7D",
+        "http://ml1/metrics?stats=%7B%22tokens%22%3Anull%7D",
         "http://ml1/metrics?stats=%7B%22token%22%3A%204096%7D",
         "http://ml1/metrics?stats=%7B%22input_token%22%3A%20100%7D",
         "http://ml1/metrics?stats=%7B%22prompt_token%22%3A%20100%7D",
@@ -495,6 +509,7 @@ describe("fleet schema v1 contract", () => {
         "http://ml1/metrics?tag=%7B%22key%22%3A%20%22env%22%7D",
         "http://ml1/metrics?filter=%7B%22partition_key%22%3A%20%22user_1%22%7D",
         "http://ml1/metrics?filter=%7B%22primary_key%22%3A%20%22item_1%22%7D",
+        "http://ml1/metrics?filter=%7B%22foreign_key%22%3A%20%22parent_1%22%7D",
         "http://ml1/metrics?filter=%7B%22routing_key%22%3A%20%22events%22%7D",
       ])("accepts a telemetry locator without a credential value in %s", (locator) => {
         expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);

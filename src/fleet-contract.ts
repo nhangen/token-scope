@@ -213,6 +213,7 @@ const CREDENTIAL_PARAM_SEGMENTS = new Set([
   "jsessionid",
   "jwt",
   "key",
+  "keys",
   "pass",
   "passwd",
   "password",
@@ -390,13 +391,14 @@ const CREDENTIAL_PARAM_KEYS = new Set([
 
 function isCredentialPair(keyRaw: string, valRaw: string): boolean {
   const key = keyRaw.toLowerCase().replace(/[-_]/g, "");
-  const val = valRaw.toLowerCase().replace(/^["\x27\[]+|["\x27\]]+$/g, "");
+  const val = valRaw.toLowerCase().replace(/^["\x27\[\s]+|["\x27\]\s]+$/g, "").trim();
 
   if (CREDENTIAL_PARAM_KEYS.has(key)) {
     return true;
   }
 
   if (key === "token" || key === "tokens" || key.endsWith("token") || key.endsWith("tokens")) {
+    if (val === "" || val === "null" || val === "[]") return false;
     const valStem = val.split(/[=:]/)[0] ?? val;
     if (TOKEN_TELEMETRY_QUALIFIERS.has(val) || TOKEN_TELEMETRY_QUALIFIERS.has(valStem)) return false;
     if (/^\d+(?:\.\d+)?$/.test(val)) return false;
@@ -431,7 +433,7 @@ function isCredentialPair(keyRaw: string, valRaw: string): boolean {
   // Bare "key" alone (e.g. tag={"key": "env"}) and non-key words (monkey) are not credentials.
   if (
     /(?:^|[^a-z0-9])(?:[a-z0-9]+[-_]keys?)$/i.test(keyRaw)
-    || /(?:api|access|auth|secret|priv|private|client|app|signing|encryption|master|ssh|deploy)keys?$/.test(key)
+    || /(?:api|access|auth|secret|priv|private|client|app|signing|encryption|master|ssh|deploy|session|consumer|service|account|license|shared)keys?$/.test(key)
   ) {
     if (
       key.startsWith("sort")
@@ -440,6 +442,7 @@ function isCredentialPair(keyRaw: string, valRaw: string): boolean {
       || key.startsWith("primary")
       || key.startsWith("partition")
       || key.startsWith("routing")
+      || key.startsWith("foreign")
     ) {
       return false;
     }
@@ -490,7 +493,7 @@ const CREDENTIAL_PATH_WORDS = new Set([
   "tokens",
 ]);
 
-function isCredentialPathWord(norm: string): boolean {
+function isCredentialPathWord(segment: string, norm: string): boolean {
   if (CREDENTIAL_PATH_WORDS.has(norm)) return true;
   if (norm.endsWith("token") || norm.endsWith("tokens")) {
     if (
@@ -499,6 +502,7 @@ function isCredentialPathWord(norm: string): boolean {
       || norm.startsWith("prompt")
       || norm.startsWith("completion")
       || norm.startsWith("cache")
+      || norm.startsWith("max")
     ) {
       return false;
     }
@@ -506,7 +510,8 @@ function isCredentialPathWord(norm: string): boolean {
   }
   if (
     /(?:secret|secrets|password|passwd)$/.test(norm)
-    || /(?:api|access|auth|secret|priv|private|client|app|signing|encryption|master|ssh|deploy)keys?$/.test(norm)
+    || /(?:^|[^a-z0-9])(?:[a-z0-9]+[-_]keys?)$/i.test(segment)
+    || /(?:api|access|auth|secret|priv|private|client|app|signing|encryption|master|ssh|deploy|session|consumer|service|account|license|shared)keys?$/.test(norm)
   ) {
     if (
       norm.startsWith("sort")
@@ -515,6 +520,7 @@ function isCredentialPathWord(norm: string): boolean {
       || norm.startsWith("primary")
       || norm.startsWith("partition")
       || norm.startsWith("routing")
+      || norm.startsWith("foreign")
     ) {
       return false;
     }
@@ -546,15 +552,27 @@ function hasPositionalCredential(decoded: string): boolean {
 
     const colonParts = segment.split(/\s*:\s*/);
     if (colonParts.length > 1) {
-      for (let j = 0; j < colonParts.length - 1; j++) {
-        const k = colonParts[j] ?? "";
-        const v = colonParts[j + 1] ?? "";
-        if (isCredentialPair(k, v)) return true;
+      for (let j = 0; j < colonParts.length; j++) {
+        const partNorm = colonParts[j]?.toLowerCase().replace(/[-_]/g, "") ?? "";
+        if (partNorm === "token" || partNorm === "tokens") {
+          for (let k = j + 1; k < colonParts.length; k++) {
+            const nextVal = colonParts[k]?.toLowerCase().trim() ?? "";
+            const nextStem = nextVal.split(/[=:]/)[0] ?? nextVal;
+            if (!TOKEN_TELEMETRY_QUALIFIERS.has(nextVal) && !TOKEN_TELEMETRY_QUALIFIERS.has(nextStem) && !/^\d+(?:\.\d+)?$/.test(nextVal)) {
+              return true;
+            }
+          }
+        }
+        if (j < colonParts.length - 1) {
+          const k = colonParts[j] ?? "";
+          const v = colonParts[j + 1] ?? "";
+          if (isCredentialPair(k, v)) return true;
+        }
       }
     }
 
     const norm = segment.toLowerCase().replace(/[-_]/g, "");
-    if (isCredentialPathWord(norm)) {
+    if (isCredentialPathWord(segment, norm)) {
       if (i + 1 < rawSegments.length) {
         const nextRaw = rawSegments[i + 1];
         const nextSegment = (nextRaw ? nextRaw.split(";")[0]?.trim().toLowerCase() : "") ?? "";
@@ -596,7 +614,9 @@ function hasCredentialValue(decoded: string): boolean {
   for (const param of params) {
     const eqIdx = param.indexOf("=");
     if (eqIdx === -1) continue;
+    const paramKey = param.slice(0, eqIdx);
     const paramVal = param.slice(eqIdx + 1);
+    if (checkPair(paramKey, paramVal)) return true;
     for (const match of paramVal.matchAll(pattern)) {
       const key = match[1];
       const val = match[2];
