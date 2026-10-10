@@ -1351,6 +1351,9 @@ describe("Olla fleet telemetry adapter", () => {
         state: "available",
       }));
       expect(snapshot(collected, "metrics").counters).toMatchObject({ constructor: 1, toString: 2 });
+      const counters = snapshot(collected, "metrics").counters;
+      expect(Object.hasOwn(counters, "__proto__")).toBe(true);
+      expect(counters["__proto__"]).toBe(3);
     });
 
     it("falls back to placeholders for empty label keys and values", async () => {
