@@ -201,6 +201,25 @@ function orcaAgentIdentity(value: unknown, name: string): { value: string | null
   return { value: candidate, invalid: false };
 }
 
+function orcaCorrelationIdentity(
+  value: unknown,
+  name: string,
+): { value: string | null; reason: "partial_records" | "privacy" | null } {
+  if (value === null || value === undefined || value === "") return { value: null, reason: null };
+  if (typeof value !== "string") return { value: null, reason: "partial_records" };
+  let candidate: string;
+  try {
+    candidate = safeString(value, name);
+  } catch (error) {
+    return { value: null, reason: error instanceof PrivacyError ? "privacy" : "partial_records" };
+  }
+  const separator = candidate.indexOf(":");
+  if (separator <= 0 || separator === candidate.length - 1) {
+    return { value: null, reason: "partial_records" };
+  }
+  return { value: candidate, reason: null };
+}
+
 function canonicalTimestamp(value: unknown, name: string): string {
   const raw = safeString(value, name);
   const milliseconds = Date.parse(raw);
@@ -531,6 +550,9 @@ function addTerminalRecords(
     paneKey: string | null;
     agentIdentity: string | null;
     invalidAgentIdentity: boolean;
+    requestId: string | null;
+    runId: string | null;
+    sessionId: string | null;
   }>();
   if (!sourceComplete) markPartial(source, "partial_records");
   for (const [terminalIndex, candidate] of value.terminals.entries()) {
@@ -557,6 +579,12 @@ function addTerminalRecords(
         && worktree?.placement.ambiguousPaneKeys.has(paneKey) === true;
       const directAgentType = orcaAgentIdentity(terminal.agentIdentity, "terminal.agentIdentity");
       if (directAgentType.invalid) markPartial(source, "partial_records");
+      const requestId = orcaCorrelationIdentity(terminal.requestId, "terminal.requestId");
+      const runId = orcaCorrelationIdentity(terminal.runId, "terminal.runId");
+      const sessionId = orcaCorrelationIdentity(terminal.sessionId, "terminal.sessionId");
+      for (const identity of [requestId, runId, sessionId]) {
+        if (identity.reason !== null) markPartial(source, identity.reason);
+      }
       const terminalIdentity = JSON.stringify([executionSourceId, handle]);
       const duplicate = seenTerminalIdentities.get(terminalIdentity);
       if (duplicate !== undefined) {
@@ -564,11 +592,17 @@ function addTerminalRecords(
         if (duplicate.worktreeId !== worktreeId
           || duplicate.paneKey !== paneKey
           || duplicate.agentIdentity !== directAgentType.value
-          || duplicate.invalidAgentIdentity !== directAgentType.invalid) {
+          || duplicate.invalidAgentIdentity !== directAgentType.invalid
+          || duplicate.requestId !== requestId.value
+          || duplicate.runId !== runId.value
+          || duplicate.sessionId !== sessionId.value) {
           const existing = records[duplicate.recordIndex];
           if (existing !== undefined) {
             const unattributed = parseOwnSnapshot({
               ...existing,
+              request_id: null,
+              run_id: null,
+              session_id: null,
               harness: null,
               status: "partial",
               provenance: { ...existing.provenance, completeness: "partial" },
@@ -589,6 +623,9 @@ function addTerminalRecords(
         paneKey,
         agentIdentity: directAgentType.value,
         invalidAgentIdentity: directAgentType.invalid,
+        requestId: requestId.value,
+        runId: runId.value,
+        sessionId: sessionId.value,
       });
       const agentType = directAgentType.invalid
         ? null
@@ -613,9 +650,9 @@ function addTerminalRecords(
         schema_version: FLEET_SCHEMA_VERSION,
         record_type: "operational_snapshot",
         record_id: `orca:placement:${encodeURIComponent(collectedAt)}:${terminalIndex}`,
-        run_id: null,
-        session_id: null,
-        request_id: null,
+        run_id: runId.value,
+        session_id: sessionId.value,
+        request_id: requestId.value,
         prompt_origin_host: null,
         execution_host: executionHost,
         router_host: null,
@@ -642,9 +679,6 @@ function addTerminalRecords(
         observedAt: collectedAt,
       };
     } catch (error) {
-      // A source data/privacy fault stays partial; a contract rejection of
-      // the adapter's own record arrives as OrcaInvariantError and must
-      // propagate instead of surfacing as partial telemetry.
       if (error instanceof OrcaInvariantError) throw error;
       markPartial(source, error instanceof PrivacyError ? "privacy" : "partial_records");
     }

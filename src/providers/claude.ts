@@ -16,7 +16,7 @@
  */
 import { readFileSync, readdirSync, existsSync, statSync } from "fs";
 import { join } from "path";
-import { stableId, type ProviderEvent } from "./types";
+import { qualifiedProviderId, stableId, type ProviderEvent } from "./types";
 
 interface ClaudeUsage {
   input_tokens?: number;
@@ -59,6 +59,8 @@ export function claudeEventsFromTranscript(
     }
     const model = msg.model ?? "unknown";
     const subscription = isAnthropicModel(model);
+    const requestId = qualifiedProviderId("claude", messageId);
+    const sessionId = qualifiedProviderId("claude", rec.sessionId);
     events.push({
       eventId: stableId("claude", provenance, index),
       harness: "claude",
@@ -75,6 +77,9 @@ export function claudeEventsFromTranscript(
       reasoningTokens: null,
       cashChargeUsd: null,
       provenance,
+      requestId,
+      runId: null,
+      sessionId,
     });
   }
   return events;

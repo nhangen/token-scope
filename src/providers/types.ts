@@ -1,3 +1,6 @@
+import { createHash } from "crypto";
+import { assertSafeLabelValue, PrivacyError } from "@/fleet-contract";
+
 /**
  * Provider-neutral usage event (#37).
  *
@@ -11,7 +14,7 @@
 export interface ProviderEvent {
   /** Source-qualified and deterministic: "<harness>:<stable local id>". */
   eventId: string;
-  harness: "claude" | "ollama-claude" | "codex" | "opencode" | "gemini-cli";
+  harness: "claude" | "ollama-claude" | "ollama-route" | "codex" | "opencode" | "gemini-cli";
   /** How the request was paid for: subscription | metered | local | unknown. */
   billingRoute: "subscription" | "metered" | "local" | "unknown";
   modelProvider: string;
@@ -48,10 +51,63 @@ export interface ProviderEvent {
   partial?: string[];
   /** Codex usage schema used for this event. */
   usageSource?: "response" | "legacy-cumulative";
+  /** Source-owned correlation identities for the fleet report. */
+  requestId?: string | null;
+  runId?: string | null;
+  sessionId?: string | null;
+  endpointName?: string | null;
+  /** Request-level measurements only. Aggregate telemetry stays on snapshots. */
+  ttftMs?: number | null;
+  decodeTps?: number | null;
+  totalLatencyMs?: number | null;
 }
 
 export function stableId(...parts: Array<string | number>): string {
   return parts.join(":");
+}
+
+export function privateSafeProviderIdentity(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  try {
+    assertSafeLabelValue(value);
+    return value;
+  } catch (error) {
+    if (error instanceof PrivacyError) return null;
+    throw error;
+  }
+}
+
+export function qualifiedProviderId(namespace: string, value: unknown): string | null {
+  const identity = privateSafeProviderIdentity(value);
+  if (identity === null) return null;
+  try {
+    assertSafeLabelValue(namespace);
+    const qualified = `${namespace}:${encodeURIComponent(identity)}`;
+    assertSafeLabelValue(qualified);
+    return qualified;
+  } catch (error) {
+    if (error instanceof PrivacyError) return null;
+    throw error;
+  }
+}
+
+export function privateSafeEventId(
+  namespace: string,
+  ...parts: Array<string | number | null | undefined>
+): string {
+  assertSafeLabelValue(namespace);
+  const completeParts = parts.map((part) => {
+    if (part === null) return ["null"];
+    if (part === undefined) return ["undefined"];
+    if (typeof part === "string") return ["string", part];
+    if (Number.isNaN(part)) return ["number", "NaN"];
+    if (Object.is(part, -0)) return ["number", "-0"];
+    return ["number", String(part)];
+  });
+  const digest = createHash("sha256")
+    .update(JSON.stringify(completeParts))
+    .digest("hex");
+  return `${namespace}:opaque:${digest}`;
 }
 
 /** Milliseconds for a record's timestamp, or null when it cannot be dated
