@@ -60,9 +60,9 @@ const ORCA_AGENT_IDENTITIES = Object.freeze([
 
 export const ORCA_READ_ONLY_COMMANDS = APPROVED_ORCA_COMMANDS;
 
-// A stalled `orca` process (for example a hung SSH host) must not block
-// collection indefinitely. The default runner enforces a kill timer and
-// reports a timeout as `command_failed`.
+// A stalled `orca` process (for example a hung app socket) must not block
+// collection indefinitely. The CLI has its own runtime timeout; this kill
+// timer is the backstop, and a timeout is reported as `command_failed`.
 export const ORCA_COMMAND_TIMEOUT_MS = 10_000;
 
 export interface OrcaCommandResult {
