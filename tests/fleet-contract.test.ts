@@ -361,7 +361,7 @@ describe("fleet schema v1 contract", () => {
 
     it.each([
       "http://ml1/metrics?sort_key=asc&sort_keys=asc",
-      "http://ml1/metrics?partition_key=p1&primary_key=id&routing_key=events",
+      "http://ml1/metrics?partition_key=p1&routing_key=events",
       "http://ml1/metrics?foreign_key=parent&cache_key=k1&publicKey=pk1",
     ])("accepts database and map key names as query parameters in %s", (locator) => {
       expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);
@@ -372,6 +372,8 @@ describe("fleet schema v1 contract", () => {
       "http://ml1/metrics?keys=FAKE-EXAMPLE",
       "http://ml1/metrics?api_keys=FAKE-EXAMPLE",
       "http://ml1/metrics?sort=asc&key=FAKE-EXAMPLE",
+      "http://ml1/metrics?primary_key=FAKE-EXAMPLE",
+      "http://ml1/metrics?primaryKey=FAKE-EXAMPLE",
     ])("still rejects a credential key name next to the exemptions in %s", (locator) => {
       expect(() => parseFleetRecord(withLocator(locator))).toThrow(rejected);
     });
@@ -548,6 +550,7 @@ describe("fleet schema v1 contract", () => {
         "http://ml1/metrics?w=%7B%22cache_secret%22%3A%22FAKE-EXAMPLE%22%7D",
         "http://ml1/metrics?w=%7B%22public_secret%22%3A%22FAKE-EXAMPLE%22%7D",
         "http://ml1/metrics?w=%7B%22routing_signature%22%3A%22FAKE-EXAMPLE%22%7D",
+        "http://ml1/metrics?w=%7B%22primary_key%22%3A%22FAKE-EXAMPLE%22%7D",
       ])("rejects a secret whose name starts like a database key name in %s", (locator) => {
         expect(() => parseFleetRecord(withLocator(locator))).toThrow(valueShaped);
       });
@@ -621,7 +624,6 @@ describe("fleet schema v1 contract", () => {
         "http://ml1/metrics?w=%7B%22max_tokens%22%3A%22auto%22%7D",
         "http://ml1/metrics?tag=%7B%22key%22%3A%20%22env%22%7D",
         "http://ml1/metrics?filter=%7B%22partition_key%22%3A%20%22user_1%22%7D",
-        "http://ml1/metrics?filter=%7B%22primary_key%22%3A%20%22item_1%22%7D",
         "http://ml1/metrics?filter=%7B%22foreign_key%22%3A%20%22parent_1%22%7D",
         "http://ml1/metrics?filter=%7B%22routing_key%22%3A%20%22events%22%7D",
         "http://ml1/v1/usage/reasoning_tokens/2026-09",
