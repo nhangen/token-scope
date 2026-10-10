@@ -59,6 +59,11 @@ const ORCA_AGENT_IDENTITIES = Object.freeze([
 
 export const ORCA_READ_ONLY_COMMANDS = APPROVED_ORCA_COMMANDS;
 
+// A stalled `orca` process (for example a hung SSH host) must not block
+// collection indefinitely. The default runner enforces a kill timer and
+// reports a timeout as `command_failed`.
+export const ORCA_COMMAND_TIMEOUT_MS = 10_000;
+
 export interface OrcaCommandResult {
   exitCode: number;
   stdout: string;
@@ -237,9 +242,15 @@ function observation(
   };
 }
 
+export class OrcaCommandError extends Error {}
+
+// A record-construction regression in the adapter itself. It must propagate
+// instead of being reported as a source data fault.
+export class OrcaInvariantError extends Error {}
+
 function parseJsonResult(output: string, name: string): Record<string, unknown> {
   const envelope = objectValue(JSON.parse(output), name);
-  if (envelope.ok !== true) throw new Error(`${name} failed`);
+  if (envelope.ok !== true) throw new OrcaCommandError(`${name} failed`);
   return objectValue(envelope.result, `${name}.result`);
 }
 
@@ -248,17 +259,32 @@ function errorCode(error: unknown): string | null {
   return typeof error.code === "string" ? error.code : null;
 }
 
-async function defaultRunner(executable: string, args: readonly string[]): Promise<OrcaCommandResult> {
+export async function defaultRunner(
+  executable: string,
+  args: readonly string[],
+  timeoutMs: number = ORCA_COMMAND_TIMEOUT_MS,
+): Promise<OrcaCommandResult> {
   const child = Bun.spawn([executable, ...args], {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ]);
-  return { exitCode, stdout, stderr };
+  const timer = setTimeout(() => {
+    try {
+      child.kill();
+    } catch {
+      // The process may have already exited; the kill timer is best effort.
+    }
+  }, timeoutMs);
+  try {
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    return { exitCode, stdout, stderr };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function loadCommand(
@@ -277,7 +303,16 @@ async function loadCommand(
         value: parseJsonResult(result.stdout, commandLabel(args)),
         observation: observation(args, collectedAt),
       };
-    } catch {
+    } catch (error) {
+      // An `ok:false` envelope is an Orca-reported command failure with no
+      // partial data; only a genuinely unparsable or malformed payload is a
+      // data fault.
+      if (error instanceof OrcaCommandError) {
+        return { value: null, observation: observation(args, collectedAt, "unavailable", "command_failed") };
+      }
+      if (error instanceof PrivacyError) {
+        return { value: null, observation: observation(args, collectedAt, "partial", "privacy") };
+      }
       return { value: null, observation: observation(args, collectedAt, "partial", "malformed") };
     }
   } catch (error) {
@@ -321,14 +356,20 @@ function qualifyWorktree(namespace: string, value: string): string {
   return `${namespace}:${safeWorktreeId(value, namespace)}`;
 }
 
-function parseHosts(value: Record<string, unknown>): Record<string, OrcaHostIdentity> {
+function parseHosts(value: Record<string, unknown>): { hosts: Record<string, OrcaHostIdentity>; partial: boolean } {
   if (!Array.isArray(value.hosts)) throw new Error("hosts must be an array");
   const hosts: Record<string, OrcaHostIdentity> = {};
+  let partial = false;
   for (const candidate of value.hosts) {
     const host = objectValue(candidate, "host");
     const rawKind = safeString(host.kind, "host.kind");
     const kind = rawKind === "environment" ? "runtime" : rawKind;
-    if (kind !== "local" && kind !== "ssh" && kind !== "runtime") continue;
+    if (kind !== "local" && kind !== "ssh" && kind !== "runtime") {
+      // An unknown host kind is dropped, but the source must still be marked
+      // partial rather than silently losing coverage.
+      partial = true;
+      continue;
+    }
     const id = safeString(host.id, "host.id");
     if (kind === "local" && id !== "local") throw new Error("local host.id must be local");
     const sourceId = sourceHostId(kind, id);
@@ -343,7 +384,7 @@ function parseHosts(value: Record<string, unknown>): Record<string, OrcaHostIden
       connected: typeof host.connected === "boolean" ? host.connected : null,
     };
   }
-  return hosts;
+  return { hosts, partial };
 }
 
 function worktreeKey(hostId: string, worktreeId: string): string {
@@ -381,6 +422,10 @@ function parseWorktrees(value: Record<string, unknown>): ParsedWorktrees {
           }
         }
       }
+    } else if (worktree.agents !== undefined) {
+      // A non-array `agents` field is treated as no agents, but the source
+      // must still be marked partial rather than silently losing coverage.
+      partial = true;
     }
     const key = worktreeKey(hostId, worktreeId);
     const existing = index.get(key);
@@ -513,7 +558,7 @@ function addTerminalRecords(
               provenance: { ...existing.provenance, completeness: "partial" },
             });
             if (unattributed.record_type !== "operational_snapshot") {
-              throw new Error("wrong fleet record type");
+              throw new OrcaInvariantError("wrong fleet record type");
             }
             records[duplicate.recordIndex] = unattributed;
             const existingMetadata = metadata[existing.record_id];
@@ -575,7 +620,7 @@ function addTerminalRecords(
         counters: {},
       };
       const parsed = parseFleetRecord(record);
-      if (parsed.record_type !== "operational_snapshot") throw new Error("wrong fleet record type");
+      if (parsed.record_type !== "operational_snapshot") throw new OrcaInvariantError("wrong fleet record type");
       records.push(parsed);
       metadata[parsed.record_id] = {
         terminalHandle: handle,
@@ -585,6 +630,11 @@ function addTerminalRecords(
         observedAt: collectedAt,
       };
     } catch (error) {
+      // A typed data/privacy fault is a source problem and stays partial;
+      // anything the adapter threw by itself (for example a contract
+      // rejection or a wrong fleet record type) is a regression and must
+      // propagate instead of surfacing as partial telemetry.
+      if (error instanceof OrcaInvariantError) throw error;
       markPartial(source, error instanceof PrivacyError ? "privacy" : "partial_records");
     }
   }
@@ -596,7 +646,7 @@ function addTerminalRecords(
         status: "partial",
         provenance: { ...record.provenance, completeness: "partial" },
       });
-      if (parsed.record_type !== "operational_snapshot") throw new Error("wrong fleet record type");
+      if (parsed.record_type !== "operational_snapshot") throw new OrcaInvariantError("wrong fleet record type");
       records[index] = parsed;
     }
   }
@@ -656,7 +706,9 @@ export async function collectOrcaPlacement(
   let hosts: Record<string, OrcaHostIdentity> = {};
   if (hostSource.value !== null) {
     try {
-      hosts = parseHosts(hostSource.value);
+      const parsedHosts = parseHosts(hostSource.value);
+      hosts = parsedHosts.hosts;
+      if (parsedHosts.partial) markPartial(hostSource.observation, "partial_records");
     } catch (error) {
       markPartial(hostSource.observation, error instanceof PrivacyError ? "privacy" : "malformed");
     }
@@ -693,6 +745,9 @@ export async function collectOrcaPlacement(
       runtime: { id: runtimeId, version },
     };
   } catch (error) {
+    // Re-throw the adapter's own invariant failures instead of misreporting
+    // a record-construction regression as a source data fault.
+    if (error instanceof OrcaInvariantError) throw error;
     markPartial(terminalSource.observation, error instanceof PrivacyError ? "privacy" : "malformed");
     return { ...empty(runtimeId, version), hosts };
   }
