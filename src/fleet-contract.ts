@@ -199,29 +199,52 @@ const URL_USERINFO = /^(?:[a-z][a-z0-9+.-]*:)?\/\/[^/?#]*@/i;
 const BARE_USERINFO = /^[^/?#:@]+:[^/?#@]*@/;
 const CREDENTIAL_PARAM_SEGMENTS = new Set([
   "accesstoken",
+  "accesstokens",
   "apikey",
+  "apikeys",
+  "apitoken",
+  "apitokens",
   "auth",
   "authorization",
   "authtoken",
+  "authtokens",
   "bearer",
   "clientsecret",
+  "clientsecrets",
   "cookie",
+  "cookies",
   "credential",
   "credentials",
   "hmac",
   "idtoken",
+  "idtokens",
   "jsessionid",
   "jwt",
   "key",
   "keys",
   "pass",
+  "passphrase",
+  "passphrases",
   "passwd",
+  "passwds",
   "password",
+  "passwords",
+  "privkey",
+  "privkeys",
   "pwd",
+  "pwds",
   "refreshtoken",
+  "refreshtokens",
   "secret",
+  "secrets",
+  "secretkey",
+  "secretkeys",
+  "sessiontoken",
+  "sessiontokens",
   "sig",
+  "sigs",
   "signature",
+  "signatures",
   "token",
 ]);
 // Unseparated compounds (apitoken, apikeys, privatekeypem) have no segment
@@ -230,6 +253,7 @@ const CREDENTIAL_PARAM_SEGMENTS = new Set([
 const CREDENTIAL_PARAM_STEMS = [
   "accesskey",
   "apikey",
+  "apitoken",
   "authkey",
   "clientsecret",
   "credential",
@@ -242,7 +266,7 @@ const CREDENTIAL_PARAM_STEMS = [
 ];
 // These stems do appear inside telemetry names (max_tokens, tokenizer, secretary),
 // so they match only at the end of a segment.
-const CREDENTIAL_PARAM_SUFFIXES = ["secret", "secrets", "signature", "token"];
+const CREDENTIAL_PARAM_SUFFIXES = ["secret", "secrets", "signature", "signatures", "token"];
 
 // A token segment followed by one of these names a count or class, not a
 // credential (tokenCount, token_type, maxTokens) — core telemetry for a token-accounting tool.
@@ -256,6 +280,8 @@ function isCredentialSegment(segment: string, next: string | undefined): boolean
 }
 
 function hasCredentialSegment(name: string): boolean {
+  const normNoDelim = name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (CREDENTIAL_PARAM_STEMS.some((stem) => normNoDelim.includes(stem))) return true;
   const segments = name
     .toLowerCase()
     .split(/[^a-z0-9]+/)
@@ -359,34 +385,54 @@ const BARE_CREDENTIAL = new RegExp([
 
 const CREDENTIAL_PARAM_KEYS = new Set([
   "accesskey",
+  "accesskeys",
   "accesstoken",
+  "accesstokens",
   "apikey",
+  "apikeys",
   "apitoken",
+  "apitokens",
   "authkey",
+  "authkeys",
   "authorization",
   "authtoken",
+  "authtokens",
   "bearer",
   "clientsecret",
+  "clientsecrets",
   "cookie",
+  "cookies",
   "credential",
   "credentials",
   "hmac",
   "idtoken",
+  "idtokens",
   "jsessionid",
   "jwt",
   "passphrase",
+  "passphrases",
   "passwd",
+  "passwds",
   "password",
+  "passwords",
   "privkey",
+  "privkeys",
   "privatekey",
   "privatekeys",
   "pwd",
+  "pwds",
   "refreshtoken",
+  "refreshtokens",
   "secret",
+  "secrets",
   "secretkey",
+  "secretkeys",
   "sessiontoken",
+  "sessiontokens",
   "sig",
+  "sigs",
   "signature",
+  "signatures",
 ]);
 
 function isCredentialPair(keyRaw: string, valRaw: string): boolean {
@@ -399,9 +445,10 @@ function isCredentialPair(keyRaw: string, valRaw: string): boolean {
 
   if (key === "token" || key === "tokens" || key.endsWith("token") || key.endsWith("tokens")) {
     if (val === "" || val === "null" || val === "[]") return false;
-    const valStem = val.split(/[=:]/)[0] ?? val;
-    if (TOKEN_TELEMETRY_QUALIFIERS.has(val) || TOKEN_TELEMETRY_QUALIFIERS.has(valStem)) return false;
-    if (/^\d+(?:\.\d+)?$/.test(val)) return false;
+    const valParts = val.split(/[:=]/).map((s) => s.trim()).filter((s) => s.length > 0);
+    if (valParts.length > 0 && valParts.every((part) => TOKEN_TELEMETRY_QUALIFIERS.has(part) || /^\d+(?:\.\d+)?$/.test(part))) {
+      return false;
+    }
     if (
       key.startsWith("input")
       || key.startsWith("output")
@@ -409,13 +456,14 @@ function isCredentialPair(keyRaw: string, valRaw: string): boolean {
       || key.startsWith("completion")
       || key.startsWith("cache")
       || key.startsWith("max")
+      || key.startsWith("total")
     ) {
       return false;
     }
     return true;
   }
 
-  if (/(?:secret|secrets|password|passwd|sig|signature)$/.test(key)) {
+  if (/(?:secret|secrets|password|passwords|passwd|passwds|sig|sigs|signature|signatures)$/.test(key)) {
     if (
       key.startsWith("sort")
       || key.startsWith("cache")
@@ -429,24 +477,27 @@ function isCredentialPair(keyRaw: string, valRaw: string): boolean {
     return true;
   }
 
-  // Compound keys: client_key, app_key, signing_key, etc.
+  // Compound keys: client_key, app_key, signing_key, adminKey, userKey, etc.
   // Bare "key" alone (e.g. tag={"key": "env"}) and non-key words (monkey) are not credentials.
-  if (
-    /(?:^|[^a-z0-9])(?:[a-z0-9]+[-_]keys?)$/i.test(keyRaw)
-    || /(?:api|access|auth|secret|priv|private|client|app|signing|encryption|master|ssh|deploy|session|consumer|service|account|license|shared)keys?$/.test(key)
-  ) {
+  if (key.endsWith("key") || key.endsWith("keys")) {
+    const decamelKey = keyRaw.replace(/([a-z0-9])([A-Z])/g, "$1_$2");
     if (
-      key.startsWith("sort")
-      || key.startsWith("cache")
-      || key.startsWith("public")
-      || key.startsWith("primary")
-      || key.startsWith("partition")
-      || key.startsWith("routing")
-      || key.startsWith("foreign")
+      /(?:^|[^a-z0-9])[a-z0-9]+[-_]keys?$/i.test(decamelKey)
+      || /(?:api|access|auth|secret|priv|private|client|app|signing|encryption|master|ssh|deploy|session|consumer|service|account|license|shared)keys?$/.test(key)
     ) {
-      return false;
+      if (
+        key.startsWith("sort")
+        || key.startsWith("cache")
+        || key.startsWith("public")
+        || key.startsWith("primary")
+        || key.startsWith("partition")
+        || key.startsWith("routing")
+        || key.startsWith("foreign")
+      ) {
+        return false;
+      }
+      return true;
     }
-    return true;
   }
 
   return false;
@@ -460,35 +511,54 @@ function isCredentialPair(keyRaw: string, valRaw: string): boolean {
 // telemetry names; the name scanner's qualifiers decide which token is which.
 const CREDENTIAL_PATH_WORDS = new Set([
   "accesskey",
+  "accesskeys",
   "accesstoken",
+  "accesstokens",
   "apikey",
+  "apikeys",
   "apitoken",
+  "apitokens",
   "authkey",
+  "authkeys",
   "authorization",
   "authtoken",
+  "authtokens",
   "bearer",
   "clientsecret",
+  "clientsecrets",
   "cookie",
+  "cookies",
   "credential",
   "credentials",
   "hmac",
   "idtoken",
+  "idtokens",
   "jsessionid",
   "jwt",
   "passphrase",
+  "passphrases",
   "passwd",
+  "passwds",
   "password",
+  "passwords",
   "privkey",
+  "privkeys",
   "privatekey",
   "privatekeys",
   "pwd",
+  "pwds",
   "refreshtoken",
+  "refreshtokens",
   "secret",
   "secrets",
   "secretkey",
+  "secretkeys",
   "sessiontoken",
+  "sessiontokens",
   "sig",
+  "sigs",
   "signature",
+  "signatures",
   "token",
   "tokens",
 ]);
@@ -503,15 +573,20 @@ function isCredentialPathWord(segment: string, norm: string): boolean {
       || norm.startsWith("completion")
       || norm.startsWith("cache")
       || norm.startsWith("max")
+      || norm.startsWith("total")
     ) {
       return false;
     }
     return true;
   }
   if (
-    /(?:secret|secrets|password|passwd)$/.test(norm)
-    || /(?:^|[^a-z0-9])(?:[a-z0-9]+[-_]keys?)$/i.test(segment)
-    || /(?:api|access|auth|secret|priv|private|client|app|signing|encryption|master|ssh|deploy|session|consumer|service|account|license|shared)keys?$/.test(norm)
+    /(?:secret|secrets|password|passwords|passwd|passwds|sig|sigs|signature|signatures)$/.test(norm)
+    || (
+      (norm.endsWith("key") || norm.endsWith("keys")) && (
+        /(?:^|[^a-z0-9])[a-z0-9]+[-_]keys?$/i.test(segment.replace(/([a-z0-9])([A-Z])/g, "$1_$2"))
+        || /(?:api|access|auth|secret|priv|private|client|app|signing|encryption|master|ssh|deploy|session|consumer|service|account|license|shared)keys?$/.test(norm)
+      )
+    )
   ) {
     if (
       norm.startsWith("sort")
@@ -557,8 +632,8 @@ function hasPositionalCredential(decoded: string): boolean {
         if (partNorm === "token" || partNorm === "tokens") {
           for (let k = j + 1; k < colonParts.length; k++) {
             const nextVal = colonParts[k]?.toLowerCase().trim() ?? "";
-            const nextStem = nextVal.split(/[=:]/)[0] ?? nextVal;
-            if (!TOKEN_TELEMETRY_QUALIFIERS.has(nextVal) && !TOKEN_TELEMETRY_QUALIFIERS.has(nextStem) && !/^\d+(?:\.\d+)?$/.test(nextVal)) {
+            const nextParts = nextVal.split(/[:=]/).map((s) => s.trim()).filter((s) => s.length > 0);
+            if (!nextParts.every((p) => TOKEN_TELEMETRY_QUALIFIERS.has(p) || /^\d+(?:\.\d+)?$/.test(p))) {
               return true;
             }
           }
@@ -577,7 +652,18 @@ function hasPositionalCredential(decoded: string): boolean {
         const nextRaw = rawSegments[i + 1];
         const nextSegment = (nextRaw ? nextRaw.split(";")[0]?.trim().toLowerCase() : "") ?? "";
         if (norm === "token" || norm === "tokens") {
-          if (TOKEN_TELEMETRY_QUALIFIERS.has(nextSegment)) continue;
+          if (TOKEN_TELEMETRY_QUALIFIERS.has(nextSegment)) {
+            let hasNonTelemetryDownstream = false;
+            for (let k = i + 2; k < rawSegments.length; k++) {
+              const downstreamSeg = (rawSegments[k] ? rawSegments[k]!.split(";")[0]?.trim().toLowerCase() : "") ?? "";
+              if (downstreamSeg && !TOKEN_TELEMETRY_QUALIFIERS.has(downstreamSeg) && !/^\d+(?:\.\d+)?$/.test(downstreamSeg)) {
+                hasNonTelemetryDownstream = true;
+                break;
+              }
+            }
+            if (hasNonTelemetryDownstream) return true;
+            continue;
+          }
         }
         return true;
       }
@@ -588,26 +674,61 @@ function hasPositionalCredential(decoded: string): boolean {
 
 function hasCredentialValue(decoded: string): boolean {
   if (BARE_CREDENTIAL.test(decoded)) return true;
+  if (SLACK_WEBHOOK_PATH.test(decoded)) return true;
 
   const checkPair = (key: string, val: string): boolean => {
     if (isCredentialPair(key, val)) return true;
     if (val.includes(":")) {
       const parts = val.split(/\s*:\s*/);
-      for (let j = 0; j < parts.length - 1; j++) {
-        const nestedK = parts[j] ?? "";
-        const nestedV = parts[j + 1] ?? "";
-        if (isCredentialPair(nestedK, nestedV)) return true;
+      for (let j = 0; j < parts.length; j++) {
+        const partNorm = parts[j]?.toLowerCase().replace(/[-_]/g, "") ?? "";
+        if (partNorm === "token" || partNorm === "tokens") {
+          for (let k = j + 1; k < parts.length; k++) {
+            const nextVal = parts[k]?.toLowerCase().trim() ?? "";
+            const nextParts = nextVal.split(/[:=]/).map((s) => s.trim()).filter((s) => s.length > 0);
+            if (!nextParts.every((p) => TOKEN_TELEMETRY_QUALIFIERS.has(p) || /^\d+(?:\.\d+)?$/.test(p))) {
+              return true;
+            }
+          }
+        }
+        if (j < parts.length - 1) {
+          const nestedK = parts[j] ?? "";
+          const nestedV = parts[j + 1] ?? "";
+          if (isCredentialPair(nestedK, nestedV)) return true;
+        }
       }
     }
     return false;
   };
 
-  const pattern = /["\x27]?([a-z0-9_-]+)["\x27]?\s*[:=]\s*["\x27]?([^\s,}"\x27&]+)/gi;
-  for (const match of decoded.matchAll(pattern)) {
-    const key = match[1];
-    const val = match[2];
-    if (key && val && checkPair(key, val)) return true;
-  }
+  const checkTextValues = (text: string): boolean => {
+    const pattern = /["\x27]?([a-z0-9_-]+)["\x27]?\s*[:=]\s*["\x27]?([^\s,}"\x27&]+)/gi;
+    for (const match of text.matchAll(pattern)) {
+      const key = match[1];
+      const val = match[2];
+      if (key && val && checkPair(key, val)) return true;
+    }
+
+    if (text.includes("[")) {
+      const arrayPattern = /["\x27]?([a-z0-9_-]+)["\x27]?\s*[:=]\s*\[([^\]]*)\]/gi;
+      for (const match of text.matchAll(arrayPattern)) {
+        const key = match[1];
+        const rawList = match[2];
+        if (key && rawList) {
+          const items = rawList
+            .split(",")
+            .map((s) => s.replace(/^["\x27\s]+|["\x27\s]+$/g, "").trim())
+            .filter((s) => s.length > 0);
+          for (const item of items) {
+            if (checkPair(key, item)) return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  if (checkTextValues(decoded)) return true;
 
   // Parameter values scan specifically catches assignments like w=token:FAKE-EXAMPLE
   const params = decoded.split(/[&;?#]/);
@@ -617,11 +738,7 @@ function hasCredentialValue(decoded: string): boolean {
     const paramKey = param.slice(0, eqIdx);
     const paramVal = param.slice(eqIdx + 1);
     if (checkPair(paramKey, paramVal)) return true;
-    for (const match of paramVal.matchAll(pattern)) {
-      const key = match[1];
-      const val = match[2];
-      if (key && val && checkPair(key, val)) return true;
-    }
+    if (checkTextValues(paramVal)) return true;
   }
   return false;
 }
