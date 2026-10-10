@@ -270,7 +270,9 @@ const CREDENTIAL_PARAM_SUFFIXES = ["secret", "secrets", "signature", "signatures
 
 // A token segment followed by one of these names a count or class, not a
 // credential (tokenCount, token_type, maxTokens) — core telemetry for a token-accounting tool.
-const TOKEN_TELEMETRY_QUALIFIERS = new Set(["budget", "count", "counts", "kind", "limit", "max", "total", "type", "usage"]);
+const TOKEN_TELEMETRY_QUALIFIERS = new Set([
+  "avg", "budget", "count", "counts", "kind", "limit", "max", "min", "rate", "sum", "total", "type", "usage",
+]);
 
 function isCredentialSegment(segment: string, next: string | undefined): boolean {
   if (segment === "token" && next !== undefined && TOKEN_TELEMETRY_QUALIFIERS.has(next)) return false;
@@ -441,7 +443,9 @@ const CREDENTIAL_PARAM_KEYS = new Set([
 ]);
 
 // Token counts and limits are named like credentials (input_tokens, max_tokens).
-const TELEMETRY_TOKEN_PREFIXES = ["input", "output", "prompt", "completion", "cache", "max", "total"];
+const TELEMETRY_TOKEN_PREFIXES = [
+  "input", "output", "prompt", "completion", "reasoning", "cache", "cumulative", "max", "total",
+];
 // Database and map key names, not credentials (sort_key, partition_key, public_key).
 const NON_CREDENTIAL_KEY_PREFIXES = ["sort", "cache", "public", "primary", "partition", "routing", "foreign"];
 const COMPOUND_KEY_PREFIX =

@@ -592,6 +592,12 @@ describe("fleet schema v1 contract", () => {
         "http://ml1/metrics?filter=%7B%22primary_key%22%3A%20%22item_1%22%7D",
         "http://ml1/metrics?filter=%7B%22foreign_key%22%3A%20%22parent_1%22%7D",
         "http://ml1/metrics?filter=%7B%22routing_key%22%3A%20%22events%22%7D",
+        "http://ml1/v1/usage/reasoning_tokens/2026-09",
+        'http://ml1/metrics?f={"reasoning_tokens":"high"}',
+        'http://ml1/metrics?f={"reasoningTokens":"auto"}',
+        'http://ml1/metrics?f={"cumulative_tokens":"n/a"}',
+        "http://ml1/metrics?group=token:sum",
+        "http://ml1/metrics?group=reasoning_tokens:avg",
       ])("accepts a telemetry locator without a credential value in %s", (locator) => {
         expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);
       });
