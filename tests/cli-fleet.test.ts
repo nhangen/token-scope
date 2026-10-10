@@ -557,7 +557,7 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     expect(report.sources).toContainEqual({
       source: "provider-claude",
       state: "partial",
-      reason: "1 event(s) rejected by fleet contract",
+      reason: "1 event(s) rejected by fleet contract: usage.input_tokens must be a non-negative integer or null",
     });
   });
 

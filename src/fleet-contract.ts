@@ -148,7 +148,7 @@ function assertPrivacyBoundary(value: unknown): void {
 
 function stringValue(value: unknown, name: string): string {
   if (typeof value !== "string" || value.length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
+    throw new FleetValueError(`${name} must be a non-empty string`);
   }
   return value;
 }
@@ -161,12 +161,12 @@ function nullableString(value: unknown, name: string): string | null {
 function timestampValue(value: unknown, name: string): string {
   const timestamp = stringValue(value, name);
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(timestamp)) {
-    throw new Error(`${name} must be an RFC 3339 UTC timestamp`);
+    throw new FleetValueError(`${name} must be an RFC 3339 UTC timestamp`);
   }
   const milliseconds = Date.parse(timestamp);
   const canonical = timestamp.includes(".") ? timestamp : timestamp.replace("Z", ".000Z");
   if (Number.isNaN(milliseconds) || new Date(milliseconds).toISOString() !== canonical) {
-    throw new Error(`${name} must be a valid timestamp`);
+    throw new FleetValueError(`${name} must be a valid timestamp`);
   }
   return timestamp;
 }
@@ -178,7 +178,7 @@ export function canonicalFleetTimestamp(value: unknown, name: string): string {
 function nullableMeasurement(value: unknown, name: string): number | null {
   if (value === null) return null;
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    throw new Error(`${name} must be a non-negative number or null`);
+    throw new FleetValueError(`${name} must be a non-negative number or null`);
   }
   return value;
 }
@@ -186,7 +186,7 @@ function nullableMeasurement(value: unknown, name: string): number | null {
 function nullableInteger(value: unknown, name: string): number | null {
   if (value === null) return null;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`${name} must be a non-negative integer or null`);
+    throw new FleetValueError(`${name} must be a non-negative integer or null`);
   }
   return value;
 }
@@ -358,6 +358,9 @@ export function hasUserinfo(locator: string): boolean {
 }
 
 export class PrivacyError extends Error {}
+
+/** An input value outside the contract, as opposed to a malformed record shape. */
+export class FleetValueError extends Error {}
 
 // Header-style "name: value" and spaced "name = value" pairs are not locator
 // params, so they get their own pass over the fleet contract's credential names.

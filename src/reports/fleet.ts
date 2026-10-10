@@ -10,6 +10,7 @@ import {
 } from "@/fleet/olla";
 import {
   FLEET_SCHEMA_VERSION,
+  FleetValueError,
   PrivacyError,
   assertSafeLabelValue,
   classifySnapshotFreshness,
@@ -256,14 +257,19 @@ function routeFor(
   return { state: "matched", snapshot: joined.snapshot };
 }
 
-function isContractRejection(error: unknown): boolean {
-  return error instanceof PrivacyError || (error instanceof Error && error.constructor === Error);
+interface ContractRejections {
+  count: number;
+  firstReason: string;
 }
 
-function sourceStates(collections: FleetCollections, rejected: Map<string, number>): FleetSourceState[] {
+function sourceStates(collections: FleetCollections, rejected: Map<string, ContractRejections>): FleetSourceState[] {
   const states: FleetSourceState[] = [];
-  for (const [source, count] of rejected) {
-    states.push({ source: `provider-${source}`, state: "partial", reason: `${count} event(s) rejected by fleet contract` });
+  for (const [source, { count, firstReason }] of rejected) {
+    states.push({
+      source: `provider-${source}`,
+      state: "partial",
+      reason: `${count} event(s) rejected by fleet contract: ${firstReason}`,
+    });
   }
   for (const source of collections.providers.unavailable) {
     states.push({ source: `provider-${source}`, state: "unavailable", reason: "unreadable" });
@@ -303,7 +309,7 @@ export function fleetReportJson(
     promptOriginHost: string | null;
   },
 ): FleetReportJson {
-  const rejected = new Map<string, number>();
+  const rejected = new Map<string, ContractRejections>();
   const rows = collections.providers.events
     .filter((event) => {
       const timestamp = tsMs(event);
@@ -314,8 +320,12 @@ export function fleetReportJson(
       try {
         usage = usageRecord(event, options.collectedAt, options.promptOriginHost);
       } catch (error) {
-        if (!isContractRejection(error)) throw error;
-        rejected.set(event.harness, (rejected.get(event.harness) ?? 0) + 1);
+        if (!(error instanceof FleetValueError || error instanceof PrivacyError)) throw error;
+        const prior = rejected.get(event.harness);
+        rejected.set(event.harness, {
+          count: (prior?.count ?? 0) + 1,
+          firstReason: prior?.firstReason ?? (error instanceof PrivacyError ? "privacy" : error.message),
+        });
         return [];
       }
       const placement = placementFor(usage, collections.orca);
@@ -441,6 +451,7 @@ function observedRoutesFromProviders(providers: Collected): OllaRouteObservation
 // so what reaches the caller is configuration, privacy, or a bug.
 function ollaFailureReason(error: unknown): string {
   if (error instanceof PrivacyError) return "privacy";
+  if (error instanceof FleetValueError) return `invalid value: ${error.message}`;
   if (error instanceof Error && error.constructor === Error) return `invalid configuration: ${error.message}`;
   return `collection failed: ${error instanceof Error ? error.name : "unknown error"}`;
 }
