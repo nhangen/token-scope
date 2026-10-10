@@ -591,4 +591,11 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     const report = JSON.parse(result.out);
     expect(report.sources.some((source: any) => source.source === "olla-routes")).toBe(false);
   });
+  it("names a misconfigured Olla URL instead of reporting a collection failure", async () => {
+    const result = await runFleet({ ollaUrl: "127.0.0.1:1234" });
+    expect(result.code).toBe(0);
+    const olla = JSON.parse(result.out).sources.find((source: any) => source.source === "olla");
+    expect(olla.state).toBe("unavailable");
+    expect(olla.reason).toStartWith("invalid configuration");
+  });
 });

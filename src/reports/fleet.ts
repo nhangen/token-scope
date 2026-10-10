@@ -437,6 +437,14 @@ function observedRoutesFromProviders(providers: Collected): OllaRouteObservation
       : []);
 }
 
+// collectOllaTelemetry turns network and HTTP faults into per-path source states,
+// so what reaches the caller is configuration, privacy, or a bug.
+function ollaFailureReason(error: unknown): string {
+  if (error instanceof PrivacyError) return "privacy";
+  if (error instanceof Error && error.constructor === Error) return `invalid configuration: ${error.message}`;
+  return `collection failed: ${error instanceof Error ? error.name : "unknown error"}`;
+}
+
 export async function collectFleetReport(options: {
   window: string;
   sinceMs: number;
@@ -476,7 +484,7 @@ export async function collectFleetReport(options: {
       ollaState = {
         source: "olla",
         state: "unavailable",
-        reason: "collection failed",
+        reason: ollaFailureReason(error),
       };
     }
   }
