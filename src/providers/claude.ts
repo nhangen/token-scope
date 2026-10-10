@@ -16,7 +16,7 @@
  */
 import { readFileSync, readdirSync, existsSync, statSync } from "fs";
 import { join } from "path";
-import { providerIdRejected, qualifiedProviderId, stableId, type ProviderEvent } from "./types";
+import { providerIdRejected, qualifiedProviderId, stableId, type PartialReason, type ProviderEvent } from "./types";
 
 interface ClaudeUsage {
   input_tokens?: number;
@@ -46,6 +46,7 @@ export function claudeEventsFromTranscript(
     } catch {
       continue; // torn tail line: skip, never fabricate
     }
+    if (rec === null || typeof rec !== "object") continue;
     index += 1;
     if (rec.type !== "assistant") continue;
     const msg = rec.message ?? {};
@@ -116,11 +117,12 @@ function walkJsonl(dir: string, out: string[], sinceMs?: number): void {
 export function claudeEvents(
   root: string,
   sinceMs?: number,
-): { events: ProviderEvent[]; skipped: number } {
+): { events: ProviderEvent[]; skipped: number; reasons: PartialReason[] } {
   const projectsDir = join(root, "projects");
-  if (!existsSync(projectsDir)) return { events: [], skipped: 0 };
+  if (!existsSync(projectsDir)) return { events: [], skipped: 0, reasons: [] };
   const out: ProviderEvent[] = [];
   let skipped = 0;
+  const reasons = new Set<PartialReason>();
   for (const proj of readdirSync(projectsDir)) {
     const dir = join(projectsDir, proj);
     // Stray files (.DS_Store) live alongside project dirs; stat, don't assume.
@@ -134,12 +136,21 @@ export function claudeEvents(
     const files: string[] = [];
     walkJsonl(dir, files, sinceMs);
     for (const p of files) {
+      let text: string;
       try {
-        out.push(...claudeEventsFromTranscript(readFileSync(p, "utf8"), p));
+        text = readFileSync(p, "utf8");
       } catch {
         skipped += 1; // unreadable file: volume unknown, surfaced not swallowed
+        reasons.add("unreadable");
+        continue;
+      }
+      try {
+        out.push(...claudeEventsFromTranscript(text, p));
+      } catch {
+        skipped += 1;
+        reasons.add("malformed");
       }
     }
   }
-  return { events: out, skipped };
+  return { events: out, skipped, reasons: [...reasons].sort() };
 }

@@ -16,8 +16,8 @@ import { codexEvents } from "./codex";
 import { opencodeEvents } from "./opencode";
 import { geminiCliEvents, UNSUPPORTED_GOOGLE_SURFACES } from "./gemini-cli";
 import { ollamaRouteEvents } from "./ollama-route";
-import type { ProviderEvent } from "./types";
-export type { ProviderEvent } from "./types";
+import type { PartialReason, ProviderEvent } from "./types";
+export type { PartialReason, ProviderEvent } from "./types";
 
 export interface Collected {
   events: ProviderEvent[];
@@ -26,6 +26,12 @@ export interface Collected {
   /** Sources read partially: affected files by harness. Partial volume must
    * not masquerade as complete (#38 panel). */
   partial: Record<string, number>;
+  /** Why each partially-read source is partial, by harness (#125).
+   * Distinct from the count in `partial` — a file that was unreadable
+   * is a different cause than one whose records are incomplete. Optional
+   * so callers that only consume `partial` do not need to know the
+   * cause. Populated by `collectProviderEvents`. */
+  partialReasons?: Record<string, PartialReason[]>;
   /** Source surfaces intentionally not ingested by this version. */
   unsupported?: string[];
 }
@@ -52,6 +58,10 @@ export function collectProviderEvents(opts?: {
 }): Collected {
   const unavailable: string[] = [];
   const partial: Record<string, number> = {};
+  const partialReasons: Record<string, PartialReason[]> = {};
+  const addReason = (h: string, r: PartialReason): void => {
+    (partialReasons[h] ??= []).push(r);
+  };
   const claudeRoot =
     opts?.claudeRoot ?? process.env.TOKEN_SCOPE_CLAUDE_ROOT ?? join(homedir(), ".claude");
   const ledgerPath = opts?.ledgerPath ?? process.env.TOKEN_SCOPE_LEDGER;
@@ -69,7 +79,10 @@ export function collectProviderEvents(opts?: {
   try {
     const c = claudeEvents(claudeRoot, sinceMs);
     events.push(...c.events);
-    if (c.skipped > 0) partial["claude"] = c.skipped;
+    if (c.skipped > 0) {
+      partial["claude"] = c.skipped;
+      for (const r of c.reasons) addReason("claude", r);
+    }
   } catch {
     unavailable.push("claude");
   }
@@ -89,6 +102,7 @@ export function collectProviderEvents(opts?: {
       const raw = readFileSync(resolved, "utf8");
       if (raw.split("\n").some((l) => l.trim())) {
         partial["ollama-claude"] = raw.split("\n").filter((l) => l.trim()).length;
+        addReason("ollama-claude", "corrupt_store");
       }
     }
   } catch {
@@ -97,7 +111,10 @@ export function collectProviderEvents(opts?: {
   try {
     const cx = codexEvents(codexHome, sinceMs);
     events.push(...cx.events);
-    if (cx.skipped > 0) partial["codex"] = cx.skipped;
+    if (cx.skipped > 0) {
+      partial["codex"] = cx.skipped;
+      for (const r of cx.reasons) addReason("codex", r);
+    }
   } catch {
     unavailable.push("codex");
   }
@@ -115,6 +132,7 @@ export function collectProviderEvents(opts?: {
     if (gemini.source.state === "unavailable") unavailable.push("gemini-cli");
     if (gemini.source.state === "partial") {
       partial["gemini-cli"] = gemini.affectedFiles;
+      for (const r of gemini.reasons) addReason("gemini-cli", r);
     }
   } catch {
     unavailable.push("gemini-cli");
@@ -131,6 +149,7 @@ export function collectProviderEvents(opts?: {
     events: dedupeEvents(events),
     unavailable,
     partial,
+    partialReasons,
     unsupported: [...UNSUPPORTED_GOOGLE_SURFACES],
   };
 }
