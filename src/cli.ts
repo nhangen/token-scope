@@ -140,7 +140,7 @@ EXAMPLES
   token-scope --thinking --since 90d
   token-scope --sessions --limit 50
   token-scope --source sqlite
-  token-scope --projects-dir ~/.claude/projects --projects-dir ~/Library/Application\ Support/Claude/projects
+  token-scope --projects-dir ~/.claude/projects --projects-dir ~/Library/Application\\ Support/Claude/projects
 `.trim();
 
 interface CliArgs {
