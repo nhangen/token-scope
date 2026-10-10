@@ -563,6 +563,9 @@ describe("fleet schema v1 contract", () => {
         "/Users/n/.claude/projects/-Users-n-code-design-tokens/0b1c2d.jsonl",
         "C:\\Users\\n\\code\\design-tokens\\run.jsonl",
         "file:///home/n/code/my-secrets/run.jsonl",
+        "/workspaces/app/design-tokens/run.jsonl",
+        "/github/workspace/design-tokens/run.jsonl",
+        "/builds/n/my-secrets/run.jsonl",
       ])("accepts a file locator under a project directory named like a credential: %s", (locator) => {
         expect(parseFleetRecord(withLocator(locator)).provenance.locator).toBe(locator);
       });
