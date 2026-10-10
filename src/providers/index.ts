@@ -142,7 +142,10 @@ export function collectProviderEvents(opts?: {
     const route = ollamaRouteEvents(ollamaRoutingTelemetry, sinceMs);
     events.push(...route.events);
     if (route.readError !== null) unavailable.push("ollama-route");
-    if (route.skippedLines > 0) partial["ollama-route"] = route.skippedLines;
+    if (route.skippedLines > 0) {
+      partial["ollama-route"] = route.skippedLines;
+      addReason("ollama-route", "malformed");
+    }
   }
 
   return {
