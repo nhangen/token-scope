@@ -6,7 +6,7 @@
  * db primary-key id outranks any JSON-internal fallback).
  */
 import { Database } from "bun:sqlite";
-import { qualifiedProviderId, stableId, type ProviderEvent } from "./types";
+import { providerIdRejected, qualifiedProviderId, stableId, type ProviderEvent } from "./types";
 
 export function opencodeEventsFromDb(
   db: Database,
@@ -39,6 +39,8 @@ export function opencodeEventsFromDb(
     const cost = typeof rec.cost === "number" ? rec.cost : null;
     const requestId = qualifiedProviderId("opencode", String(row.row_id));
     const sessionId = qualifiedProviderId("opencode", row.session_id);
+    const redacted = providerIdRejected(String(row.row_id), requestId)
+      || providerIdRejected(row.session_id, sessionId);
     const totalLatencyMs =
       typeof rec.time?.created === "number" && typeof rec.time?.completed === "number"
         && rec.time.completed >= rec.time.created
@@ -55,6 +57,7 @@ export function opencodeEventsFromDb(
       model: rec.modelID ?? "unknown",
       ts: rec.time?.created ? new Date(rec.time.created).toISOString() : null,
       status: errored ? "error" : "ok",
+      partial: redacted ? ["privacy-redaction"] : undefined,
       retryOf: null,
       inputTokens: t.input ?? null,
       outputTokens: t.output ?? null,

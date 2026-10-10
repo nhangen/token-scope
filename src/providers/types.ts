@@ -91,6 +91,10 @@ export function qualifiedProviderId(namespace: string, value: unknown): string |
   }
 }
 
+export function providerIdRejected(raw: unknown, qualified: string | null): boolean {
+  return typeof raw === "string" && raw.length > 0 && qualified === null;
+}
+
 export function privateSafeEventId(
   namespace: string,
   ...parts: Array<string | number | null | undefined>

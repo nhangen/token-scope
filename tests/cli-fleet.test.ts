@@ -558,4 +558,13 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
       reason: "1 event(s) rejected by fleet contract",
     });
   });
+  it("marks a credential-shaped provider request id partial", async () => {
+    const secret = `ghp_${"a".repeat(36)}`;
+    const line = { ...claudeLine, message: { ...claudeLine.message, id: secret } };
+    const result = await runFleet({ claudeRoot: claudeRootWith("project-a", line) });
+    expect(result.code).toBe(0);
+    expect(result.out).not.toContain(secret);
+    const claude = JSON.parse(result.out).rows.find((row: any) => row.harness === "claude");
+    expect(claude).toMatchObject({ request_id: null, status: "incomplete" });
+  });
 });

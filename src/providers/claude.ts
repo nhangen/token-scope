@@ -16,7 +16,7 @@
  */
 import { readFileSync, readdirSync, existsSync, statSync } from "fs";
 import { join } from "path";
-import { qualifiedProviderId, stableId, type ProviderEvent } from "./types";
+import { providerIdRejected, qualifiedProviderId, stableId, type ProviderEvent } from "./types";
 
 interface ClaudeUsage {
   input_tokens?: number;
@@ -61,6 +61,7 @@ export function claudeEventsFromTranscript(
     const subscription = isAnthropicModel(model);
     const requestId = qualifiedProviderId("claude", messageId);
     const sessionId = qualifiedProviderId("claude", rec.sessionId);
+    const redacted = providerIdRejected(messageId, requestId) || providerIdRejected(rec.sessionId, sessionId);
     events.push({
       eventId: stableId("claude", provenance, index),
       harness: "claude",
@@ -69,6 +70,7 @@ export function claudeEventsFromTranscript(
       model,
       ts: rec.timestamp ?? null,
       status: "ok",
+      partial: redacted ? ["privacy-redaction"] : undefined,
       retryOf: null,
       inputTokens: usage.input_tokens ?? null,
       outputTokens: usage.output_tokens ?? null,
