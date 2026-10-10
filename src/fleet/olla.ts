@@ -668,6 +668,7 @@ function counterName(metric: string, prefix: string): string {
 }
 
 class MetricCollisionError extends Error {}
+class OllaInfoError extends Error {}
 
 // Upstream Olla emits olla_info with exactly these labels; version and commit are build identity, not routing, and are not retained.
 const OLLA_INFO_LABELS = new Set(["version", "commit", "engine", "profile", "balancer"]);
@@ -733,14 +734,10 @@ function buildMetrics(source: LoadedSource, context: AdapterContext): void {
   for (const sample of samples) {
     if (sample.name === "olla_info") {
       if (sample.value !== 1) {
-        throw new Error("olla_info must be 1");
+        throw new OllaInfoError("olla_info must be 1");
       }
-      const unknownLabels = Object.entries(sample.labels)
-        .filter(([key]) => !OLLA_INFO_LABELS.has(key))
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key]) => key);
-      if (unknownLabels.length > 0) {
-        throw new Error(`unknown olla_info labels: ${unknownLabels.join(", ")}`);
+      if (Object.keys(sample.labels).some((key) => !OLLA_INFO_LABELS.has(key))) {
+        throw new OllaInfoError("unexpected olla_info label");
       }
       const entry = group("system", "metrics", context.routerHost, null, null);
       setCounter(entry.counters, "info", 1);
