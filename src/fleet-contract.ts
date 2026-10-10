@@ -524,6 +524,11 @@ function isCredentialPathWord(segment: string, norm: string): boolean {
 
 const SLACK_WEBHOOK_PATH = /(?:^|\/)services(?:;[^/]*)?\/T[0-9A-Z]+(?:;[^/]*)?\/B[0-9A-Z]+(?:;[^/]*)?\/[^/?#\s]+/i;
 
+// After token/<qualifier>, the rest of a telemetry path is words, counts,
+// durations, and dates (/tokens/usage/daily, /token/count/5m); anything else
+// may be the value the path was built to carry.
+const TELEMETRY_PATH_TAIL = /^(?:[a-z]+|\d+(?:\.\d+)?|\d+[smhdw]|\d{4}-\d{2}(?:-\d{2})?)$/;
+
 function hasPositionalCredential(decoded: string): boolean {
   const normalized = decoded.replaceAll("\\", "/");
   const [pathPart = ""] = normalized.split(/[?#]/, 1);
@@ -548,15 +553,8 @@ function hasPositionalCredential(decoded: string): boolean {
         const nextSegment = (nextRaw ? nextRaw.split(";")[0]?.trim().toLowerCase() : "") ?? "";
         if (norm === "token" || norm === "tokens") {
           if (TOKEN_TELEMETRY_QUALIFIERS.has(nextSegment)) {
-            let hasNonTelemetryDownstream = false;
-            for (let k = i + 2; k < rawSegments.length; k++) {
-              const downstreamSeg = (rawSegments[k] ? rawSegments[k]!.split(";")[0]?.trim().toLowerCase() : "") ?? "";
-              if (downstreamSeg && !TOKEN_TELEMETRY_QUALIFIERS.has(downstreamSeg) && !/^\d+(?:\.\d+)?$/.test(downstreamSeg)) {
-                hasNonTelemetryDownstream = true;
-                break;
-              }
-            }
-            if (hasNonTelemetryDownstream) return true;
+            const tail = rawSegments.slice(i + 2).map((raw) => raw.split(";")[0]?.trim() ?? "");
+            if (tail.some((seg) => seg !== "" && !TELEMETRY_PATH_TAIL.test(seg))) return true;
             continue;
           }
         }
