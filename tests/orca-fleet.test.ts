@@ -1,10 +1,14 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { parseFleetRecord } from "@/fleet-contract";
+import * as fleetContract from "@/fleet-contract";
+import { PrivacyError, parseFleetRecord } from "@/fleet-contract";
 import {
   ORCA_READ_ONLY_COMMANDS,
+  ORCA_COMMAND_TIMEOUT_MS,
+  OrcaInvariantError,
   collectOrcaPlacement,
+  defaultRunner,
   type OrcaCommandResult,
   type OrcaCommandRunner,
 } from "@/fleet/orca";
@@ -154,6 +158,143 @@ describe("Orca fleet placement adapter", () => {
     expect(mutationError).toBeInstanceOf(TypeError);
     expect(calls).toEqual(ORCA_READ_ONLY_COMMANDS.map((args) => [...args]));
     expect(calls[0]).toEqual(["status", "--json"]);
+  });
+
+  it("classifies an ok:false envelope as a command failure, not malformed data", async () => {
+    const source = fixture("local.json");
+    const collected = await collectOrcaPlacement({
+      collectedAt: COLLECTED_AT,
+      runner: fixtureRunner(source, {
+        "worktree ps --json": {
+          exitCode: 0,
+          stdout: JSON.stringify({ id: "wt", ok: false, error: "runtime error" }),
+          stderr: "",
+        },
+      }).runner,
+    });
+
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      command: "orca worktree ps --json",
+      state: "unavailable",
+      reason: "command_failed",
+      provenance: expect.objectContaining({ completeness: "unavailable" }),
+    }));
+  });
+
+  it("reports an envelope without a boolean ok as malformed data, not a command failure", async () => {
+    const source = fixture("local.json");
+    const collected = await collectOrcaPlacement({
+      collectedAt: COLLECTED_AT,
+      runner: fixtureRunner(source, {
+        "worktree ps --json": {
+          exitCode: 0,
+          stdout: JSON.stringify({ id: "wt", ok: "true", result: source.worktrees.result }),
+          stderr: "",
+        },
+      }).runner,
+    });
+
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      command: "orca worktree ps --json",
+      state: "partial",
+      reason: "malformed",
+    }));
+  });
+
+  it("still reports an unparsable exit-0 payload as malformed", async () => {
+    const source = fixture("local.json");
+    const collected = await collectOrcaPlacement({
+      collectedAt: COLLECTED_AT,
+      runner: fixtureRunner(source, {
+        "terminal list --json": { exitCode: 0, stdout: "not json", stderr: "" },
+      }).runner,
+    });
+
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      command: "orca terminal list --json",
+      state: "partial",
+      reason: "malformed",
+      provenance: expect.objectContaining({ completeness: "partial" }),
+    }));
+  });
+
+  it("marks an unknown host kind partial instead of silently dropping it", async () => {
+    const source = fixture("local.json");
+    source.hosts.result.hosts.push({ kind: "bogus", name: "x", id: "bogus-1" });
+    const collected = await collectOrcaPlacement({
+      collectedAt: COLLECTED_AT,
+      runner: fixtureRunner(source).runner,
+    });
+
+    expect(Object.keys(collected.hosts)).not.toContain("orca:bogus:bogus-1");
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      command: "orca host list --json",
+      state: "partial",
+      reason: "partial_records",
+      provenance: expect.objectContaining({ completeness: "partial" }),
+    }));
+  });
+
+  it("marks a non-array worktree agents field partial instead of silently dropping it", async () => {
+    const source = fixture("local.json");
+    source.worktrees.result.worktrees[0].agents = "not-an-array";
+    const collected = await collectOrcaPlacement({
+      collectedAt: COLLECTED_AT,
+      runner: fixtureRunner(source).runner,
+    });
+
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      command: "orca worktree ps --json",
+      state: "partial",
+      reason: "partial_records",
+      provenance: expect.objectContaining({ completeness: "partial" }),
+    }));
+  });
+
+  it("propagates a contract rejection of an adapter-built record instead of reporting partial data", async () => {
+    const source = fixture("local.json");
+    const spy = spyOn(fleetContract, "parseFleetRecord").mockImplementationOnce(() => {
+      throw new Error("snapshot window must be non-empty");
+    });
+    try {
+      const collecting = collectOrcaPlacement({
+        collectedAt: COLLECTED_AT,
+        runner: fixtureRunner(source).runner,
+      });
+      await expect(collecting).rejects.toBeInstanceOf(OrcaInvariantError);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("keeps a privacy rejection of an adapter-built record as a partial privacy fault", async () => {
+    const source = fixture("local.json");
+    const spy = spyOn(fleetContract, "parseFleetRecord").mockImplementationOnce(() => {
+      throw new PrivacyError("execution_host looks like a path");
+    });
+    try {
+      const collected = await collectOrcaPlacement({
+        collectedAt: COLLECTED_AT,
+        runner: fixtureRunner(source).runner,
+      });
+      expect(collected.sources).toContainEqual(expect.objectContaining({
+        command: "orca terminal list --json",
+        state: "partial",
+        reason: "privacy",
+      }));
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("kills a stalled process with the default runner and returns its result", async () => {
+    const started = Date.now();
+    const result = await defaultRunner("/bin/sleep", ["60"], 200);
+    const elapsed = Date.now() - started;
+
+    expect(result.exitCode).not.toBe(0);
+    expect(elapsed).toBeLessThan(5_000);
+    expect(elapsed).toBeGreaterThanOrEqual(150);
   });
 
   it("does not let callers replace the Orca executable", async () => {
