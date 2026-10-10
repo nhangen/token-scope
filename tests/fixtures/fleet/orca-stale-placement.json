@@ -1,0 +1,22 @@
+{
+  "status": { "ok": true, "result": { "runtime": { "state": "ready", "reachable": true, "runtimeId": "runtime-fixture", "appVersion": "1.4.162" } } },
+  "hosts": { "ok": true, "result": { "hosts": [
+    { "kind": "ssh", "name": "gpu box", "id": "gpu-box", "platform": "linux", "connected": true }
+  ] } },
+  "worktrees": { "ok": true, "result": {
+    "worktrees": [
+      { "worktreeId": "repo-claude", "hostId": "ssh:gpu-box", "agents": [{ "paneKey": "tab-claude:leaf-claude", "agentType": "claude" }] }
+    ],
+    "totalCount": 1,
+    "truncated": false,
+    "hostScope": { "hostIds": ["ssh:gpu-box"], "omittedHostIds": [] }
+  } },
+  "terminals": { "ok": true, "result": {
+    "terminals": [
+      { "handle": "term-claude", "worktreeId": "repo-claude", "tabId": "tab-claude", "leafId": "leaf-claude", "executionHostId": "ssh:gpu-box", "requestId": "claude:claude-request" }
+    ],
+    "totalCount": 1,
+    "truncated": false,
+    "hostScope": { "hostIds": ["ssh:gpu-box"], "omittedHostIds": [] }
+  } }
+}

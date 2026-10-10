@@ -6,7 +6,7 @@
  * db primary-key id outranks any JSON-internal fallback).
  */
 import { Database } from "bun:sqlite";
-import { stableId, type ProviderEvent } from "./types";
+import { providerIdRejected, qualifiedProviderId, stableId, type ProviderEvent } from "./types";
 
 export function opencodeEventsFromDb(
   db: Database,
@@ -37,6 +37,15 @@ export function opencodeEventsFromDb(
     const errored =
       rec.error !== null && rec.error !== undefined && rec.error !== "";
     const cost = typeof rec.cost === "number" ? rec.cost : null;
+    const requestId = qualifiedProviderId("opencode", String(row.row_id));
+    const sessionId = qualifiedProviderId("opencode", row.session_id);
+    const redacted = providerIdRejected(String(row.row_id), requestId)
+      || providerIdRejected(row.session_id, sessionId);
+    const totalLatencyMs =
+      typeof rec.time?.created === "number" && typeof rec.time?.completed === "number"
+        && rec.time.completed >= rec.time.created
+        ? rec.time.completed - rec.time.created
+        : null;
     out.push({
       // The database primary key is authoritative (#41): two rows sharing a
       // JSON-internal id must stay distinct events, exactly the hazard the
@@ -48,6 +57,7 @@ export function opencodeEventsFromDb(
       model: typeof rec.modelID === "string" && rec.modelID ? rec.modelID : "unknown",
       ts: rec.time?.created ? new Date(rec.time.created).toISOString() : null,
       status: errored ? "error" : "ok",
+      partial: redacted ? ["privacy-redaction"] : undefined,
       retryOf: null,
       inputTokens: t.input ?? null,
       outputTokens: t.output ?? null,
@@ -56,6 +66,10 @@ export function opencodeEventsFromDb(
       reasoningTokens: t.reasoning ?? null,
       cashChargeUsd: cost,
       provenance: "opencode.db",
+      requestId,
+      runId: null,
+      sessionId,
+      totalLatencyMs,
     });
   }
   return out;

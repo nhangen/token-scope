@@ -187,6 +187,19 @@ describe("partialReasons names each harness's cause", () => {
     }
   });
 
+  it("ollama-route: skipped telemetry lines are malformed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "token-scope-route-malformed-"));
+    try {
+      const telemetry = join(dir, "routing.jsonl");
+      writeFileSync(telemetry, "not-json\n");
+      const collected = collect({ ollamaRoutingTelemetry: telemetry });
+      expect(collected.partial["ollama-route"]).toBe(1);
+      expect(collected.partialReasons?.["ollama-route"]).toEqual(["malformed"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("ollama: a ledger with content but no parseable runs is corrupt_store", () => {
     const dir = mkdtempSync(join(tmpdir(), "token-scope-ledger-corrupt-"));
     try {

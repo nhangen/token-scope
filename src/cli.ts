@@ -9,6 +9,7 @@ import { VERSION } from "@/version";
 import { parseCap } from "@/parse";
 import { collectProviderEvents } from "@/providers";
 import { renderProviderReport, providerRows, providerReportJson, untimedExcluded } from "@/reports/providers";
+import { canonicalFleetTimestamp } from "@/fleet-contract";
 
 const ARTIFACT_FORMAT_SET = new Set<string>(KNOWN_ARTIFACT_FORMATS);
 const ARTIFACT_MODES = new Set(["artifacts", "artifact-show", "artifact-compare"]);
@@ -66,6 +67,8 @@ REPORT MODES (mutually exclusive)
   --artifact-show <path>  Per-edit lifecycle for one artifact (full path, not fragment)
   --artifact-compare <md> MD vs sibling HTML cost (looks for &lt;dir&gt;/artifacts/&lt;slug&gt;.html)
   --providers             Cross-harness provider usage by model and token class
+  --fleet                 Per-run provider usage joined with Orca placement and
+                          optional Olla route telemetry (pairs with --since/--json)
   --codex-experiment <manifest.json>
                           Compare persisted Codex root-task experiments and their
                           transitive descendants
@@ -123,6 +126,11 @@ ENVIRONMENT
   TOKEN_SCOPE_DB           Override SQLite database path
   TOKEN_SCOPE_PROJECTS_DIR Colon-separated JSONL project dirs (auto-detects if unset)
   TOKEN_SCOPE_PRICING_FILE Override pricing constants JSON file
+  TOKEN_SCOPE_PROMPT_ORIGIN_HOST Explicit origin label for --fleet; unset stays null
+  TOKEN_SCOPE_OLLA_URL     Olla base URL for --fleet telemetry
+  TOKEN_SCOPE_OLLA_ROUTES  JSON file of exact request/run-to-endpoint observations
+  TOKEN_SCOPE_OLLAMA_ROUTING_TELEMETRY Route telemetry JSONL (default $XDG_STATE_HOME/ollama-agent/routing.jsonl)
+  TOKEN_SCOPE_FLEET_COLLECTED_AT Reproducible collection timestamp override
   NO_COLOR                 Disable ANSI color output
 
 EXAMPLES
@@ -137,7 +145,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop" | "artifacts" | "artifact-show" | "artifact-compare" | "spend" | "savings" | "credits" | "providers" | "codex-experiment";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop" | "artifacts" | "artifact-show" | "artifact-compare" | "spend" | "savings" | "credits" | "providers" | "codex-experiment" | "fleet";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -213,7 +221,7 @@ export function parseArgs(argv: string[]): CliArgs {
 
   const setMode = (mode: CliArgs["mode"]) => {
     if (modeSet) {
-      process.stderr.write("Error: --tool, --project, --session, --thinking, --sessions, --context, --cache, --efficiency, --tools, --contributors, --base-load, --cache-growth, and --budget are mutually exclusive.\n");
+      process.stderr.write("Error: --tool, --project, --session, --thinking, --sessions, --context, --cache, --efficiency, --tools, --contributors, --base-load, --cache-growth, --budget, --providers, and --fleet are mutually exclusive.\n");
       process.exit(1);
     }
     args.mode = mode;
@@ -297,6 +305,7 @@ export function parseArgs(argv: string[]): CliArgs {
       case "--budget": setMode("budget"); break;
       case "--credits": setMode("credits"); break;
       case "--providers": setMode("providers"); break;
+      case "--fleet": setMode("fleet"); break;
       case "--codex-experiment":
         setMode("codex-experiment");
         args.codexExperimentManifest = flagValue(argv, ++i, "--codex-experiment", "a manifest path");
@@ -510,6 +519,20 @@ async function main() {
       }
       process.stdout.write(out + "\n");
     }
+    return;
+  }
+
+  if (args.mode === "fleet") {
+    const { collectFleetReport, renderFleetReport } = await import("@/reports/fleet");
+    const evaluationTime = process.env.TOKEN_SCOPE_FLEET_COLLECTED_AT;
+    const canonicalEvaluationTime = evaluationTime === undefined
+      ? new Date().toISOString()
+      : canonicalFleetTimestamp(evaluationTime, "TOKEN_SCOPE_FLEET_COLLECTED_AT");
+    const evaluationTimeMs = Date.parse(canonicalEvaluationTime);
+    const collectedAt = new Date(evaluationTimeMs).toISOString();
+    const sinceMs = evaluationTimeMs - parseSinceToMs(args.since);
+    const report = await collectFleetReport({ window: args.since, sinceMs, collectedAt });
+    process.stdout.write((args.json ? JSON.stringify(report) : renderFleetReport(report)) + "\n");
     return;
   }
 

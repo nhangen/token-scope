@@ -200,8 +200,10 @@ function privateSafePersistenceValue<T>(value: T): T {
 function optionalPrivateSafeLabel(value: unknown): string | null {
   const label = optionalString(value);
   if (label === null) return null;
-  const safe = privateSafeLabel(label);
-  return safe.length > 0 ? safe : null;
+  const safe = safeLabel(label);
+  if (safe.length === 0) return null;
+  assertSafeLabelValue(safe);
+  return safe;
 }
 
 function sanitizedUrl(value: unknown): { url: string | null; host: string | null } {
@@ -818,6 +820,7 @@ function sourceEndpointIds(collection: OllaTelemetryCollection): string[] {
 
 function qualifiedRequestId(value: string | undefined): string | null {
   if (value === undefined || value.length === 0) return null;
+  if (safeLabel(value).length === 0) return null;
   const id = privateSafeLabel(value);
   const unqualified = id.startsWith("olla:") ? id.slice("olla:".length) : id;
   return unqualified.length > 0 ? `olla:${unqualified}` : null;
@@ -825,6 +828,7 @@ function qualifiedRequestId(value: string | undefined): string | null {
 
 function qualifiedRunId(value: string | undefined): string | null {
   if (value === undefined) return null;
+  if (safeLabel(value).length === 0) return null;
   const id = privateSafeLabel(value);
   const separator = id.indexOf(":");
   return separator > 0 && separator < id.length - 1 ? id : null;
@@ -846,7 +850,7 @@ function normalizeObservedRoutes(routes: OllaRouteObservation[] | undefined): {
       route.model,
       route.timestamp,
     ]) {
-      if (typeof val === "string" && val.length > 0) {
+      if (typeof val === "string" && val.length > 0 && safeLabel(val).length > 0) {
         assertSafeLabelValue(val);
       }
     }
@@ -1047,16 +1051,19 @@ export function correlateOllaRoute(
   collection: OllaTelemetryCollection,
   route: OllaRouteCorrelation,
 ): OllaRouteCorrelationResult {
-  for (const val of [
-    route.requestId,
-    route.runId,
-    route.endpointId,
-    route.endpointName,
-    route.model,
-    route.timestamp,
-  ]) {
+  for (const [key, val] of [
+    ["requestId", route.requestId],
+    ["runId", route.runId],
+    ["endpointId", route.endpointId],
+    ["endpointName", route.endpointName],
+    ["model", route.model],
+    ["timestamp", route.timestamp],
+  ] as const) {
     if (typeof val === "string" && val.length > 0) {
-      assertSafeLabelValue(val);
+      const sanitized = key === "endpointId" || key === "endpointName" || key === "model" ? safeLabel(val) : val;
+      if (sanitized.length > 0) {
+        assertSafeLabelValue(sanitized);
+      }
     }
   }
 
@@ -1074,7 +1081,7 @@ export function correlateOllaRoute(
     if (runId !== null && candidate.runId !== runId) return false;
     if (endpointId !== undefined && candidate.endpointId !== endpointId) return false;
     if (endpointName !== undefined && candidate.endpointName !== endpointName) return false;
-    if (model !== undefined && candidate.model !== model) return false;
+    if (model !== undefined && candidate.model !== null && candidate.model !== model) return false;
     return true;
   });
   if (observed.length === 0) return { state: "unmatched", key: null, snapshot: null };
@@ -1117,5 +1124,5 @@ export function correlateOllaRoute(
     ])).values()];
     return { state: "ambiguous", key, snapshot: null, provenance };
   }
-  return { state: "unmatched", key: null, snapshot: null };
+  return { state: "unmatched", key, snapshot: null };
 }

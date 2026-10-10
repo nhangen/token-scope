@@ -596,11 +596,44 @@ Optional route correlation requires a request or source-qualified run ID already
 
 The adapter retains only allowlisted placement fields. A safe terminal handle is exposed only as non-join observation metadata; it is never promoted to `session_id`. Every retained string, including host IDs before they are encoded into stable IDs and the Orca version, passes the fleet contract's shared `assertSafeLabelValue` check described under the Olla adapter, so percent-encoded, fullwidth, zero-width, compound-name, header-form, userinfo, and token-shaped credentials make their source `partial/privacy`. Worktree IDs of the form `<repoId>::<absolute path>` are checked one half at a time, so a repository named like `repo-token` is not mistaken for a credential; any other shape is checked whole. The version must be semver `1.x.y` with only alphanumeric pre-release and build suffixes, and any other reported version is returned as `null` rather than echoed. Prompt text, assistant previews, tool input, terminal previews/scrollback, selectors, command stderr, credentials, and raw JSON responses are discarded. Missing CLI, unreachable runtime, non-1.x or absent Orca version, failed or malformed commands, omitted hosts, out-of-scope rows, malformed or non-canonical host IDs, mismatched row totals, truncated listings, privacy rejection, unknown host references, worktree collisions, duplicate pane identities, and records missing execution-host or agent identity are reported explicitly through source observations and partial/unavailable record status. This adapter is additive and does not change provider or Olla collection.
 
+### Fleet report (`--fleet`)
+
+```bash
+token-scope --fleet --since 24h
+token-scope --fleet --since 24h --json
+```
+
+Joins provider usage events across harnesses (Claude, Codex, OpenCode, Gemini CLI, and Ollama/ledger) with Orca agent placement snapshots and Olla routing/telemetry snapshots over the specified evaluation window.
+
+#### Join states & operational fields
+
+For each observed run, the report surfaces:
+- **Prompt origin & placement**: `prompt_origin_host` (from `TOKEN_SCOPE_PROMPT_ORIGIN_HOST`), `execution_host` (e.g. `orca:local` or `orca:ssh:<box>`), and `placement_state` (`matched`, `unmatched`, `ambiguous`, `stale`, `partial`, `unavailable`).
+- **Routing & telemetry**: `router_host`, `backend_host`, `backend`, and `route_state` (`matched`, `provider` for cloud non-local routes, `unmatched`, `ambiguous`, `stale`, `partial`, `unavailable`).
+- **Correlation identities**: `request_id`, `run_id`, and `session_id`.
+- **Accounting & metrics**: tokens (`input_tokens`, `output_tokens`), cash charge (`cash_charge_usd`, only for metered routes; subscription plans remain null without synthetic charges), TTFT, decode TPS, and total latency.
+- **Explicit measurement scopes**: Per-request measurements are labeled `scope: "request"`, while Olla snapshot aggregates are explicitly labeled `scope: "aggregate"`. Text `unknown` and JSON `null` represent unavailable data, never zero.
+- **Provenance**: Per-field audit trail identifying source, locator, collection timestamp, and completeness.
+
+#### Orca + Olla workflow example
+
+1. **Launch agents via Orca**: Orca manages execution terminals across local and remote hosts (`orca:local`, `orca:ssh:gpu-box`).
+2. **Route local inference through Olla**: Agents targeting local models dispatch requests through Olla proxy/router with telemetry enabled.
+3. **Capture routing observations**: Routes are recorded via `TOKEN_SCOPE_OLLAMA_ROUTING_TELEMETRY` (JSONL stream, default `$XDG_STATE_HOME/ollama-agent/routing.jsonl`, falling back to `~/.local/state`) or `TOKEN_SCOPE_OLLA_ROUTES` (JSON array of observed correlations, read only when `TOKEN_SCOPE_OLLA_URL` is set).
+4. **Inspect fleet operations**: Run `token-scope --fleet --since 1h` to inspect placement hosts, router endpoints, backend execution, and aggregate latency/throughput.
+
+#### Limitations
+
+- **Cloud providers**: Cloud non-local billing routes (`subscription`, `metered`, `unknown`) bypass local Olla routing and are designated with `route_state: "provider"`.
+- **Orca correlation scope**: Orca terminals lacking matching `request_id`, `run_id`, or `session_id` within the active observation window remain `unmatched` or `partial`.
+- **Clock skew & stale windows**: Snapshots older than `stale_after_ms` (or 5 minutes for Orca) transition to `stale`. TokenScope does not adjust for host clock skew.
+- **Privacy redactions**: Label values, routing parameters, or event identities matching credential patterns or control characters are redacted, marking provenance and status as `partial` without failing or leaking secrets.
+
 ### Privacy and migration
 
 Fleet records contain metadata and measured numeric telemetry only. They must not contain prompt text, terminal content or scrollback, credentials, authorization values, raw authorization headers, or arbitrary header collections. The v1 parser rejects fields with those names at any depth, and rejects a `provenance.locator` that embeds URL credentials, credential-like query parameters or named pairs, positional credential path segments (such as `/token/<secret>` or Slack-style webhook paths), or credential values (such as Bearer schemes, known token prefixes, or credentials carried inside parameter values). Token telemetry paths and names (`/tokens/usage/daily`, `reasoning_tokens`, `token_max`) pass, and in a file path under a filesystem root (`/Users`, `/home`, `~/`, a drive letter, `file:`) a plural collection directory such as `design-tokens` or `my-secrets` does not count as a positional segment, while a singular credential word such as `db_password` still does. It does not scan other string values, so adapters must keep that content out of them.
 
-This contract does not replace `ProviderEvent` or alter `--providers`. Existing adapters and nullable token/cost behavior remain unchanged. New fleet adapters should emit v1 envelopes alongside the existing provider events where both views are supported. Historical provider records must not be upgraded by guessing host, route, request, run, or session identity; unavailable fleet fields stay null. A future schema change uses a new `schema_version` and an explicit adapter rather than changing v1 interpretation in place.
+This contract does not replace `ProviderEvent`. `--providers` gains an `ollama-route` harness when route telemetry is present, and adapters mark an event `privacy-redaction` partial when a privacy check rejects its request, run, or session identity; nullable token/cost behavior is unchanged. New fleet adapters should emit v1 envelopes alongside the existing provider events where both views are supported. Historical provider records must not be upgraded by guessing host, route, request, run, or session identity; unavailable fleet fields stay null. A future schema change uses a new `schema_version` and an explicit adapter rather than changing v1 interpretation in place.
 
 ---
 

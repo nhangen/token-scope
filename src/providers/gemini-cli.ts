@@ -17,7 +17,7 @@ import {
   realpathSync,
 } from "fs";
 import { isAbsolute, join, relative, resolve, sep } from "path";
-import { stableId, type PartialReason, type ProviderEvent } from "./types";
+import { providerIdRejected, qualifiedProviderId, stableId, type PartialReason, type ProviderEvent } from "./types";
 
 export const GEMINI_CLI_SOURCE_CONTRACT = Object.freeze({
   surface: "gemini-cli-session-jsonl",
@@ -220,6 +220,11 @@ export function geminiCliEventsFromTranscript(
       ? message.timestamp
       : null;
     if (model === null || timestamp === null) partial.push("response_attribution");
+    const requestId = qualifiedProviderId("gemini-cli", messageId);
+    const qualifiedSessionId = qualifiedProviderId("gemini-cli", sessionId);
+    if (providerIdRejected(messageId, requestId) || providerIdRejected(sessionId, qualifiedSessionId)) {
+      partial.push("privacy-redaction");
+    }
     if (partial.length > 0) partialRecords += 1;
 
     events.push({
@@ -240,6 +245,9 @@ export function geminiCliEventsFromTranscript(
       provenance,
       malformed,
       partial,
+      requestId,
+      runId: null,
+      sessionId: qualifiedSessionId,
     });
   }
 

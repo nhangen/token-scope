@@ -12,7 +12,7 @@
  */
 import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
-import { stableId, type PartialReason, type ProviderEvent } from "./types";
+import { providerIdRejected, qualifiedProviderId, stableId, type PartialReason, type ProviderEvent } from "./types";
 
 interface CodexTotals {
   input_tokens?: unknown;
@@ -267,6 +267,7 @@ function parseRollout(text: string, provenance: string): ParsedRollout {
     if (repeatedSnapshot && usage.malformed.length === 0) continue;
     if (!hasUsage(raw, usage)) continue;
 
+    const sessionId = qualifiedProviderId("codex", meta?.id);
     const event: ProviderEvent = {
       eventId: stableId("codex", provenance, recordKey),
       harness: "codex",
@@ -290,8 +291,12 @@ function parseRollout(text: string, provenance: string): ParsedRollout {
         ...usage.partial,
         ...(hasLastUsage && cumulativeKey === null ? ["cumulative_token_usage"] : []),
         ...(!hasLastUsage || model === null || effort === null ? ["response_attribution"] : []),
+        ...(providerIdRejected(meta?.id, sessionId) ? ["privacy-redaction"] : []),
       ])].sort(),
       usageSource: hasLastUsage ? "response" : "legacy-cumulative",
+      requestId: null,
+      runId: null,
+      sessionId,
     };
     eventUsageKeys.set(event, usageKey);
     if (hasLastUsage) events.push(event);
