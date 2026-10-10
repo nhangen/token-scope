@@ -382,7 +382,7 @@ export function geminiCliEvents(root: string, sinceMs?: number): GeminiCliCollec
   walk(resolvedTmpRoot, "tmp");
 
   if (reasons.has("unreadable") && files.length === 0 && unsafePaths === 0) {
-    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: affectedPaths.size, reasons: [...reasons], source: source("unavailable", "unreadable") };
+    return { events: [], skipped: 0, partialFiles: 0, affectedFiles: affectedPaths.size, reasons: [...reasons].sort(), source: source("unavailable", "unreadable") };
   }
   if (files.length === 0 && unsafePaths === 0) {
     return { events: [], skipped: 0, partialFiles: 0, affectedFiles: 0, reasons: [], source: source("available", null) };
@@ -391,15 +391,11 @@ export function geminiCliEvents(root: string, sinceMs?: number): GeminiCliCollec
   const events: ProviderEvent[] = [];
   let skipped = unsafePaths;
   let partialFiles = 0;
-  let malformed = false;
   for (const file of files.sort()) {
     let text: string | null;
     try {
       text = readRegularFile(file, sinceMs);
     } catch {
-      // Only a filesystem failure (open/fstat/readFileSync errno) reaches
-      // this branch: the parser below never throws, so a read problem can no
-      // longer be conflated with a parse problem (#125).
       reasons.add("unreadable");
       skipped += 1;
       affectedPaths.add(file);
@@ -410,7 +406,6 @@ export function geminiCliEvents(root: string, sinceMs?: number): GeminiCliCollec
     events.push(...parsed.events);
     if (parsed.errors > 0) {
       skipped += 1;
-      malformed = true;
       reasons.add("malformed");
       affectedPaths.add(file);
     }
@@ -421,20 +416,17 @@ export function geminiCliEvents(root: string, sinceMs?: number): GeminiCliCollec
     }
   }
   const uniqueEvents = [...new Map(events.map((event) => [event.eventId, event])).values()];
-  const reasonList = [...reasons];
+  const reasonList = [...reasons].sort();
   if (unsafePaths > 0) {
     return { events: uniqueEvents, skipped, partialFiles, affectedFiles: affectedPaths.size, reasons: reasonList, source: source("partial", "unsafe_path") };
   }
-  if (malformed) {
+  if (reasons.has("malformed")) {
     return { events: uniqueEvents, skipped, partialFiles, affectedFiles: affectedPaths.size, reasons: reasonList, source: source("partial", "malformed") };
   }
   if (partialFiles > 0) {
     return { events: uniqueEvents, skipped, partialFiles, affectedFiles: affectedPaths.size, reasons: reasonList, source: source("partial", "partial_records") };
   }
-  // Files that could not be read (filesystem error) but are not classified
-  // as malformed or partial-records. Surface them as partial with the
-  // "unreadable" reason so the cause is not lost (#125).
-  if (skipped > 0 && uniqueEvents.length === 0) {
+  if (reasons.has("unreadable")) {
     return { events: uniqueEvents, skipped, partialFiles, affectedFiles: affectedPaths.size, reasons: reasonList, source: source("partial", "unreadable") };
   }
   return { events: uniqueEvents, skipped, partialFiles, affectedFiles: 0, reasons: [], source: source("available", null) };

@@ -131,11 +131,6 @@ export function collectProviderEvents(opts?: {
     if (gemini.source.state === "unavailable") unavailable.push("gemini-cli");
     if (gemini.source.state === "partial") {
       partial["gemini-cli"] = gemini.affectedFiles;
-    }
-    if (gemini.source.state === "available" && gemini.skipped > 0) {
-      partial["gemini-cli"] = gemini.skipped;
-    }
-    if (gemini.reasons.length > 0) {
       for (const r of gemini.reasons) addReason("gemini-cli", r);
     }
   } catch {

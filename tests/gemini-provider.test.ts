@@ -494,13 +494,14 @@ describe("Gemini CLI source contract", () => {
         geminiRoot: root,
       });
       expect(collected.partial["gemini-cli"]).toBe(1);
-      expect(collected.partialReasons?.["gemini-cli"] ?? []).toContain("malformed");
+      expect(collected.partialReasons?.["gemini-cli"]).toEqual(["malformed"]);
+      expect(geminiCliEvents(root).source.reason).toBe("malformed");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("names the reason for an unavailable source: unreadable file => unreadable, not malformed (#125)", () => {
+  it("labels an unreadable file unreadable, not malformed (#125)", () => {
     const root = mkdtempSync(join(tmpdir(), "token-scope-gemini-reason-unreadable-"));
     const file = join(root, "tmp", "project-a", "chats", "secret.jsonl");
     try {
@@ -515,21 +516,11 @@ describe("Gemini CLI source contract", () => {
       }) + "\n");
       chmodSync(file, 0);
 
-      const collected = collectProviderEvents({
-        claudeRoot: "/nonexistent",
-        ledgerPath: "/nonexistent.jsonl",
-        codexHome: "/nonexistent",
-        opencodeDb: "/nonexistent.db",
-        geminiRoot: root,
-      });
-      // The unreadable file is the only file in the tree; the walk's
-      // realpathSync fails with EACCES, so the source is unavailable.
-      expect(collected.unavailable).toContain("gemini-cli");
-      const reasons = collected.partialReasons?.["gemini-cli"] ?? [];
-      expect(reasons).toContain("unreadable");
-      // The core of #125: a filesystem read failure must NOT be labeled
-      // malformed (the parser never saw this file).
-      expect(reasons).not.toContain("malformed");
+      // Bun on macOS fails realpath in the walk (unavailable); Linux fails
+      // the read itself (partial). Both must name the same cause.
+      const gemini = geminiCliEvents(root);
+      expect(gemini.reasons).toEqual(["unreadable"]);
+      expect(gemini.source.reason).toBe("unreadable");
     } finally {
       try { chmodSync(file, 0o600); } catch {}
       rmSync(root, { recursive: true, force: true });
