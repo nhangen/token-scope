@@ -82,24 +82,19 @@ export const register: Register = (on, options) => {
   const opts = options as Record<string, unknown> | undefined;
 
   let timer: Timer | undefined;
-  let configuredTtl = 60 * 60 * 1000;
-  let effectiveTtl = configuredTtl;
+  let effectiveTtl = 60 * 60 * 1000;
   let is5mFallback = false;
   let lastAt: number | undefined;
   let hit: number | undefined;
   let isEnabled = true;
 
-  const resetConversation = () => {
-    lastAt = undefined;
-    hit = undefined;
-    is5mFallback = false;
-    effectiveTtl = configuredTtl;
-  };
 
   on("session.start", async ($, e, next) => {
     timer?.cancel();
     timer = undefined;
-    resetConversation();
+    lastAt = undefined;
+    hit = undefined;
+    is5mFallback = false;
 
     if (isOptedOut(opts)) {
       isEnabled = false;
@@ -148,7 +143,6 @@ export const register: Register = (on, options) => {
     }
 
     isEnabled = true;
-    configuredTtl = ttl;
     effectiveTtl = ttl;
 
     timer = $.clock.every(1000, () => {
@@ -161,9 +155,11 @@ export const register: Register = (on, options) => {
     return next(e);
   });
 
-  // /clear ends the conversation without a following session.start.
+  // /clear ends the conversation without a following session.start. The 5m fallback is
+  // account-level usage overage, so it outlives the conversation.
   on("session.end", ($, e, next) => {
-    resetConversation();
+    lastAt = undefined;
+    hit = undefined;
     if (isEnabled) $.ui.status(undefined);
     return next(e);
   });

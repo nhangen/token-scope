@@ -228,7 +228,7 @@ describe("register hook wiring", () => {
 
   const HEALTHY = { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0 };
 
-  test("/clear (session.end reason clear) resets the countdown and the 5m fallback", async () => {
+  test("/clear (session.end reason clear) resets the countdown but keeps the account-level 5m fallback", async () => {
     const handlers: Record<string, any> = {};
     register(((event: string, handler: any) => {
       handlers[event] = handler;
@@ -259,7 +259,7 @@ describe("register hook wiring", () => {
     m.setTime(1_700_000);
     await turn(HEALTHY);
     await m.tick();
-    expect(m.getStatus()).toBe("cache warm 60:00 · hit 90%");
+    expect(m.getStatus()).toBe("cache warm 5:00 (5m) · hit 90%");
   });
 
   test("attaches session.start, session.end, and turn.step", () => {
