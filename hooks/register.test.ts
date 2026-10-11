@@ -52,9 +52,22 @@ describe("TTL parsing and config resolution", () => {
     expect(parseTtl("1h")).toBe(3_600_000);
     expect(parseTtl("300s")).toBe(300_000);
     expect(parseTtl("60000ms")).toBe(60_000);
-    expect(parseTtl(300_000)).toBe(300_000);
     expect(parseTtl("invalid")).toBe(undefined);
     expect(parseTtl(null)).toBe(undefined);
+  });
+
+  test("parseTtl reads a bare number as seconds on both sides of 1000", () => {
+    expect(parseTtl("999")).toBe(999_000);
+    expect(parseTtl("1000")).toBe(1_000_000);
+    expect(parseTtl("3600")).toBe(3_600_000);
+    expect(parseTtl(300)).toBe(300_000);
+    expect(parseTtl(3600)).toBe(3_600_000);
+  });
+
+  test("parseTtl rejects zero", () => {
+    expect(parseTtl("0")).toBe(undefined);
+    expect(parseTtl("0s")).toBe(undefined);
+    expect(parseTtl(0)).toBe(undefined);
   });
 
   test("DISABLE_PROMPT_CACHING returns null (show nothing)", () => {

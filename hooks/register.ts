@@ -11,24 +11,19 @@ export function isEnvTrue(val: string | undefined): boolean {
 }
 
 export function parseTtl(val: unknown): number | undefined {
-  if (typeof val === "number" && Number.isFinite(val) && val > 0) {
-    return Math.round(val);
+  let ms: number | undefined;
+  if (typeof val === "number") {
+    ms = val * 1000;
+  } else if (typeof val === "string") {
+    const match = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/.exec(val.trim().toLowerCase());
+    if (match) {
+      const n = parseFloat(match[1]!);
+      const unit = match[2] ?? "s";
+      ms = n * { ms: 1, s: 1000, m: 60 * 1000, h: 60 * 60 * 1000 }[unit]!;
+    }
   }
-  if (typeof val !== "string") return undefined;
-  const s = val.trim().toLowerCase();
-  if (s === "5m") return 5 * 60 * 1000;
-  if (s === "1h") return 60 * 60 * 1000;
-  const match = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/.exec(s);
-  if (match) {
-    const n = parseFloat(match[1]!);
-    const unit = match[2];
-    if (unit === "h") return Math.round(n * 60 * 60 * 1000);
-    if (unit === "m") return Math.round(n * 60 * 1000);
-    if (unit === "s") return Math.round(n * 1000);
-    if (unit === "ms") return Math.round(n);
-    return n >= 1000 ? Math.round(n) : Math.round(n * 1000);
-  }
-  return undefined;
+  if (ms === undefined || !Number.isFinite(ms) || ms <= 0) return undefined;
+  return Math.round(ms);
 }
 
 export function resolveTtl(
