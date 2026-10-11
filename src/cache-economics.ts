@@ -145,8 +145,8 @@ export interface CacheEconomicsInput {
   nowMs?: number;
 }
 
-export const MAIN_TTL_MS = 60 * 60 * 1000; // 1 hour default
-export const SUBAGENT_TTL_MS = 5 * 60 * 1000; // 5 minutes
+export const MAIN_TTL_MS = 60 * 60 * 1000;
+export const SUBAGENT_TTL_MS = 5 * 60 * 1000;
 
 // pricing.ts carries only the 5m write rate (1.25x input); the 1h tier bills 2.0x input.
 const ONE_HOUR_WRITE_INPUT_MULTIPLE = 2.0;
@@ -564,12 +564,13 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
   let staleResumesCount = 0;
 
   for (const m of mainMissItems) {
-    if (m.gapMs !== null && m.gapMs > 24 * 60 * 60 * 1000 && m.prevContextTokens > 30000) {
+    if (m.type === "expiry" && m.gapMs !== null && m.gapMs > 24 * 60 * 60 * 1000 && m.prevContextTokens > 30000) {
       staleResumesCount++;
       const p = getPricing(m.model);
       if (p) {
         const savedWrite = Math.max(0, m.prevContextTokens - 15000);
-        freshSessionSavingsUsd += (savedWrite * (p.cacheWritePerMillion - p.cacheReadPerMillion)) / 1_000_000;
+        const writePerToken = cacheWriteCostUsd(m, p) / m.cacheWriteTokens;
+        freshSessionSavingsUsd += savedWrite * (writePerToken - p.cacheReadPerMillion / 1_000_000);
       }
     }
   }
@@ -589,7 +590,7 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
   });
 
   const rankedSimulations = [
-    simulations[0]!, // baseline
+    simulations[0]!,
     ...simulations.slice(1).sort((a, b) => b.weeklySavingsUsd - a.weeklySavingsUsd),
   ];
 

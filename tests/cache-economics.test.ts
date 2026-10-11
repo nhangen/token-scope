@@ -805,3 +805,22 @@ describe("Cache Economics — empty-data guard", () => {
     expect(out).toContain("Miss Classification");
   });
 });
+
+describe("Cache Economics — fresh-session sim pricing", () => {
+  const t0 = 1_700_000_000_000;
+  const rec = (uuid: string, off: number, read: number, write: number, w1h = 0): CacheTurnRecord => ({
+    uuid, sessionId: "s1", timestampMs: t0 + off, model: "claude-sonnet-4-6", outputTokens: 10,
+    inputTokens: 0, cacheReadTokens: read, cacheWriteTokens: write, cacheWrite1hTokens: w1h, costUsd: null,
+  });
+  const fresh = (turns: CacheTurnRecord[]) =>
+    analyzeCacheEconomics({ mainTurns: turns, sinceSec: 0, nowMs: t0 + 7 * 86_400_000 }).simulations.find((s) => s.policyId === "fresh_session_vs_stale")!;
+
+  it("prices the avoided rebuild at the 1h tier when the rebuild was written there", () => {
+    // (50,000 - 15,000) * (2.0 * 3.00 - 0.30) / 1M.
+    expect(fresh([rec("a", 0, 0, 50_000, 50_000), rec("b", 25 * 3_600_000, 0, 50_000, 50_000)]).totalSavingsUsd).toBeCloseTo(0.1995, 8);
+  });
+
+  it("credits nothing when the turn after a >24h gap wrote nothing", () => {
+    expect(fresh([rec("a", 0, 0, 50_000), rec("b", 25 * 3_600_000, 50_000, 0)]).totalSavingsUsd).toBe(0);
+  });
+});
