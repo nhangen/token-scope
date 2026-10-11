@@ -33,7 +33,6 @@ export function parseTtl(val: unknown): number | undefined {
 
 export function resolveTtl(
   env: Record<string, string | undefined> = getFallbackEnv(),
-  options?: Record<string, unknown>,
   settings?: Record<string, unknown>
 ): number | null {
   if (isEnvTrue(env["DISABLE_PROMPT_CACHING"])) {
@@ -42,17 +41,9 @@ export function resolveTtl(
   if (isEnvTrue(env["FORCE_PROMPT_CACHING_5M"])) {
     return 5 * 60 * 1000;
   }
-  const configured =
-    env["CLAUDE_CODE_PROMPT_CACHE_TTL"] ??
-    (settings?.["promptCacheTtl"] as string | undefined) ??
-    (options?.["promptCacheTtl"] as string | undefined) ??
-    env["promptCacheTtl"];
-  if (configured !== undefined) {
-    const parsed = parseTtl(configured);
+  for (const candidate of [env["CLAUDE_CODE_PROMPT_CACHE_TTL"], settings?.["promptCacheTtl"]]) {
+    const parsed = parseTtl(candidate);
     if (parsed !== undefined) return parsed;
-  }
-  if (isEnvTrue(env["ENABLE_PROMPT_CACHING_1H"])) {
-    return 60 * 60 * 1000;
   }
   return 60 * 60 * 1000;
 }
@@ -124,18 +115,16 @@ export const register: Register = (on, options) => {
     // Read environment variables via $.env.get (using string literals for static scanner)
     const env: Record<string, string | undefined> = {};
     try {
-      const [disableCaching, force5m, ttlEnv, enable1h, disableTimer, timerEnv] = await Promise.all([
+      const [disableCaching, force5m, ttlEnv, disableTimer, timerEnv] = await Promise.all([
         $.env.get("DISABLE_PROMPT_CACHING"),
         $.env.get("FORCE_PROMPT_CACHING_5M"),
         $.env.get("CLAUDE_CODE_PROMPT_CACHE_TTL"),
-        $.env.get("ENABLE_PROMPT_CACHING_1H"),
         $.env.get("TOKEN_SCOPE_DISABLE_CACHE_TIMER"),
         $.env.get("TOKEN_SCOPE_CACHE_TIMER"),
       ]);
       env["DISABLE_PROMPT_CACHING"] = disableCaching;
       env["FORCE_PROMPT_CACHING_5M"] = force5m;
       env["CLAUDE_CODE_PROMPT_CACHE_TTL"] = ttlEnv;
-      env["ENABLE_PROMPT_CACHING_1H"] = enable1h;
       env["TOKEN_SCOPE_DISABLE_CACHE_TIMER"] = disableTimer;
       env["TOKEN_SCOPE_CACHE_TIMER"] = timerEnv;
     } catch {
@@ -159,7 +148,7 @@ export const register: Register = (on, options) => {
       // Ignore if settings read is unsupported in test mock
     }
 
-    const configuredTtl = resolveTtl(env, opts, settings);
+    const configuredTtl = resolveTtl(env, settings);
     if (configuredTtl === null) {
       // DISABLE_PROMPT_CACHING active: show nothing
       isEnabled = false;

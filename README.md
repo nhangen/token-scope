@@ -733,7 +733,7 @@ cache cold
 - **Opt-out**: The status-line mod is enabled by default. To opt out:
   - In `/config` (or settings `pluginConfigs["token-scope"].options`): set `cacheTimer: false`
   - Or via environment variable: `TOKEN_SCOPE_CACHE_TIMER=0` (or `TOKEN_SCOPE_DISABLE_CACHE_TIMER=1`)
-- **TTL configuration**: Honors `promptCacheTtl` in settings or `CLAUDE_CODE_PROMPT_CACHE_TTL`, `ENABLE_PROMPT_CACHING_1H`, `FORCE_PROMPT_CACHING_5M`, and `DISABLE_PROMPT_CACHING` (which hides the status entry).
+- **TTL configuration**: The countdown defaults to 1 hour. `FORCE_PROMPT_CACHING_5M` forces 5 minutes; otherwise the first valid value of `CLAUDE_CODE_PROMPT_CACHE_TTL` or settings `promptCacheTtl` wins (an unparseable value is skipped, not honored). `DISABLE_PROMPT_CACHING` hides the status entry.
 
 ---
 

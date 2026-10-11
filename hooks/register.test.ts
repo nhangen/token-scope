@@ -66,26 +66,28 @@ describe("TTL parsing and config resolution", () => {
     expect(resolveTtl({ FORCE_PROMPT_CACHING_5M: "1" })).toBe(300_000);
   });
 
-  test("CLAUDE_CODE_PROMPT_CACHE_TTL env var takes precedence", () => {
-    expect(resolveTtl({ CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" })).toBe(300_000);
-    expect(resolveTtl({ CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" })).toBe(3_600_000);
+  test("CLAUDE_CODE_PROMPT_CACHE_TTL env var takes precedence over settings", () => {
+    expect(resolveTtl({ CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" }, { promptCacheTtl: "1h" })).toBe(300_000);
+    expect(resolveTtl({ CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" }, { promptCacheTtl: "5m" })).toBe(3_600_000);
+  });
+
+  test("FORCE_PROMPT_CACHING_5M takes precedence over a configured TTL", () => {
+    expect(resolveTtl({ FORCE_PROMPT_CACHING_5M: "1", CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" })).toBe(300_000);
   });
 
   test("promptCacheTtl from settings", () => {
-    expect(resolveTtl({}, {}, { promptCacheTtl: "5m" })).toBe(300_000);
-    expect(resolveTtl({}, {}, { promptCacheTtl: "1h" })).toBe(3_600_000);
-  });
-
-  test("promptCacheTtl from options", () => {
     expect(resolveTtl({}, { promptCacheTtl: "5m" })).toBe(300_000);
+    expect(resolveTtl({}, { promptCacheTtl: "1h" })).toBe(3_600_000);
   });
 
-  test("ENABLE_PROMPT_CACHING_1H returns 1 hour", () => {
-    expect(resolveTtl({ ENABLE_PROMPT_CACHING_1H: "1" })).toBe(3_600_000);
+  test("an unparseable env TTL falls through to a valid settings TTL", () => {
+    expect(resolveTtl({ CLAUDE_CODE_PROMPT_CACHE_TTL: "30min" }, { promptCacheTtl: "5m" })).toBe(300_000);
+    expect(resolveTtl({ CLAUDE_CODE_PROMPT_CACHE_TTL: "" }, { promptCacheTtl: "5m" })).toBe(300_000);
   });
 
   test("defaults to 1 hour", () => {
-    expect(resolveTtl({}, {}, {})).toBe(3_600_000);
+    expect(resolveTtl({}, {})).toBe(3_600_000);
+    expect(resolveTtl({ CLAUDE_CODE_PROMPT_CACHE_TTL: "garbage" }, { promptCacheTtl: "nope" })).toBe(3_600_000);
   });
 });
 
