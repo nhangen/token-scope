@@ -10,6 +10,7 @@ import {
 import { createReader } from "@/reader";
 import { renderCacheReport } from "@/reports/cache";
 import type { Reader } from "@/reader";
+import { renderSummary } from "@/reports/summary";
 
 function capture(fn: () => void): string {
   const oldLog = console.log;
@@ -488,5 +489,35 @@ describe("Cache Economics — invalidation cost", () => {
     expect(mainInval).toContain("$0.1380");
     expect(subInval).toBeDefined();
     expect(subInval!).toContain("$0.1380");
+  });
+});
+
+describe("Corrected hit rate at user-visible sites", () => {
+  // Totals hand-summed from the raw fixture usage blocks.
+  it("JSONL queryCacheStats: beacon = 165,000 / (165,000 + 1,100 + 30,602)", () => {
+    const reader = createReader({ source: "jsonl" });
+    const row = reader.queryCacheStats(0, 50).find((r) => r.cwd === "/Users/alice/projects/beacon")!;
+    reader.close();
+    expect(row.cacheHitPct!).toBeCloseTo((165_000 / 196_702) * 100, 6);
+    expect(row.readSharePct!).toBeCloseTo((165_000 / 195_602) * 100, 6);
+  });
+
+  it("SQLite queryCacheStats: widget-app = 242,500 / (242,500 + 33,300 + 46)", () => {
+    const reader = createReader({ source: "sqlite" });
+    const row = reader.queryCacheStats(0, 50).find((r) => r.cwd === "/Users/alice/projects/widget-app")!;
+    reader.close();
+    expect(row.cacheHitPct!).toBeCloseTo((242_500 / 275_846) * 100, 6);
+    expect(row.readSharePct!).toBeCloseTo((242_500 / 242_546) * 100, 6);
+  });
+
+  it("summary renders the corrected Cache Hit Rate and the legacy Read Share", () => {
+    const reader = createReader({ source: "jsonl" });
+    const out = capture(() => renderSummary(reader, { since: 0, limit: 10, json: false }));
+    reader.close();
+    // read 604,000; write 4,900; input 30,641 across the JSONL fixture.
+    const hit = out.split("\n").find((l) => l.includes("Cache Hit Rate"))!;
+    const share = out.split("\n").find((l) => l.includes("Read Share (non-write)"))!;
+    expect(hit).toContain(`${((604_000 / 639_541) * 100).toFixed(1)}%`);
+    expect(share).toContain(`${((604_000 / 634_641) * 100).toFixed(1)}%`);
   });
 });
