@@ -1,6 +1,6 @@
 import type { Register } from "claude-code";
 
-function getEnv(): Record<string, string | undefined> {
+function getFallbackEnv(): Record<string, string | undefined> {
   return typeof process !== "undefined" && process?.env ? process.env : {};
 }
 
@@ -32,7 +32,7 @@ export function parseTtl(val: unknown): number | undefined {
 }
 
 export function resolveTtl(
-  env: Record<string, string | undefined> = getEnv(),
+  env: Record<string, string | undefined> = getFallbackEnv(),
   options?: Record<string, unknown>,
   settings?: Record<string, unknown>
 ): number | null {
@@ -59,7 +59,7 @@ export function resolveTtl(
 
 export function isOptedOut(
   options?: Record<string, unknown>,
-  env: Record<string, string | undefined> = getEnv()
+  env: Record<string, string | undefined> = getFallbackEnv()
 ): boolean {
   if (options?.["cacheTimer"] === false) return true;
   if (env["TOKEN_SCOPE_CACHE_TIMER"] === "0" || env["TOKEN_SCOPE_CACHE_TIMER"]?.toLowerCase() === "false") return true;
@@ -97,26 +97,89 @@ export function label(
 
 export const register: Register = (on, options) => {
   const opts = options as Record<string, unknown> | undefined;
-  if (isOptedOut(opts)) return;
 
-  const configuredTtl = resolveTtl(getEnv(), opts);
-  if (configuredTtl === null) return;
-
-  let effectiveTtl = configuredTtl;
+  let cancelTimer: (() => void) | undefined;
+  let effectiveTtl = 60 * 60 * 1000;
   let is5mFallback = false;
   let lastAt: number | undefined;
   let hit: number | undefined;
+  let isEnabled = true;
 
   on("session.start", async ($, e, next) => {
-    $.clock.every(1000, () => {
+    if (cancelTimer) {
+      cancelTimer();
+      cancelTimer = undefined;
+    }
+    lastAt = undefined;
+    hit = undefined;
+    is5mFallback = false;
+
+    // Check userConfig opt-out first
+    if (opts?.["cacheTimer"] === false) {
+      isEnabled = false;
+      $.ui.status(undefined);
+      return next(e);
+    }
+
+    // Read environment variables via $.env.get (using string literals for static scanner)
+    const env: Record<string, string | undefined> = {};
+    try {
+      const [disableCaching, force5m, ttlEnv, enable1h, disableTimer, timerEnv] = await Promise.all([
+        $.env.get("DISABLE_PROMPT_CACHING"),
+        $.env.get("FORCE_PROMPT_CACHING_5M"),
+        $.env.get("CLAUDE_CODE_PROMPT_CACHE_TTL"),
+        $.env.get("ENABLE_PROMPT_CACHING_1H"),
+        $.env.get("TOKEN_SCOPE_DISABLE_CACHE_TIMER"),
+        $.env.get("TOKEN_SCOPE_CACHE_TIMER"),
+      ]);
+      env["DISABLE_PROMPT_CACHING"] = disableCaching;
+      env["FORCE_PROMPT_CACHING_5M"] = force5m;
+      env["CLAUDE_CODE_PROMPT_CACHE_TTL"] = ttlEnv;
+      env["ENABLE_PROMPT_CACHING_1H"] = enable1h;
+      env["TOKEN_SCOPE_DISABLE_CACHE_TIMER"] = disableTimer;
+      env["TOKEN_SCOPE_CACHE_TIMER"] = timerEnv;
+    } catch {
+      if (typeof process !== "undefined" && process?.env) {
+        Object.assign(env, process.env);
+      }
+    }
+
+    // Check env-level opt-out
+    if (isOptedOut(opts, env)) {
+      isEnabled = false;
+      $.ui.status(undefined);
+      return next(e);
+    }
+
+    // Read user settings via $.settings.read()
+    let settings: Record<string, unknown> | undefined;
+    try {
+      settings = (await $.settings.read()) as Record<string, unknown>;
+    } catch {
+      // Ignore if settings read is unsupported in test mock
+    }
+
+    const configuredTtl = resolveTtl(env, opts, settings);
+    if (configuredTtl === null) {
+      // DISABLE_PROMPT_CACHING active: show nothing
+      isEnabled = false;
+      $.ui.status(undefined);
+      return next(e);
+    }
+
+    isEnabled = true;
+    effectiveTtl = configuredTtl;
+
+    cancelTimer = $.clock.every(1000, () => {
       void $.clock.now().then(now => $.ui.status(label(now, lastAt, hit, effectiveTtl, is5mFallback)));
     });
+
     return next(e);
   });
 
   on("turn.step", async function* ($, e, next) {
     const r = yield* next(e);
-    if (e.agentId !== undefined || !r.usage) return r;
+    if (!isEnabled || e.agentId !== undefined || !r?.usage) return r;
     const u = r.usage;
     const now = await $.clock.now();
 

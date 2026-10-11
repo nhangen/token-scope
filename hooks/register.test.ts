@@ -135,38 +135,50 @@ describe("Opt-out configuration", () => {
 });
 
 describe("register hook wiring and coexistence", () => {
-  test("opted out register does not attach hooks", () => {
-    const events: string[] = [];
-    const fakeOn = ((event: string) => {
-      events.push(event);
-    }) as any;
+  function makeMock$(envVars: Record<string, string | undefined> = {}, settings: Record<string, unknown> = {}) {
+    let timerCancelled = false;
+    let timerCallback: (() => void) | undefined;
+    let currentStatus: string | undefined;
+    let currentTime = 1_000_000;
 
-    register(fakeOn, { cacheTimer: false });
-    expect(events.length).toBe(0);
-  });
+    const $ = {
+      env: {
+        get: async (name: string) => envVars[name],
+      },
+      settings: {
+        read: async () => settings,
+      },
+      clock: {
+        now: async () => currentTime,
+        every: (_ms: number, fn: () => void) => {
+          timerCallback = fn;
+          return () => {
+            timerCancelled = true;
+          };
+        },
+      },
+      ui: {
+        status: (text: string | undefined) => {
+          currentStatus = text;
+        },
+      },
+    };
 
-  test("disabled caching does not attach hooks", () => {
-    const events: string[] = [];
-    const fakeOn = ((event: string) => {
-      events.push(event);
-    }) as any;
+    return {
+      $,
+      getStatus: () => currentStatus,
+      isTimerCancelled: () => timerCancelled,
+      tick: async () => {
+        timerCallback?.();
+        await Promise.resolve();
+      },
+      setTime: (t: number) => {
+        currentTime = t;
+      },
+    };
+  }
 
-    if (typeof process !== "undefined" && process?.env) {
-      const orig = process.env.DISABLE_PROMPT_CACHING;
-      try {
-        process.env.DISABLE_PROMPT_CACHING = "1";
-        register(fakeOn, {});
-        expect(events.length).toBe(0);
-      } finally {
-        if (orig === undefined) delete process.env.DISABLE_PROMPT_CACHING;
-        else process.env.DISABLE_PROMPT_CACHING = orig;
-      }
-    } else {
-      expect(events.length).toBe(0);
-    }
-  });
-
-  test("attaches session.start and turn.step when enabled", () => {
+  test("attaches session.start and turn.step", () => {
     const events: string[] = [];
     const fakeOn = ((event: string) => {
       events.push(event);
@@ -177,25 +189,109 @@ describe("register hook wiring and coexistence", () => {
     expect(events).toContain("turn.step");
   });
 
-  test("turn.step ignores subagents and updates state for main session", async () => {
+  test("session.start honors userConfig opt-out and sets status undefined", async () => {
+    let startHandler: any;
+    const fakeOn = ((event: string, handler: any) => {
+      if (event === "session.start") startHandler = handler;
+    }) as any;
+
+    register(fakeOn, { cacheTimer: false });
+    const { $, getStatus } = makeMock$();
+
+    let nextCalled = false;
+    await startHandler($, {}, (e: any) => {
+      nextCalled = true;
+      return e;
+    });
+
+    expect(nextCalled).toBe(true);
+    expect(getStatus()).toBe(undefined);
+  });
+
+  test("session.start honors DISABLE_PROMPT_CACHING via $.env.get", async () => {
+    let startHandler: any;
+    const fakeOn = ((event: string, handler: any) => {
+      if (event === "session.start") startHandler = handler;
+    }) as any;
+
+    register(fakeOn, { cacheTimer: true });
+    const { $, getStatus } = makeMock$({ DISABLE_PROMPT_CACHING: "1" });
+
+    await startHandler($, {}, (e: any) => e);
+    expect(getStatus()).toBe(undefined);
+  });
+
+  test("session.start honors promptCacheTtl from $.settings.read", async () => {
+    let startHandler: any;
     let turnHandler: any;
     const fakeOn = ((event: string, handler: any) => {
+      if (event === "session.start") startHandler = handler;
       if (event === "turn.step") turnHandler = handler;
     }) as any;
 
     register(fakeOn, { cacheTimer: true });
-    expect(turnHandler).toBeDefined();
+    const { $, getStatus, tick, setTime } = makeMock$({}, { promptCacheTtl: "5m" });
 
-    let currentTime = 1_000_000;
-    const fake$ = {
-      clock: {
-        now: async () => currentTime,
-      },
-    };
+    await startHandler($, {}, (e: any) => e);
+
+    // Initial tick before turn shows nothing
+    await tick();
+    expect(getStatus()).toBe(undefined);
+
+    // Run a turn at t=1,000,000
+    const gen = turnHandler(
+      $,
+      {},
+      async function* () {
+        return { usage: { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0 } };
+      }
+    );
+    await gen.next();
+
+    // 100 seconds into the 5m TTL => 200s left => 3:20
+    setTime(1_100_000);
+    await tick();
+    expect(getStatus()).toBe("cache warm 3:20 · hit 90%");
+
+    // Past 5m (301 seconds later) => cold
+    setTime(1_301_000);
+    await tick();
+    expect(getStatus()).toBe("cache cold");
+  });
+
+  test("session.start cancels previous timer interval on restart", async () => {
+    let startHandler: any;
+    const fakeOn = ((event: string, handler: any) => {
+      if (event === "session.start") startHandler = handler;
+    }) as any;
+
+    register(fakeOn, { cacheTimer: true });
+    const { $, isTimerCancelled } = makeMock$();
+
+    await startHandler($, {}, (e: any) => e);
+    expect(isTimerCancelled()).toBe(false);
+
+    // Second session.start (e.g. /clear)
+    await startHandler($, {}, (e: any) => e);
+    expect(isTimerCancelled()).toBe(true);
+  });
+
+  test("turn.step ignores subagents and updates state for main session", async () => {
+    let turnHandler: any;
+    let startHandler: any;
+    const fakeOn = ((event: string, handler: any) => {
+      if (event === "session.start") startHandler = handler;
+      if (event === "turn.step") turnHandler = handler;
+    }) as any;
+
+    register(fakeOn, { cacheTimer: true });
+    const { $, getStatus, tick, setTime } = makeMock$();
+
+    await startHandler($, {}, (e: any) => e);
 
     // Subagent step: ignored
     const subagentGen = turnHandler(
-      fake$,
+      $,
       { agentId: "subagent-1" },
       async function* () {
         return { usage: { input_tokens: 100, cache_read_input_tokens: 50, cache_creation_input_tokens: 50 } };
@@ -203,10 +299,12 @@ describe("register hook wiring and coexistence", () => {
     );
     const subagentResult = (await subagentGen.next()).value;
     expect(subagentResult.usage.input_tokens).toBe(100);
+    await tick();
+    expect(getStatus()).toBe(undefined);
 
-    // Main session step 1
+    // Main session step 1 at t=1,000,000
     const mainGen1 = turnHandler(
-      fake$,
+      $,
       {},
       async function* () {
         return { usage: { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0 } };
@@ -216,9 +314,9 @@ describe("register hook wiring and coexistence", () => {
     expect(mainResult1.usage.input_tokens).toBe(100);
 
     // Main session step 2 after 10m gap with cache miss (overage fallback)
-    currentTime += 600_000;
+    setTime(1_600_000);
     const mainGen2 = turnHandler(
-      fake$,
+      $,
       {},
       async function* () {
         return { usage: { input_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 3000 } };
@@ -226,5 +324,11 @@ describe("register hook wiring and coexistence", () => {
     );
     const mainResult2 = (await mainGen2.next()).value;
     expect(mainResult2.usage.cache_creation_input_tokens).toBe(3000);
+
+    // Status line now displays 5m fallback countdown with (5m) tag
+    // At t=1,710,000 (110s into the 300s TTL) => 190s left => 3:10 (5m)
+    setTime(1_710_000);
+    await tick();
+    expect(getStatus()).toBe("cache warm 3:10 (5m) · hit 0%");
   });
 });
