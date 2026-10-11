@@ -40,6 +40,11 @@ describe("label formatting options", () => {
     expect(label(110_000, 0, undefined, 300_000, true)).toBe("cache warm 3:10 (5m)");
   });
 
+  test("remaining time rounds up and the TTL boundary is cold", () => {
+    expect(label(3_599_999, 0, undefined)).toBe("cache warm 0:01");
+    expect(label(3_600_000, 0, undefined)).toBe("cache cold");
+  });
+
   test("5m fallback cold after 5 minutes", () => {
     expect(label(300_001, 0, 0, 300_000, true)).toBe("cache cold");
   });
@@ -126,6 +131,13 @@ describe("Usage-overage fallback detection", () => {
     expect(isOverageFallback(600_000, ONE_HOUR, 50, 2000)).toBe(true);
   });
 
+  test("thresholds are exclusive on the gap and inclusive on read and write", () => {
+    expect(isOverageFallback(300_000, ONE_HOUR, 0, 5000)).toBe(false);
+    expect(isOverageFallback(300_001, ONE_HOUR, 100, 1000)).toBe(true);
+    expect(isOverageFallback(300_001, ONE_HOUR, 101, 1000)).toBe(false);
+    expect(isOverageFallback(300_001, ONE_HOUR, 100, 999)).toBe(false);
+  });
+
   test("tiny write without read does not trigger fallback", () => {
     expect(isOverageFallback(600_000, ONE_HOUR, 0, 50)).toBe(false);
   });
@@ -155,7 +167,7 @@ describe("Opt-out configuration", () => {
   });
 });
 
-describe("register hook wiring and coexistence", () => {
+describe("register hook wiring", () => {
   function makeMock$(
     envVars: Record<string, string | undefined> = {},
     settings: Record<string, unknown> = {},
@@ -414,59 +426,45 @@ describe("register hook wiring and coexistence", () => {
     expect(isTimerCancelled()).toBe(true);
   });
 
-  test("turn.step ignores subagents and updates state for main session", async () => {
-    let turnHandler: any;
-    let startHandler: any;
-    const fakeOn = ((event: string, handler: any) => {
-      if (event === "session.start") startHandler = handler;
-      if (event === "turn.step") turnHandler = handler;
-    }) as any;
+  test("turn.step ignores subagent requests", async () => {
+    const m = makeMock$();
+    const w = wire({ cacheTimer: true });
+    await w.start(m.$);
+    const passed = await w.turn(m.$, { agentId: "subagent-1" }, HEALTHY);
+    expect(passed.usage.input_tokens).toBe(100);
+    await m.tick();
+    expect(m.getStatus()).toBe(undefined);
+  });
 
-    register(fakeOn, { cacheTimer: true });
-    const { $, getStatus, tick, setTime } = makeMock$();
+  test("a turn with no usage passes through and leaves the state alone", async () => {
+    const m = makeMock$();
+    const w = wire({ cacheTimer: true });
+    await w.start(m.$);
+    expect(await w.turn(m.$, {}, undefined)).toEqual({});
+    await m.tick();
+    expect(m.getStatus()).toBe(undefined);
+  });
 
-    await startHandler($, {}, (e: any) => e);
+  const MISS = { input_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 3000 };
 
-    // Subagent step: ignored
-    const subagentGen = turnHandler(
-      $,
-      { agentId: "subagent-1" },
-      async function* () {
-        return { usage: { input_tokens: 100, cache_read_input_tokens: 50, cache_creation_input_tokens: 50 } };
-      }
-    );
-    const subagentResult = (await subagentGen.next()).value;
-    expect(subagentResult.usage.input_tokens).toBe(100);
-    await tick();
-    expect(getStatus()).toBe(undefined);
+  test("a miss after a >5m gap switches to the 5m countdown and stays latched", async () => {
+    const m = makeMock$();
+    const w = wire({ cacheTimer: true });
+    await w.start(m.$);
+    await w.turn(m.$, {}, HEALTHY);
+    m.setTime(1_100_000);
+    await m.tick();
+    expect(m.getStatus()).toBe("cache warm 58:20 · hit 90%");
 
-    // Main session step 1 at t=1,000,000
-    const mainGen1 = turnHandler(
-      $,
-      {},
-      async function* () {
-        return { usage: { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0 } };
-      }
-    );
-    const mainResult1 = (await mainGen1.next()).value;
-    expect(mainResult1.usage.input_tokens).toBe(100);
+    m.setTime(1_600_000);
+    await w.turn(m.$, {}, MISS);
+    // 110s into the 300s TTL => 190s left => 3:10
+    m.setTime(1_710_000);
+    await m.tick();
+    expect(m.getStatus()).toBe("cache warm 3:10 (5m) · hit 0%");
 
-    // Main session step 2 after 10m gap with cache miss (overage fallback)
-    setTime(1_600_000);
-    const mainGen2 = turnHandler(
-      $,
-      {},
-      async function* () {
-        return { usage: { input_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 3000 } };
-      }
-    );
-    const mainResult2 = (await mainGen2.next()).value;
-    expect(mainResult2.usage.cache_creation_input_tokens).toBe(3000);
-
-    // Status line now displays 5m fallback countdown with (5m) tag
-    // At t=1,710,000 (110s into the 300s TTL) => 190s left => 3:10 (5m)
-    setTime(1_710_000);
-    await tick();
-    expect(getStatus()).toBe("cache warm 3:10 (5m) · hit 0%");
+    await w.turn(m.$, {}, HEALTHY);
+    await m.tick();
+    expect(m.getStatus()).toBe("cache warm 5:00 (5m) · hit 90%");
   });
 });
