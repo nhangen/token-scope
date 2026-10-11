@@ -332,7 +332,7 @@ Subagents      │ Invalidation     │          1 │      $0.4100 │ Subagent
   1 │ Run /compact before breaks > 30 minutes    │         ~$24.50/wk│     ~6,125,000/wk│        $329.70
   2 │ Start fresh session instead of resume >24h │         ~$18.20/wk│     ~4,550,000/wk│        $356.90
   3 │ Lower auto-compact threshold to 35%        │         ~$11.40/wk│     ~2,850,000/wk│        $384.10
-  4 │ Keep main session on 1h TTL                │          ~$8.90/wk│     ~2,225,000/wk│        $394.10
+  4 │ Switch main session to 5m TTL              │     +$8.90/wk cost│      +2,225,000/wk│        $411.90
 ```
 
 #### Formulas & Definitions

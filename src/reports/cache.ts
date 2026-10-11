@@ -185,8 +185,12 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
       simRows.push([
         String(simRows.length + 1),
         s.title,
-        s.weeklySavingsUsd > 0 ? `~$${s.weeklySavingsUsd.toFixed(2)}/wk` : "$0.00/wk",
-        s.weeklySavingsCredits > 0 ? `~${formatTokens(Math.round(s.weeklySavingsCredits))}/wk` : "0/wk",
+        s.weeklySavingsUsd > 0
+          ? `~$${s.weeklySavingsUsd.toFixed(2)}/wk`
+          : s.weeklySavingsUsd < 0 ? `+$${(-s.weeklySavingsUsd).toFixed(2)}/wk cost` : "$0.00/wk",
+        s.weeklySavingsCredits > 0
+          ? `~${formatTokens(Math.round(s.weeklySavingsCredits))}/wk`
+          : s.weeklySavingsCredits < 0 ? `+${formatTokens(Math.round(-s.weeklySavingsCredits))}/wk` : "0/wk",
         formatUsd(s.simulatedTotalCostUsd),
       ]);
       descriptions.push(`  ${bold(String(simRows.length) + ". " + s.title)}\n` + s.assumptions.map((a) => `     • ${a}`).join("\n"));

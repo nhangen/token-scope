@@ -560,3 +560,29 @@ describe("Cache Economics — subagent visibility by source", () => {
     expect(json.summary.subagents_supported).toBe(false);
   });
 });
+
+describe("Cache Economics — 5m TTL sim sign", () => {
+  const t0 = 1_700_000_000_000;
+  const turns: CacheTurnRecord[] = [
+    { uuid: "a", sessionId: "s1", timestampMs: t0, model: "claude-sonnet-4-6", outputTokens: 0, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: null },
+    // Read survived a 10-minute gap, so under a 5m TTL it would have been a rebuild: 1M * (3.75 - 0.30) = $3.45.
+    { uuid: "b", sessionId: "s1", timestampMs: t0 + 10 * 60 * 1000, model: "claude-sonnet-4-6", outputTokens: 0, inputTokens: 0, cacheReadTokens: 1_000_000, cacheWriteTokens: 0, costUsd: null },
+  ];
+
+  it("reports a cost increase as negative savings under a fixed counterfactual title, ranked last", () => {
+    const a = analyzeCacheEconomics({ mainTurns: turns, sinceSec: 0, nowMs: t0 + 7 * 86_400_000 });
+    const sim = a.simulations.find((s) => s.policyId === "main_5m_ttl")!;
+    const baseline = a.simulations.find((s) => s.policyId === "actual_baseline")!;
+    expect(sim.title).toBe("Switch main session to 5m TTL");
+    expect(sim.totalSavingsUsd).toBeCloseTo(-3.45, 6);
+    expect(sim.simulatedTotalCostUsd).toBeCloseTo(baseline.simulatedTotalCostUsd + 3.45, 6);
+    expect(a.simulations.at(-1)!.policyId).toBe("main_5m_ttl");
+  });
+
+  it("renders a negative saving as an added weekly cost", () => {
+    const out = capture(() => renderCacheReport(stubReader(turns), { since: 0, sinceStr: "7d", limit: 10, json: false, focus: "sim" }));
+    const row = out.split("\n").find((l) => l.includes("Switch main session to 5m TTL") && l.includes("/wk"))!;
+    expect(row).toContain("+$");
+    expect(row).toContain("cost");
+  });
+});

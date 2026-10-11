@@ -473,17 +473,17 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
   const net5mSavingsUsd = main5mWriteSavingsUsd - main5mExpiryPenaltiesUsd;
   simulations.push({
     policyId: "main_5m_ttl",
-    title: net5mSavingsUsd >= 0 ? "Switch main session to 5m TTL" : "Keep main session on 1h TTL",
-    weeklySavingsUsd: Math.abs(net5mSavingsUsd) / windowWeeks,
-    totalSavingsUsd: Math.abs(net5mSavingsUsd),
-    weeklySavingsCredits: (Math.abs(net5mSavingsUsd) / (totalInputCostUsd || 1)) * totalInputCredits / windowWeeks,
+    title: "Switch main session to 5m TTL",
+    weeklySavingsUsd: net5mSavingsUsd / windowWeeks,
+    totalSavingsUsd: net5mSavingsUsd,
+    weeklySavingsCredits: (net5mSavingsUsd / (totalInputCostUsd || 1)) * totalInputCredits / windowWeeks,
     assumptions: [
       "5m cache write = 1.25x input price; 1h cache write = 2.0x input price; cache read = 0.1x",
       "Write savings apply only to tokens billed at the 1h tier (usage.cache_creation.ephemeral_1h_input_tokens)",
       `Gaps in (5m, 60m] observed: ${main5mBreakEvenGapsCount}`,
       net5mSavingsUsd >= 0
         ? "Fast-paced turns dominate; 37.5% write savings outweigh the few 5m-60m expiry rebuilds"
-        : "1h TTL avoids rebuilds on frequent 5m-60m pauses; break-even favors 1h",
+        : "Negative savings: 1h TTL avoids rebuilds on 5m-60m pauses, so switching would cost more",
     ],
     simulatedTotalCostUsd: actualTotalCostUsd - net5mSavingsUsd,
   });
@@ -581,7 +581,6 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     simulatedTotalCostUsd: actualTotalCostUsd - freshSessionSavingsUsd,
   });
 
-  // Sort simulations by weekly savings descending (keeping baseline at end or sorted)
   const rankedSimulations = [
     simulations[0]!, // baseline
     ...simulations.slice(1).sort((a, b) => b.weeklySavingsUsd - a.weeklySavingsUsd),
