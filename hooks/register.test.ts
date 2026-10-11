@@ -197,8 +197,10 @@ describe("register hook wiring", () => {
         every: (_ms: number, fn: () => void) => {
           timerStarted = true;
           timerCallback = fn;
-          return () => {
-            timerCancelled = true;
+          return {
+            cancel: () => {
+              timerCancelled = true;
+            },
           };
         },
       },

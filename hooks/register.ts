@@ -1,4 +1,4 @@
-import type { Register } from "claude-code";
+import type { Register, Timer } from "claude-code";
 
 export function isEnvTrue(val: string | undefined): boolean {
   if (!val) return false;
@@ -81,7 +81,7 @@ export function label(
 export const register: Register = (on, options) => {
   const opts = options as Record<string, unknown> | undefined;
 
-  let cancelTimer: (() => void) | undefined;
+  let timer: Timer | undefined;
   let configuredTtl = 60 * 60 * 1000;
   let effectiveTtl = configuredTtl;
   let is5mFallback = false;
@@ -97,10 +97,8 @@ export const register: Register = (on, options) => {
   };
 
   on("session.start", async ($, e, next) => {
-    if (cancelTimer) {
-      cancelTimer();
-      cancelTimer = undefined;
-    }
+    timer?.cancel();
+    timer = undefined;
     resetConversation();
 
     if (isOptedOut(opts)) {
@@ -153,7 +151,7 @@ export const register: Register = (on, options) => {
     configuredTtl = ttl;
     effectiveTtl = ttl;
 
-    cancelTimer = $.clock.every(1000, () => {
+    timer = $.clock.every(1000, () => {
       $.clock
         .now()
         .then(now => $.ui.status(label(now, lastAt, hit, effectiveTtl, is5mFallback)))
