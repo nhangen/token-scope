@@ -295,6 +295,15 @@ describe("register hook wiring and coexistence", () => {
     await expectDisabled({ cacheTimer: true }, { DISABLE_PROMPT_CACHING: "1" });
   });
 
+  test("hit rate counts cache writes in the denominator", async () => {
+    const m = makeMock$();
+    const w = wire({ cacheTimer: true });
+    await w.start(m.$);
+    await w.turn(m.$, {}, { input_tokens: 100, cache_read_input_tokens: 600, cache_creation_input_tokens: 300 });
+    await m.tick();
+    expect(m.getStatus()).toBe("cache warm 60:00 · hit 60%");
+  });
+
   test("an enabled session shows the countdown, so the disabled assertions are not vacuous", async () => {
     const m = makeMock$();
     const w = wire({ cacheTimer: true });
