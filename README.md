@@ -724,7 +724,7 @@ cache cold
 - **Minimum Claude Code version**: Requires Claude Code `2.1.294` or later (which supports function-hook mods declared via `hooks/hooks.json`).
 - **Install via plugin**:
   ```bash
-  claude plugin install nhangen-tools/token-scope
+  claude plugin install token-scope@nhangen-tools
   ```
   Or for local development:
   ```bash
