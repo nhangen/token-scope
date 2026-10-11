@@ -795,3 +795,13 @@ describe("Cache Economics — unpriced models", () => {
     expect(json.summary.unpriced_models).toEqual(["mystery-model-x"]);
   });
 });
+
+describe("Cache Economics — empty-data guard", () => {
+  it("renders the report when only subagent turns exist", () => {
+    const t0 = 1_700_000_000_000;
+    const sub: CacheTurnRecord = { uuid: "s", sessionId: "p", agentId: "x", timestampMs: t0, model: "claude-haiku-4-5", outputTokens: 10, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 3_000, costUsd: null, isSubagent: true };
+    const out = capture(() => renderCacheReport(stubReader([], [sub]), { since: 0, sinceStr: "7d", limit: 10, json: false }));
+    expect(out).not.toContain("No cache data found");
+    expect(out).toContain("Miss Classification");
+  });
+});

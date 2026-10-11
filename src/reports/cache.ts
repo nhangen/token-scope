@@ -67,7 +67,7 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
     return;
   }
 
-  if (rows.length === 0 && mainTurns.length === 0) {
+  if (rows.length === 0 && mainTurns.length === 0 && subagentTurns.length === 0) {
     console.log(`No cache data found in the last ${opts.sinceStr}.`);
     return;
   }
