@@ -88,7 +88,6 @@ export const register: Register = (on, options) => {
   let hit: number | undefined;
   let isEnabled = true;
 
-
   on("session.start", async ($, e, next) => {
     timer?.cancel();
     timer = undefined;
