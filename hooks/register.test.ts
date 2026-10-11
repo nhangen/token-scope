@@ -196,7 +196,43 @@ describe("register hook wiring and coexistence", () => {
     };
   }
 
-  test("attaches session.start and turn.step", () => {
+  const HEALTHY = { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0 };
+
+  test("/clear (session.end reason clear) resets the countdown and the 5m fallback", async () => {
+    const handlers: Record<string, any> = {};
+    register(((event: string, handler: any) => {
+      handlers[event] = handler;
+    }) as any, { cacheTimer: true });
+    const m = makeMock$();
+    const turn = async (usage: Record<string, number>) =>
+      (await handlers["turn.step"](m.$, {}, async function* () {
+        return { usage };
+      }).next()).value;
+
+    await handlers["session.start"](m.$, {}, (e: any) => e);
+    await turn(HEALTHY);
+    m.setTime(1_600_000);
+    await turn({ input_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 3000 });
+    await m.tick();
+    expect(m.getStatus()).toBe("cache warm 5:00 (5m) · hit 0%");
+
+    let nextCalled = false;
+    await handlers["session.end"](m.$, { reason: "clear" }, (e: any) => {
+      nextCalled = true;
+      return e;
+    });
+    expect(nextCalled).toBe(true);
+    expect(m.getStatus()).toBe(undefined);
+    await m.tick();
+    expect(m.getStatus()).toBe(undefined);
+
+    m.setTime(1_700_000);
+    await turn(HEALTHY);
+    await m.tick();
+    expect(m.getStatus()).toBe("cache warm 60:00 · hit 90%");
+  });
+
+  test("attaches session.start, session.end, and turn.step", () => {
     const events: string[] = [];
     const fakeOn = ((event: string) => {
       events.push(event);
@@ -204,6 +240,7 @@ describe("register hook wiring and coexistence", () => {
 
     register(fakeOn, { cacheTimer: true });
     expect(events).toContain("session.start");
+    expect(events).toContain("session.end");
     expect(events).toContain("turn.step");
   });
 
@@ -223,8 +260,6 @@ describe("register hook wiring and coexistence", () => {
         }).next()).value,
     };
   }
-
-  const HEALTHY = { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0 };
 
   async function expectDisabled(options: Record<string, unknown>, envVars: Record<string, string | undefined>) {
     const m = makeMock$(envVars);
@@ -319,7 +354,6 @@ describe("register hook wiring and coexistence", () => {
     await startHandler($, {}, (e: any) => e);
     expect(isTimerCancelled()).toBe(false);
 
-    // Second session.start (e.g. /clear)
     await startHandler($, {}, (e: any) => e);
     expect(isTimerCancelled()).toBe(true);
   });

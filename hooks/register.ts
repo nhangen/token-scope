@@ -85,20 +85,26 @@ export const register: Register = (on, options) => {
   const opts = options as Record<string, unknown> | undefined;
 
   let cancelTimer: (() => void) | undefined;
-  let effectiveTtl = 60 * 60 * 1000;
+  let configuredTtl = 60 * 60 * 1000;
+  let effectiveTtl = configuredTtl;
   let is5mFallback = false;
   let lastAt: number | undefined;
   let hit: number | undefined;
   let isEnabled = true;
+
+  const resetConversation = () => {
+    lastAt = undefined;
+    hit = undefined;
+    is5mFallback = false;
+    effectiveTtl = configuredTtl;
+  };
 
   on("session.start", async ($, e, next) => {
     if (cancelTimer) {
       cancelTimer();
       cancelTimer = undefined;
     }
-    lastAt = undefined;
-    hit = undefined;
-    is5mFallback = false;
+    resetConversation();
 
     // Check userConfig opt-out first
     if (opts?.["cacheTimer"] === false) {
@@ -143,8 +149,8 @@ export const register: Register = (on, options) => {
       // Ignore if settings read is unsupported in test mock
     }
 
-    const configuredTtl = resolveTtl(env, settings);
-    if (configuredTtl === null) {
+    const ttl = resolveTtl(env, settings);
+    if (ttl === null) {
       // DISABLE_PROMPT_CACHING active: show nothing
       isEnabled = false;
       $.ui.status(undefined);
@@ -152,12 +158,20 @@ export const register: Register = (on, options) => {
     }
 
     isEnabled = true;
-    effectiveTtl = configuredTtl;
+    configuredTtl = ttl;
+    effectiveTtl = ttl;
 
     cancelTimer = $.clock.every(1000, () => {
       void $.clock.now().then(now => $.ui.status(label(now, lastAt, hit, effectiveTtl, is5mFallback)));
     });
 
+    return next(e);
+  });
+
+  // /clear ends the conversation without a following session.start.
+  on("session.end", ($, e, next) => {
+    resetConversation();
+    if (isEnabled) $.ui.status(undefined);
     return next(e);
   });
 
