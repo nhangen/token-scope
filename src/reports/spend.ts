@@ -4,6 +4,22 @@ import {
   formatTokens, formatUsd, formatTimestamp, truncate, dim, bold,
 } from "@/format";
 import { VERSION } from "@/version";
+import { assertSafeLabelValue, PrivacyError } from "@/fleet-contract";
+
+const REDACTED = "[redacted]";
+
+/** Keep credential-shaped model labels out of reports; only the contract's
+ * explicit privacy rejection becomes a redaction. Other errors still surface. */
+function screenModel(value: string | null): { value: string | null; redacted: boolean } {
+  if (value === null) return { value: null, redacted: false };
+  try {
+    assertSafeLabelValue(value);
+    return { value, redacted: false };
+  } catch (e) {
+    if (e instanceof PrivacyError) return { value: REDACTED, redacted: true };
+    throw e;
+  }
+}
 
 interface SpendOptions {
   sessionId?: string;
@@ -76,6 +92,9 @@ export function renderSpendReport(reader: Reader, opts: SpendOptions): void {
     selected = selected.filter((x) => x.t.timestamp > cutoffMs);
   }
 
+  const displayTurns = selected.map((x) => ({ ...x, model: screenModel(x.t.model) }));
+  const redactedLabels = displayTurns.reduce((sum, x) => sum + Number(x.model.redacted), 0);
+
   const directTurns = selected.map((x) => x.t);
   const direct = sumTurns(directTurns);
 
@@ -122,8 +141,9 @@ export function renderSpendReport(reader: Reader, opts: SpendOptions): void {
       turn_range: opts.turnRange ? { from, to: opts.turnRange.to ?? allTurns.length } : null,
       since_floor_applied: sinceFloorApplied,
       agent_filter: opts.agentId ?? null,
-      turns: selected.map((x) => ({
-        turn: x.turnNo, timestamp: x.t.timestamp, model: x.t.model,
+      redacted_labels: redactedLabels,
+      turns: displayTurns.map((x) => ({
+        turn: x.turnNo, timestamp: x.t.timestamp, model: x.model.value,
         output: x.t.outputTokens, input: x.t.inputTokens,
         cache_read: x.t.cacheReadTokens, cache_write: x.t.cacheWriteTokens,
         cost_usd: x.t.costUsd,
@@ -171,8 +191,8 @@ export function renderSpendReport(reader: Reader, opts: SpendOptions): void {
       { header: "Cache Wr", align: "right", width: 11 },
       { header: "Cost", align: "right", width: 10 },
     ],
-    selected.map((x) => [
-      String(x.turnNo), formatTimestamp(x.t.timestamp), truncate(x.t.model ?? "—", 22),
+    displayTurns.map((x) => [
+      String(x.turnNo), formatTimestamp(x.t.timestamp), truncate(x.model.value ?? "—", 22),
       formatTokens(x.t.outputTokens), formatTokens(x.t.inputTokens),
       formatTokens(x.t.cacheReadTokens), formatTokens(x.t.cacheWriteTokens),
       formatUsd(x.t.costUsd),
@@ -212,6 +232,9 @@ export function renderSpendReport(reader: Reader, opts: SpendOptions): void {
   }
   if (combined.costPartial) {
     console.log(renderFootnote("Some turns used a model with no known pricing; their tokens are counted but cost is excluded."));
+  }
+  if (redactedLabels > 0) {
+    console.log(renderFootnote(`${redactedLabels} model label(s) redacted: credential-shaped source values withheld`));
   }
   console.log(renderFootnote("Cost is Claude billed spend. Local (ollama) authoring runs off-transcript and is not counted here."));
   console.log("");

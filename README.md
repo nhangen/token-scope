@@ -144,7 +144,9 @@ Notes: subagent totals are session-wide in v1 (not scoped to the turn range), an
 the JSONL source (subagent transcripts aren't in the SQLite store). Turns on a model with
 no known pricing still count their tokens; only their cost is excluded. Local (ollama)
 authoring runs off-transcript and is not counted — so a delegated task's spend shows just
-the thin Claude PM overhead.
+the thin Claude PM overhead. Model labels in displayed turns pass the credential screen:
+credential-shaped values print as `[redacted]`, and `--json` reports the number of withheld
+turn labels in `redacted_labels` (the text report adds a footer only when any are redacted).
 
 ---
 

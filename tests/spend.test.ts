@@ -75,6 +75,62 @@ describe("renderSpendReport — whole session", () => {
   });
 });
 
+describe("credential-shaped model labels in spend reports (#144)", () => {
+  const SECRET_MODEL = "github_pat_FAKE_EXAMPLE_000000000000";
+
+  function readerWithModelOverride(model: string | null): Reader {
+    return new Proxy(reader, {
+      get(target, property, receiver) {
+        if (property === "querySessionTurns") {
+          return (sessionId: string) => target.querySessionTurns(sessionId).map((turn, index) =>
+            sessionId === "sess-spend" && index === 0 ? { ...turn, model } : turn,
+          );
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+  }
+
+  it("redacts credential-shaped models in JSON and counts withheld turn labels", () => {
+    const out = capture(() => renderSpendReport(
+      readerWithModelOverride(SECRET_MODEL),
+      { ...base, sessionId: "sess-spend" },
+    ));
+    const json = JSON.parse(out);
+    expect(JSON.stringify(json)).not.toContain(SECRET_MODEL);
+    expect(json.turns[0]!.model).toBe("[redacted]");
+    expect(json.turns[1]!.model).toBe("claude-sonnet-4-6");
+    expect(json.redacted_labels).toBe(1);
+  });
+
+  it("redacts the text row and discloses the number of hidden labels", () => {
+    const out = capture(() => renderSpendReport(
+      readerWithModelOverride(SECRET_MODEL),
+      { ...base, sessionId: "sess-spend", json: false },
+    ));
+    expect(out).not.toContain(SECRET_MODEL);
+    expect(out).toContain("[redacted]");
+    expect(out).toContain("1 model label(s) redacted: credential-shaped source values withheld");
+  });
+
+  it("preserves null model labels without counting them as redactions", () => {
+    const out = capture(() => renderSpendReport(
+      readerWithModelOverride(null),
+      { ...base, sessionId: "sess-spend" },
+    ));
+    const json = JSON.parse(out);
+    expect(json.turns[0]!.model).toBeNull();
+    expect(json.redacted_labels).toBe(0);
+  });
+
+  it("does not turn non-privacy errors into redactions", () => {
+    expect(() => renderSpendReport(
+      readerWithModelOverride(42 as unknown as string),
+      { ...base, sessionId: "sess-spend" },
+    )).toThrow(TypeError);
+  });
+});
+
 describe("renderSpendReport — turn slice", () => {
   it("scopes direct spend to the range but keeps subagent session-wide (v1)", () => {
     const out = capture(() => renderSpendReport(reader, { ...base, sessionId: "sess-spend", turnRange: { from: 2, to: 2 } }));
