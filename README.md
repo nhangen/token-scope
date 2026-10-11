@@ -360,6 +360,7 @@ Subagents      │ Invalidation     │          1 │      $0.4100 │ Subagent
   - **`cold`**: First turn of a main session or subagent loop.
 
 - **Reconciliation**: The baseline is token-priced with the 5m/1h write tiers, the same rates every simulation uses. **Reader vs Tier-Priced** compares that against the cost the reader reports per turn, which prices every write at the 5m rate; a negative delta means the reader under-counts 1h-tier writes.
+- **Unpriced models**: Turns on a model with no pricing entry still count toward the token mix and hit rate but add $0 to every dollar figure. The report names them in a footnote, and JSON carries `summary.unpriced_turns` and `summary.unpriced_models`.
 
 - **Policy Simulations ("What Would Have Saved")**:
   Replays actual user transcripts over the analyzed window under counterfactual behaviors:

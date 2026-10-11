@@ -773,3 +773,25 @@ describe("Cache Economics — 5m sim assumption text", () => {
     expect(s.assumptions.join("\n")).not.toContain("outweigh");
   });
 });
+
+describe("Cache Economics — unpriced models", () => {
+  const t0 = 1_700_000_000_000;
+  const turns: CacheTurnRecord[] = [
+    { uuid: "a", sessionId: "s1", timestampMs: t0, model: "claude-sonnet-4-6", outputTokens: 10, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 10_000, costUsd: null },
+    { uuid: "b", sessionId: "s2", timestampMs: t0, model: "mystery-model-x", outputTokens: 10, inputTokens: 100, cacheReadTokens: 900, cacheWriteTokens: 50_000, costUsd: null },
+  ];
+
+  it("counts turns whose model has no pricing instead of folding them in at $0", () => {
+    const a = analyzeCacheEconomics({ mainTurns: turns, sinceSec: 0, nowMs: t0 + 86_400_000 });
+    expect(a.unpriced).toEqual({ turns: 1, tokens: 51_000, models: ["mystery-model-x"] });
+  });
+
+  it("surfaces unpriced turns in text and JSON output", () => {
+    const opts = { since: 0, sinceStr: "7d", limit: 10 } as const;
+    const text = capture(() => renderCacheReport(stubReader(turns), { ...opts, json: false }));
+    const json = JSON.parse(capture(() => renderCacheReport(stubReader(turns), { ...opts, json: true })));
+    expect(text).toContain("mystery-model-x");
+    expect(json.summary.unpriced_turns).toBe(1);
+    expect(json.summary.unpriced_models).toEqual(["mystery-model-x"]);
+  });
+});

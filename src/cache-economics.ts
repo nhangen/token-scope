@@ -127,6 +127,8 @@ export interface CacheEconomicsAnalysis {
   };
   simulations: PolicySimulationResult[];
   windowWeeks: number;
+  /** Turns whose model has no pricing entry; their tokens count toward the mix but add $0 to every dollar figure. */
+  unpriced: { turns: number; tokens: number; models: string[] };
   /** Turns that are both priced and carry a reader costUsd: reader total vs tier-aware token pricing. */
   reconciliation: {
     turns: number;
@@ -287,6 +289,9 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
   let totalWriteUsd = 0;
   let totalInputUsd = 0;
   let totalWriteCredits = 0;
+  let unpricedTurns = 0;
+  let unpricedTokens = 0;
+  const unpricedModels = new Set<string>();
 
   for (const t of allTurns) {
     totalRead += t.cacheReadTokens;
@@ -299,6 +304,10 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
       totalReadUsd += (t.cacheReadTokens * p.cacheReadPerMillion) / 1_000_000;
       totalWriteUsd += cacheWriteCostUsd(t, p);
       totalInputUsd += (t.inputTokens * p.inputPerMillion) / 1_000_000;
+    } else {
+      unpricedTurns++;
+      unpricedTokens += t.inputTokens + t.cacheReadTokens + t.cacheWriteTokens;
+      unpricedModels.add(t.model);
     }
   }
 
@@ -625,6 +634,7 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     gapHistogram,
     simulations: rankedSimulations,
     windowWeeks,
+    unpriced: { turns: unpricedTurns, tokens: unpricedTokens, models: [...unpricedModels].sort() },
     reconciliation: {
       turns: reconciledTurns,
       readerCostUsd,

@@ -52,6 +52,8 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
         total_subagent_expiry_extra_cost_usd: analysis.subagentMisses.totalExpiryExtraCostUsd,
         total_invalidation_extra_cost_usd: analysis.misses.totalInvalidationExtraCostUsd,
         total_subagent_invalidation_extra_cost_usd: analysis.subagentMisses.totalInvalidationExtraCostUsd,
+        unpriced_turns: analysis.unpriced.turns,
+        unpriced_models: analysis.unpriced.models,
       },
       token_mix: analysis.tokenMix,
       cost_mix: analysis.costMix,
@@ -218,6 +220,9 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
     }
   }
 
+  if (analysis.unpriced.turns > 0) {
+    console.log(renderFootnote(`${analysis.unpriced.turns} turns on unpriced models (${analysis.unpriced.models.join(", ")}) are excluded from every dollar figure.`));
+  }
   console.log(renderFootnote("Corrected hit rate accounts for cache writes (misses). Rebuild cost (expiry + invalidation) reflects rebuilding the prefix at write price instead of read price."));
   console.log("");
 }
