@@ -283,7 +283,7 @@ token-scope — Cache Economics & Efficiency
   Overall Cache Hit %          96.2% (read / (read + write + input))
   Read Share (non-write)       99.8% (legacy read / (read + input))
   Est. Total Savings           $10,159.63
-  Expiry Miss Cost             $142.80
+  Rebuild Miss Cost            $161.41
 
   Input Token & Cost Mix
 Category         │         Tokens │   Token % │    Cost ($) │   Cost % │        Credits │  Credits %
@@ -305,11 +305,12 @@ Loop           │ Classification   │   Requests │   Extra Cost │ Note
 ───────────────┼──────────────────┼────────────┼──────────────┼─────────────────────────────────────
 Main session   │ Expiry (>1h gap) │         18 │     $112.40  │ Idle pause exceeded 1h TTL; rebuilt
 Main session   │ Growth (no gap)  │      4,720 │      $0.0000 │ Normal incremental context expansion
-Main session   │ Invalidation     │          4 │      $18.20  │ Prefix invalidated (model/tools)
+Main session   │ Invalidation     │          4 │     $18.2000 │ Prefix invalidated (model/tools)
 Main session   │ Cold initial     │         24 │      $0.0000 │ Session start / first request
 Subagents      │ Cold starts      │         82 │      $0.0000 │ Subagent first turn (5m TTL)
 Subagents      │ Expiry (>5m gap) │          6 │      $12.20  │ Subagent pause exceeded 5m TTL
 Subagents      │ Growth (no gap)  │        190 │      $0.0000 │ Subagent context growth
+Subagents      │ Invalidation     │          1 │      $0.4100 │ Subagent prefix invalidated
 
   Request Gap Distribution (Main Loop)
   Bucket       │   Count │   Share │ Distribution
@@ -355,7 +356,7 @@ Subagents      │ Growth (no gap)  │        190 │      $0.0000 │ Subagent
     $$\text{Expiry Cost} = \frac{\text{Rebuild Prefix} \times (P_{\text{write}} - P_{\text{read}})}{1,000,000}$$
     where $P_{\text{write}}$ is the turn's blended write rate across its 5m and 1h tiers.
   - **`growth`**: Gap $\le \text{TTL}$, and write corresponds to new content entering context ($\text{cache\_read} \approx \text{prev\_context}$). Extra miss cost is $\$0.00$.
-  - **`invalidation`**: Gap $\le \text{TTL}$, but prefix read was missed and write is far larger than new content (model switch, system prompt / tools change, or compaction).
+  - **`invalidation`**: Gap $\le \text{TTL}$, but prefix read was missed and write is far larger than new content (model switch, system prompt / tools change, or compaction). Priced with the same rebuild formula as `expiry`; the summary's **Rebuild Miss Cost** is expiry plus invalidation across both loops.
   - **`cold`**: First turn of a main session or subagent loop.
 
 - **Policy Simulations ("What Would Have Saved")**:

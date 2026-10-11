@@ -9,6 +9,7 @@ import {
 } from "@/cache-economics";
 import { createReader } from "@/reader";
 import { renderCacheReport } from "@/reports/cache";
+import type { Reader } from "@/reader";
 
 function capture(fn: () => void): string {
   const oldLog = console.log;
@@ -447,5 +448,45 @@ describe("Cache Economics — subagent streams", () => {
     const { subagentTurns } = reader.queryCacheTurns(0);
     reader.close();
     expect(subagentTurns.map((t) => t.agentId).sort()).toEqual(["alpha", "beta"]);
+  });
+});
+
+function stubReader(mainTurns: CacheTurnRecord[], subagentTurns: CacheTurnRecord[] = [], extra: Record<string, unknown> = {}): Reader {
+  return {
+    queryCacheStats: () => [],
+    queryCacheTurns: () => ({ mainTurns, subagentTurns, ...extra }),
+  } as unknown as Reader;
+}
+
+describe("Cache Economics — invalidation cost", () => {
+  // claude-sonnet-4-6 5m write $3.75/M, read $0.30/M. Rebuild 40,000 tokens -> 40,000 * 3.45 / 1M = $0.138.
+  const t0 = 1_700_000_000_000;
+  const turn = (uuid: string, off: number, read: number, write: number, sessionId = "s1", isSubagent = false, agentId?: string): CacheTurnRecord => ({
+    uuid, sessionId, agentId, timestampMs: t0 + off, model: "claude-sonnet-4-6", outputTokens: 10,
+    inputTokens: 0, cacheReadTokens: read, cacheWriteTokens: write, costUsd: null, isSubagent,
+  });
+
+  it("totals invalidation rebuild cost for main and subagent loops", () => {
+    const a = analyzeCacheEconomics({
+      mainTurns: [turn("m1", 0, 0, 50_000), turn("m2", 20_000, 0, 40_000)],
+      subagentTurns: [turn("s1", 0, 0, 50_000, "p", true, "x"), turn("s2", 20_000, 0, 40_000, "p", true, "x")],
+      sinceSec: 0,
+      nowMs: t0 + 86_400_000,
+    });
+    expect(a.misses.totalInvalidationExtraCostUsd).toBeCloseTo(0.138, 6);
+    expect(a.subagentMisses.totalInvalidationExtraCostUsd).toBeCloseTo(0.138, 6);
+  });
+
+  it("renders the invalidation cost and a subagent invalidation row instead of a literal zero", () => {
+    const out = capture(() =>
+      renderCacheReport(stubReader([turn("m1", 0, 0, 50_000), turn("m2", 20_000, 0, 40_000)], [turn("s1", 0, 0, 50_000, "p", true, "x"), turn("s2", 20_000, 0, 40_000, "p", true, "x")]), {
+        since: 0, sinceStr: "30d", limit: 10, json: false, focus: "misses",
+      })
+    );
+    const mainInval = out.split("\n").find((l) => l.includes("Main session") && l.includes("Invalidation"))!;
+    const subInval = out.split("\n").find((l) => l.includes("Subagents") && l.includes("Invalidation"));
+    expect(mainInval).toContain("$0.1380");
+    expect(subInval).toBeDefined();
+    expect(subInval!).toContain("$0.1380");
   });
 });

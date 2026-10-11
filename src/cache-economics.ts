@@ -98,6 +98,8 @@ export interface CacheEconomicsAnalysis {
     colds: number;
     totalExpiryExtraCostUsd: number;
     totalExpiryExtraCredits: number;
+    totalInvalidationExtraCostUsd: number;
+    totalInvalidationExtraCredits: number;
     items: MissClassification[];
   };
   subagentMisses: {
@@ -108,6 +110,8 @@ export interface CacheEconomicsAnalysis {
     invalidations: number;
     totalExpiryExtraCostUsd: number;
     totalExpiryExtraCredits: number;
+    totalInvalidationExtraCostUsd: number;
+    totalInvalidationExtraCredits: number;
     items: MissClassification[];
   };
   gapHistogram: {
@@ -372,6 +376,8 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
   const colds = writesOnly.filter((m) => m.type === "cold");
   const totalExpiryExtraCostUsd = expiries.reduce((s, m) => s + m.extraCostUsd, 0);
   const totalExpiryExtraCredits = expiries.reduce((s, m) => s + m.extraCredits, 0);
+  const totalInvalidationExtraCostUsd = invalidations.reduce((s, m) => s + m.extraCostUsd, 0);
+  const totalInvalidationExtraCredits = invalidations.reduce((s, m) => s + m.extraCredits, 0);
 
   // Summary counts for subagents
   const subColdStarts = subagentMissItems.filter((m) => m.type === "cold");
@@ -380,6 +386,8 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
   const subInvalidations = subagentMissItems.filter((m) => m.type === "invalidation");
   const subExpiryCostUsd = subExpiries.reduce((s, m) => s + m.extraCostUsd, 0);
   const subExpiryCredits = subExpiries.reduce((s, m) => s + m.extraCredits, 0);
+  const subInvalidationCostUsd = subInvalidations.reduce((s, m) => s + m.extraCostUsd, 0);
+  const subInvalidationCredits = subInvalidations.reduce((s, m) => s + m.extraCredits, 0);
 
   const gapHistogram = computeGapHistogram(gapsSec);
 
@@ -567,6 +575,8 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
       colds: colds.length,
       totalExpiryExtraCostUsd,
       totalExpiryExtraCredits,
+      totalInvalidationExtraCostUsd,
+      totalInvalidationExtraCredits,
       items: mainMissItems,
     },
     subagentMisses: {
@@ -577,6 +587,8 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
       invalidations: subInvalidations.length,
       totalExpiryExtraCostUsd: subExpiryCostUsd,
       totalExpiryExtraCredits: subExpiryCredits,
+      totalInvalidationExtraCostUsd: subInvalidationCostUsd,
+      totalInvalidationExtraCredits: subInvalidationCredits,
       items: subagentMissItems,
     },
     gapHistogram,

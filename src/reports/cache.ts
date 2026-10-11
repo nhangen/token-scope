@@ -44,6 +44,8 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
         estimated_total_savings_usd: totalSavings > 0 ? totalSavings : null,
         total_expiry_extra_cost_usd: analysis.misses.totalExpiryExtraCostUsd,
         total_subagent_expiry_extra_cost_usd: analysis.subagentMisses.totalExpiryExtraCostUsd,
+        total_invalidation_extra_cost_usd: analysis.misses.totalInvalidationExtraCostUsd,
+        total_subagent_invalidation_extra_cost_usd: analysis.subagentMisses.totalInvalidationExtraCostUsd,
       },
       token_mix: analysis.tokenMix,
       cost_mix: analysis.costMix,
@@ -71,7 +73,10 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
       ["Overall Cache Hit %", `${formatPct(analysis.correctedHitPct)} ${dim("(read / (read + write + input))")}`],
       ["Read Share (non-write)", `${formatPct(analysis.legacyHitPct)} ${dim("(legacy read / (read + input))")}`],
       ["Est. Total Savings", formatUsd(totalSavings > 0 ? totalSavings : null)],
-      ["Expiry Miss Cost", formatUsd(analysis.misses.totalExpiryExtraCostUsd + analysis.subagentMisses.totalExpiryExtraCostUsd)],
+      ["Rebuild Miss Cost", formatUsd(
+        analysis.misses.totalExpiryExtraCostUsd + analysis.subagentMisses.totalExpiryExtraCostUsd +
+        analysis.misses.totalInvalidationExtraCostUsd + analysis.subagentMisses.totalInvalidationExtraCostUsd
+      )],
     ]));
 
     console.log(`\n${bold("  Input Token & Cost Mix")}`);
@@ -149,12 +154,13 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
       ],
       [
         ["Main session", "Expiry (>1h gap)", String(analysis.misses.expiries), formatUsd(analysis.misses.totalExpiryExtraCostUsd), "Idle pause exceeded 1h TTL; cache rebuilt"],
-        ["Main session", "Growth (no gap)", String(analysis.misses.growths), "$0.0000", "Normal incremental context expansion"],
-        ["Main session", "Invalidation", String(analysis.misses.invalidations), "$0.0000", "Prefix invalidated (model/prompt change)"],
-        ["Main session", "Cold initial", String(analysis.misses.colds), "$0.0000", "Session start / first request"],
-        ["Subagents", "Cold starts", String(analysis.subagentMisses.coldStarts), "$0.0000", "Subagent first turn (5m TTL)"],
+        ["Main session", "Growth (no gap)", String(analysis.misses.growths), formatUsd(0), "Normal incremental context expansion"],
+        ["Main session", "Invalidation", String(analysis.misses.invalidations), formatUsd(analysis.misses.totalInvalidationExtraCostUsd), "Prefix invalidated (model/prompt change)"],
+        ["Main session", "Cold initial", String(analysis.misses.colds), formatUsd(0), "Session start / first request"],
+        ["Subagents", "Cold starts", String(analysis.subagentMisses.coldStarts), formatUsd(0), "Subagent first turn (5m TTL)"],
         ["Subagents", "Expiry (>5m gap)", String(analysis.subagentMisses.expiries), formatUsd(analysis.subagentMisses.totalExpiryExtraCostUsd), "Subagent pause exceeded 5m TTL"],
-        ["Subagents", "Growth (no gap)", String(analysis.subagentMisses.growths), "$0.0000", "Subagent context growth"],
+        ["Subagents", "Growth (no gap)", String(analysis.subagentMisses.growths), formatUsd(0), "Subagent context growth"],
+        ["Subagents", "Invalidation", String(analysis.subagentMisses.invalidations), formatUsd(analysis.subagentMisses.totalInvalidationExtraCostUsd), "Subagent prefix invalidated"],
       ]
     ));
 
@@ -202,7 +208,7 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
     }
   }
 
-  console.log(renderFootnote("Corrected hit rate accounts for cache writes (misses). Expiry cost reflects rebuilding prefix at write price instead of read price."));
+  console.log(renderFootnote("Corrected hit rate accounts for cache writes (misses). Rebuild cost (expiry + invalidation) reflects rebuilding the prefix at write price instead of read price."));
   console.log("");
 }
 
