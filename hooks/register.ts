@@ -1,9 +1,5 @@
 import type { Register } from "claude-code";
 
-function getFallbackEnv(): Record<string, string | undefined> {
-  return typeof process !== "undefined" && process?.env ? process.env : {};
-}
-
 export function isEnvTrue(val: string | undefined): boolean {
   if (!val) return false;
   const s = val.trim().toLowerCase();
@@ -27,7 +23,7 @@ export function parseTtl(val: unknown): number | undefined {
 }
 
 export function resolveTtl(
-  env: Record<string, string | undefined> = getFallbackEnv(),
+  env: Record<string, string | undefined> = {},
   settings?: Record<string, unknown>
 ): number | null {
   if (isEnvTrue(env["DISABLE_PROMPT_CACHING"])) {
@@ -45,7 +41,7 @@ export function resolveTtl(
 
 export function isOptedOut(
   options?: Record<string, unknown>,
-  env: Record<string, string | undefined> = getFallbackEnv()
+  env: Record<string, string | undefined> = {}
 ): boolean {
   if (options?.["cacheTimer"] === false) return true;
   if (env["TOKEN_SCOPE_CACHE_TIMER"] === "0" || env["TOKEN_SCOPE_CACHE_TIMER"]?.toLowerCase() === "false") return true;
@@ -113,26 +109,25 @@ export const register: Register = (on, options) => {
       return next(e);
     }
 
-    // Read environment variables via $.env.get (using string literals for static scanner)
+    // String literals, not a loop over names: claude plugin validate scans for them.
+    const reads = await Promise.allSettled([
+      $.env.get("DISABLE_PROMPT_CACHING"),
+      $.env.get("FORCE_PROMPT_CACHING_5M"),
+      $.env.get("CLAUDE_CODE_PROMPT_CACHE_TTL"),
+      $.env.get("TOKEN_SCOPE_DISABLE_CACHE_TIMER"),
+      $.env.get("TOKEN_SCOPE_CACHE_TIMER"),
+    ]);
+    const keys = [
+      "DISABLE_PROMPT_CACHING",
+      "FORCE_PROMPT_CACHING_5M",
+      "CLAUDE_CODE_PROMPT_CACHE_TTL",
+      "TOKEN_SCOPE_DISABLE_CACHE_TIMER",
+      "TOKEN_SCOPE_CACHE_TIMER",
+    ];
     const env: Record<string, string | undefined> = {};
-    try {
-      const [disableCaching, force5m, ttlEnv, disableTimer, timerEnv] = await Promise.all([
-        $.env.get("DISABLE_PROMPT_CACHING"),
-        $.env.get("FORCE_PROMPT_CACHING_5M"),
-        $.env.get("CLAUDE_CODE_PROMPT_CACHE_TTL"),
-        $.env.get("TOKEN_SCOPE_DISABLE_CACHE_TIMER"),
-        $.env.get("TOKEN_SCOPE_CACHE_TIMER"),
-      ]);
-      env["DISABLE_PROMPT_CACHING"] = disableCaching;
-      env["FORCE_PROMPT_CACHING_5M"] = force5m;
-      env["CLAUDE_CODE_PROMPT_CACHE_TTL"] = ttlEnv;
-      env["TOKEN_SCOPE_DISABLE_CACHE_TIMER"] = disableTimer;
-      env["TOKEN_SCOPE_CACHE_TIMER"] = timerEnv;
-    } catch {
-      if (typeof process !== "undefined" && process?.env) {
-        Object.assign(env, process.env);
-      }
-    }
+    reads.forEach((read, i) => {
+      if (read.status === "fulfilled") env[keys[i]!] = read.value;
+    });
 
     // Check env-level opt-out
     if (isOptedOut(opts, env)) {
@@ -146,7 +141,7 @@ export const register: Register = (on, options) => {
     try {
       settings = (await $.settings.read()) as Record<string, unknown>;
     } catch {
-      // Ignore if settings read is unsupported in test mock
+      // A failed settings read falls back to the env or default TTL rather than disabling the timer.
     }
 
     const ttl = resolveTtl(env, settings);
@@ -162,7 +157,10 @@ export const register: Register = (on, options) => {
     effectiveTtl = ttl;
 
     cancelTimer = $.clock.every(1000, () => {
-      void $.clock.now().then(now => $.ui.status(label(now, lastAt, hit, effectiveTtl, is5mFallback)));
+      $.clock
+        .now()
+        .then(now => $.ui.status(label(now, lastAt, hit, effectiveTtl, is5mFallback)))
+        .catch(() => {});
     });
 
     return next(e);

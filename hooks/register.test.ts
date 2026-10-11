@@ -150,7 +150,11 @@ describe("Opt-out configuration", () => {
 });
 
 describe("register hook wiring and coexistence", () => {
-  function makeMock$(envVars: Record<string, string | undefined> = {}, settings: Record<string, unknown> = {}) {
+  function makeMock$(
+    envVars: Record<string, string | undefined> = {},
+    settings: Record<string, unknown> = {},
+    faults: { envReject?: string; settingsReject?: boolean } = {}
+  ) {
     let timerCancelled = false;
     let timerStarted = false;
     let timerCallback: (() => void) | undefined;
@@ -159,10 +163,16 @@ describe("register hook wiring and coexistence", () => {
 
     const $ = {
       env: {
-        get: async (name: string) => envVars[name],
+        get: async (name: string) => {
+          if (name === faults.envReject) throw new Error(`denied: ${name}`);
+          return envVars[name];
+        },
       },
       settings: {
-        read: async () => settings,
+        read: async () => {
+          if (faults.settingsReject) throw new Error("settings unavailable");
+          return settings;
+        },
       },
       clock: {
         now: async () => currentTime,
@@ -293,6 +303,37 @@ describe("register hook wiring and coexistence", () => {
 
   test("session.start honors DISABLE_PROMPT_CACHING via $.env.get", async () => {
     await expectDisabled({ cacheTimer: true }, { DISABLE_PROMPT_CACHING: "1" });
+  });
+
+  test("one rejected $.env.get keeps the other reads, so an env opt-out still holds", async () => {
+    const m = makeMock$({ TOKEN_SCOPE_CACHE_TIMER: "0" }, {}, { envReject: "CLAUDE_CODE_PROMPT_CACHE_TTL" });
+    const w = wire({ cacheTimer: true });
+    await w.start(m.$);
+    expect(m.isTimerStarted()).toBe(false);
+    expect(m.getStatus()).toBe(undefined);
+  });
+
+  test("one rejected $.env.get does not import the process environment", async () => {
+    const saved = process.env["DISABLE_PROMPT_CACHING"];
+    process.env["DISABLE_PROMPT_CACHING"] = "1";
+    try {
+      const m = makeMock$({}, {}, { envReject: "FORCE_PROMPT_CACHING_5M" });
+      const w = wire({ cacheTimer: true });
+      await w.start(m.$);
+      expect(m.isTimerStarted()).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env["DISABLE_PROMPT_CACHING"];
+      else process.env["DISABLE_PROMPT_CACHING"] = saved;
+    }
+  });
+
+  test("a rejected settings read still starts the timer on the env TTL", async () => {
+    const m = makeMock$({ CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" }, {}, { settingsReject: true });
+    const w = wire({ cacheTimer: true });
+    await w.start(m.$);
+    await w.turn(m.$, {}, HEALTHY);
+    await m.tick();
+    expect(m.getStatus()).toBe("cache warm 5:00 · hit 90%");
   });
 
   test("hit rate counts cache writes in the denominator", async () => {
