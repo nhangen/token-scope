@@ -609,3 +609,21 @@ describe("Cache Economics — miss populations", () => {
     expect(a.subagentMisses.totalTurns).toBe(3);
   });
 });
+
+describe("Cache Economics — compact sim threshold", () => {
+  const t0 = 1_700_000_000_000;
+  const t = (uuid: string, off: number, write: number): CacheTurnRecord => ({
+    uuid, sessionId: "s1", timestampMs: t0 + off, model: "claude-sonnet-4-6",
+    outputTokens: 10, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: write, costUsd: null,
+  });
+
+  it("titles the sim by the >1h expiry it actually triggers on and ignores a 45-minute break", () => {
+    const a = analyzeCacheEconomics({ mainTurns: [t("a", 0, 100_000), t("b", 45 * 60 * 1000, 100_000)], sinceSec: 0, nowMs: t0 + 86_400_000 });
+    const sim = a.simulations.find((s) => s.policyId === "compact_before_breaks")!;
+    expect(sim.title).toBe("Run /compact before breaks > 1 hour");
+    expect(sim.totalSavingsUsd).toBe(0);
+    expect(sim.assumptions.some((x) => x.includes("not additive"))).toBe(true);
+    const fresh = a.simulations.find((s) => s.policyId === "fresh_session_vs_stale")!;
+    expect(fresh.assumptions.some((x) => x.includes("not additive"))).toBe(true);
+  });
+});

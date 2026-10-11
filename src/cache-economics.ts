@@ -489,10 +489,6 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     simulatedTotalCostUsd: actualTotalCostUsd - net5mSavingsUsd,
   });
 
-  // 3. Compact before long breaks (>30m/1h)
-  // When a break > 1h occurs and prior context > 20,000 tokens:
-  // Compaction beforehand on warm cache costs ~1 read turn (~0.1x) + ~1k output,
-  // but reduces rebuild from C_prev to ~15k tokens upon return!
   let compactBeforeBreakSavingsUsd = 0;
   let breaksCount = 0;
 
@@ -514,7 +510,7 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
 
   simulations.push({
     policyId: "compact_before_breaks",
-    title: "Run /compact before breaks > 30 minutes",
+    title: "Run /compact before breaks > 1 hour",
     weeklySavingsUsd: compactBeforeBreakSavingsUsd / windowWeeks,
     totalSavingsUsd: compactBeforeBreakSavingsUsd,
     weeklySavingsCredits: (compactBeforeBreakSavingsUsd / (totalInputCostUsd || 1)) * totalInputCredits / windowWeeks,
@@ -522,6 +518,7 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
       `Detected ${breaksCount} long breaks (>1h) on large context (>20k tokens)`,
       "Compaction reduces context to ~15k tokens before idle expiry, drastically lowering rebuild size upon return",
       "Compaction cost modeled on warm prefix read (0.1x) + 1,000 output tokens",
+      "Counts the same expiries as the fresh-session sim; the two savings are not additive",
     ],
     simulatedTotalCostUsd: actualTotalCostUsd - compactBeforeBreakSavingsUsd,
   });
@@ -578,6 +575,7 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     assumptions: [
       `Detected ${staleResumesCount} session continuations after > 24h pause on large context`,
       "Starting fresh eliminates full rebuild of expired historic context and lowers subsequent turn volume",
+      "Overlaps the compact-before-breaks sim on the same expiries; the two savings are not additive",
     ],
     simulatedTotalCostUsd: actualTotalCostUsd - freshSessionSavingsUsd,
   });

@@ -329,7 +329,7 @@ Subagents      │ Invalidation     │          1 │      $0.4100 │ Subagent
   What Would Have Saved (Simulations)
   # │ Policy Change                              │   Est. Savings/Wk │   Credits Saved │ Simulated Cost
 ────┼────────────────────────────────────────────┼───────────────────┼─────────────────┼───────────────
-  1 │ Run /compact before breaks > 30 minutes    │         ~$24.50/wk│     ~6,125,000/wk│        $329.70
+  1 │ Run /compact before breaks > 1 hour        │         ~$24.50/wk│     ~6,125,000/wk│        $329.70
   2 │ Start fresh session instead of resume >24h │         ~$18.20/wk│     ~4,550,000/wk│        $356.90
   3 │ Lower auto-compact threshold to 35%        │         ~$11.40/wk│     ~2,850,000/wk│        $384.10
   4 │ Switch main session to 5m TTL              │     +$8.90/wk cost│      +2,225,000/wk│        $411.90
@@ -364,7 +364,7 @@ Subagents      │ Invalidation     │          1 │      $0.4100 │ Subagent
 - **Policy Simulations ("What Would Have Saved")**:
   Replays actual user transcripts over the analyzed window under counterfactual behaviors:
   1. **TTL 5m vs 1h**: Evaluates trade-off between cheaper write rate (1.25x vs 2.0x, applied only to tokens actually billed at the 1h tier) and expiry rebuilds on pauses between 5m and 60m.
-  2. **/compact before breaks > 30m**: Measures cost of compacting on a warm cache before an idle break vs paying a full-context rebuild upon return.
+  2. **/compact before breaks > 1h**: Measures cost of compacting on a warm cache before an idle break long enough to expire the 1h cache vs paying a full-context rebuild upon return. Overlaps sim 4 on the same expiries, so the two savings are not additive.
   3. **Auto-compact threshold (35%)**: Evaluates per-turn read volume reduction across deep sessions.
   4. **Resume stale session (>24h) vs starting fresh**: Compares rebuild and carryover costs against a fresh session baseline.
 
