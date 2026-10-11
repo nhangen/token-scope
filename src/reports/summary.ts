@@ -45,13 +45,18 @@ export function renderSummary(reader: Reader, opts: Options): void {
     ]));
   }
 
-  const cacheHitRate = totals.totalInputTokens + totals.totalCacheReadTokens > 0
+  const totalInputTokensAll = totals.totalInputTokens + totals.totalCacheReadTokens + totals.totalCacheWriteTokens;
+  const cacheHitRate = totalInputTokensAll > 0
+    ? (totals.totalCacheReadTokens / totalInputTokensAll) * 100
+    : null;
+  const legacyHitRate = totals.totalInputTokens + totals.totalCacheReadTokens > 0
     ? (totals.totalCacheReadTokens / (totals.totalInputTokens + totals.totalCacheReadTokens)) * 100
     : null;
 
   console.log(`\n${bold("  Cache Efficiency")}`);
   console.log(renderKV([
     ["Cache Hit Rate", formatPct(cacheHitRate)],
+    ["Read Share (non-write)", formatPct(legacyHitRate)],
   ]));
 
   console.log(`\n${bold("  Cost by Tool")} ${dim("(dominant tool per turn)")}`);

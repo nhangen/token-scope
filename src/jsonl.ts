@@ -6,7 +6,7 @@ import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow,
   WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, RawTurnForArtifact,
   ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow,
-  SessionBudgetRow, SubagentSpend, CreditWeekRow, CreditWeeks,
+  SessionBudgetRow, SubagentSpend, CreditWeekRow, CreditWeeks, CacheTurnRecord,
 } from "@/reader";
 import type { Reader } from "@/reader";
 
@@ -671,12 +671,54 @@ export class JsonlReader implements Reader {
         totalInputTokens: d.totalInputTokens,
         totalCacheReadTokens: d.totalCacheReadTokens,
         totalCacheWriteTokens: d.totalCacheWriteTokens,
-        cacheHitPct: d.totalInputTokens + d.totalCacheReadTokens > 0
+        cacheHitPct: d.totalInputTokens + d.totalCacheReadTokens + d.totalCacheWriteTokens > 0
+          ? (d.totalCacheReadTokens / (d.totalInputTokens + d.totalCacheReadTokens + d.totalCacheWriteTokens)) * 100 : null,
+        readSharePct: d.totalInputTokens + d.totalCacheReadTokens > 0
           ? (d.totalCacheReadTokens / (d.totalInputTokens + d.totalCacheReadTokens)) * 100 : null,
         estimatedSavingsUsd: d.savings > 0 ? d.savings : null,
       }))
       .sort((a, b) => (b.estimatedSavingsUsd ?? 0) - (a.estimatedSavingsUsd ?? 0))
       .slice(0, limit);
+  }
+
+  queryCacheTurns(since: number): { mainTurns: CacheTurnRecord[]; subagentTurns: CacheTurnRecord[] } {
+    const sinceMs = since * 1000;
+    const mainTurns: CacheTurnRecord[] = this.turns
+      .filter((t) => t.timestampMs > sinceMs)
+      .map((t) => ({
+        uuid: t.uuid,
+        sessionId: t.sessionId,
+        cwd: t.cwd,
+        timestampMs: t.timestampMs,
+        model: t.model,
+        outputTokens: t.outputTokens,
+        inputTokens: t.inputTokens,
+        cacheReadTokens: t.cacheReadTokens,
+        cacheWriteTokens: t.cacheWriteTokens,
+        costUsd: t.costUsd,
+        isSubagent: false,
+      }));
+
+    if (this.subagentTurns === null) {
+      this.subagentTurns = loadTurns(this.projectsDirs, this.loadSinceMs, scanSubagentFiles);
+    }
+    const subagentTurns: CacheTurnRecord[] = this.subagentTurns
+      .filter((t) => t.timestampMs > sinceMs)
+      .map((t) => ({
+        uuid: t.uuid,
+        sessionId: t.sessionId,
+        cwd: t.cwd,
+        timestampMs: t.timestampMs,
+        model: t.model,
+        outputTokens: t.outputTokens,
+        inputTokens: t.inputTokens,
+        cacheReadTokens: t.cacheReadTokens,
+        cacheWriteTokens: t.cacheWriteTokens,
+        costUsd: t.costUsd,
+        isSubagent: true,
+      }));
+
+    return { mainTurns, subagentTurns };
   }
 
   queryContextContributors(since: number, limit: number, projectFragment?: string): ContributorRow[] {

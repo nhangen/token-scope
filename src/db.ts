@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "fs";
 import { join } from "path";
 import type { Reader } from "./reader";
+import type { CacheTurnRecord } from "./cache-economics";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -172,6 +173,7 @@ export interface CacheStatRow {
   totalCacheReadTokens: number;
   totalCacheWriteTokens: number;
   cacheHitPct: number | null;
+  readSharePct?: number | null;
   estimatedSavingsUsd: number | null;
 }
 
@@ -623,7 +625,9 @@ export function queryCacheStats(db: Database, since: number, limit: number): Cac
     totalInputTokens: r.totalInputTokens,
     totalCacheReadTokens: r.totalCacheReadTokens,
     totalCacheWriteTokens: r.totalCacheWriteTokens,
-    cacheHitPct: r.totalInputTokens + r.totalCacheReadTokens > 0
+    cacheHitPct: r.totalInputTokens + r.totalCacheReadTokens + r.totalCacheWriteTokens > 0
+      ? (r.totalCacheReadTokens / (r.totalInputTokens + r.totalCacheReadTokens + r.totalCacheWriteTokens)) * 100 : null,
+    readSharePct: r.totalInputTokens + r.totalCacheReadTokens > 0
       ? (r.totalCacheReadTokens / (r.totalInputTokens + r.totalCacheReadTokens)) * 100 : null,
     estimatedSavingsUsd: r.topModel ? computeCacheSavings(r.topModel, r.totalCacheReadTokens) : null,
   }))
@@ -845,6 +849,49 @@ export function querySubagentSpendSqlite(): SubagentSpend {
   };
 }
 
+export function queryCacheTurns(db: Database, since: number): { mainTurns: CacheTurnRecord[]; subagentTurns: CacheTurnRecord[] } {
+  const turns = db.query<{
+    uuid: string;
+    sessionId: string;
+    cwd: string;
+    timestamp: number;
+    outputTokens: number;
+    inputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    costUsd: number | null;
+    model: string;
+  }, [number]>(`
+    SELECT am.uuid, bm.session_id AS sessionId, bm.cwd, bm.timestamp * 1000 AS timestamp,
+      CAST(COALESCE(json_extract(am.message, '$.usage.output_tokens'), 0) AS INTEGER) AS outputTokens,
+      CAST(COALESCE(json_extract(am.message, '$.usage.input_tokens'), 0) AS INTEGER) AS inputTokens,
+      CAST(COALESCE(json_extract(am.message, '$.usage.cache_read_input_tokens'), 0) AS INTEGER) AS cacheReadTokens,
+      CAST(COALESCE(json_extract(am.message, '$.usage.cache_creation_input_tokens'), 0) AS INTEGER) AS cacheWriteTokens,
+      am.cost_usd AS costUsd, am.model
+    FROM assistant_messages am
+    JOIN base_messages bm ON am.uuid = bm.uuid
+    WHERE bm.timestamp > ? AND json_valid(am.message) = 1
+    ORDER BY bm.session_id, bm.timestamp ASC
+  `).all(since);
+
+  return {
+    mainTurns: turns.map((t) => ({
+      uuid: t.uuid,
+      sessionId: t.sessionId,
+      cwd: t.cwd,
+      timestampMs: t.timestamp,
+      model: t.model,
+      outputTokens: t.outputTokens,
+      inputTokens: t.inputTokens,
+      cacheReadTokens: t.cacheReadTokens,
+      cacheWriteTokens: t.cacheWriteTokens,
+      costUsd: t.costUsd,
+      isSubagent: false,
+    })),
+    subagentTurns: [],
+  };
+}
+
 export function createSqliteReader(db: Database): SqliteReaderInterface {
   return {
     querySummaryTotals: (since) => querySummaryTotals(db, since),
@@ -861,6 +908,7 @@ export function createSqliteReader(db: Database): SqliteReaderInterface {
     queryProjectMatches: (fragment) => queryProjectMatches(db, fragment),
     queryContextStats: (since, limit) => queryContextStats(db, since, limit),
     queryCacheStats: (since, limit) => queryCacheStats(db, since, limit),
+    queryCacheTurns: (since) => queryCacheTurns(db, since),
     queryContextContributors: (since, limit, projectFragment) => queryContextContributors(db, since, limit, projectFragment),
     queryBaseLoad: (since, limit) => queryBaseLoad(db, since, limit),
     queryCacheGrowth: (sessionId) => queryCacheGrowth(db, sessionId),

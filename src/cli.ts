@@ -45,7 +45,9 @@ REPORT MODES (mutually exclusive)
   --thinking              Thinking token analysis
   --sessions              List recent sessions with stats
   --context               Context bloat analysis (sessions with 6+ turns)
-  --cache                 Cache efficiency by project
+  --cache                 Cache economics & efficiency: token/cost mix, misses, simulations
+  --cache-misses          Cache miss classification, rebuild costs, and request gap histogram
+  --cache-sim             Cache policy simulations ("what would have saved")
   --efficiency            Session efficiency (per-turn cost by session length)
   --tools                 Tooling analysis by layer (plugin, MCP, skill, meta, built-in)
   --contributors          Context contributors: which tools add most to context window
@@ -145,7 +147,7 @@ EXAMPLES
 `.trim();
 
 interface CliArgs {
-  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop" | "artifacts" | "artifact-show" | "artifact-compare" | "spend" | "savings" | "credits" | "providers" | "codex-experiment" | "fleet";
+  mode: "summary" | "tool" | "project" | "session" | "thinking" | "sessions" | "context" | "cache" | "cache-misses" | "cache-sim" | "efficiency" | "tools" | "contributors" | "base-load" | "cache-growth" | "budget" | "context-loop" | "artifacts" | "artifact-show" | "artifact-compare" | "spend" | "savings" | "credits" | "providers" | "codex-experiment" | "fleet";
   toolName?: string;
   projectFragment?: string;
   sessionId?: string;
@@ -298,6 +300,8 @@ export function parseArgs(argv: string[]): CliArgs {
       case "--sessions": setMode("sessions"); break;
       case "--context": setMode("context"); break;
       case "--cache": setMode("cache"); break;
+      case "--cache-misses": setMode("cache-misses"); break;
+      case "--cache-sim": setMode("cache-sim"); break;
       case "--efficiency": setMode("efficiency"); break;
       case "--tools": setMode("tools"); break;
       case "--contributors": setMode("contributors"); break;
@@ -638,7 +642,15 @@ async function main() {
     }
     case "cache": {
       const { renderCacheReport } = await import("@/reports/cache");
-      renderCacheReport(reader, options); break;
+      renderCacheReport(reader, { ...options, focus: "all" }); break;
+    }
+    case "cache-misses": {
+      const { renderCacheReport } = await import("@/reports/cache");
+      renderCacheReport(reader, { ...options, focus: "misses" }); break;
+    }
+    case "cache-sim": {
+      const { renderCacheReport } = await import("@/reports/cache");
+      renderCacheReport(reader, { ...options, focus: "sim" }); break;
     }
     case "efficiency": {
       const { renderEfficiencyReport } = await import("@/reports/efficiency");
