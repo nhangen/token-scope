@@ -119,6 +119,13 @@ export interface CacheEconomicsAnalysis {
     buckets: GapHistogramBucket[];
   };
   simulations: PolicySimulationResult[];
+  /** Turns that are both priced and carry a reader costUsd: reader total vs tier-aware token pricing. */
+  reconciliation: {
+    turns: number;
+    readerCostUsd: number;
+    tokenPricedCostUsd: number;
+    deltaUsd: number;
+  };
 }
 
 export interface CacheEconomicsInput {
@@ -397,33 +404,44 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
   const maxTs = input.nowMs ?? (allTurns.length > 0 ? Math.max(...allTurns.map((t) => t.timestampMs)) : Date.now());
   const windowWeeks = Math.max(0.14, (maxTs - minTs) / (7 * 86_400_000));
 
-  // Baseline total actual cost
+  // Sims price their deltas from tokens, so the baseline must too; the reader's
+  // costUsd prices every write at the 5m rate and is only used for unpriced models.
   let actualTotalCostUsd = 0;
+  let reconciledTurns = 0;
+  let readerCostUsd = 0;
+  let tokenPricedCostUsd = 0;
   for (const t of allTurns) {
-    if (t.costUsd !== null) actualTotalCostUsd += t.costUsd;
-    else {
-      const p = getPricing(t.model);
-      if (p) {
-        actualTotalCostUsd +=
-          (t.outputTokens * p.outputPerMillion +
-            t.inputTokens * p.inputPerMillion +
-            t.cacheReadTokens * p.cacheReadPerMillion) /
-            1_000_000 +
-          cacheWriteCostUsd(t, p);
+    const p = getPricing(t.model);
+    if (p) {
+      const tokenCost =
+        (t.outputTokens * p.outputPerMillion +
+          t.inputTokens * p.inputPerMillion +
+          t.cacheReadTokens * p.cacheReadPerMillion) /
+          1_000_000 +
+        cacheWriteCostUsd(t, p);
+      actualTotalCostUsd += tokenCost;
+      if (t.costUsd !== null) {
+        reconciledTurns++;
+        readerCostUsd += t.costUsd;
+        tokenPricedCostUsd += tokenCost;
       }
+    } else if (t.costUsd !== null) {
+      actualTotalCostUsd += t.costUsd;
     }
   }
 
   const simulations: PolicySimulationResult[] = [];
 
-  // 1. Baseline reconciliation (must equal actual totals when simulated policy == actual policy)
   simulations.push({
     policyId: "actual_baseline",
     title: "Baseline (Current policy: 1h main TTL, 5m subagent TTL)",
     weeklySavingsUsd: 0,
     totalSavingsUsd: 0,
     weeklySavingsCredits: 0,
-    assumptions: ["Current observed configuration: 1h TTL on main loop, 5m TTL on subagents"],
+    assumptions: [
+      "Current observed configuration: 1h TTL on main loop, 5m TTL on subagents",
+      "Token-priced with 5m/1h write tiers; see reconciliation for the gap against reader-reported cost",
+    ],
     simulatedTotalCostUsd: actualTotalCostUsd,
   });
 
@@ -593,5 +611,11 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     },
     gapHistogram,
     simulations: rankedSimulations,
+    reconciliation: {
+      turns: reconciledTurns,
+      readerCostUsd,
+      tokenPricedCostUsd,
+      deltaUsd: readerCostUsd - tokenPricedCostUsd,
+    },
   };
 }

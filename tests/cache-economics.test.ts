@@ -101,7 +101,7 @@ describe("Cache Economics — Acceptance Criteria", () => {
     expect(analysis.correctedHitPct!).toBeLessThan(analysis.legacyHitPct!);
   });
 
-  it("simulation totals reconcile with actual totals when simulated policy equals actual policy", () => {
+  it("baseline is token-priced at tier-aware rates and reconciles against the reader's costUsd", () => {
     const t0 = 1_700_000_000_000;
     const mainTurns: CacheTurnRecord[] = [
       {
@@ -152,10 +152,27 @@ describe("Cache Economics — Acceptance Criteria", () => {
     const baseline = analysis.simulations.find((s) => s.policyId === "actual_baseline");
     expect(baseline).toBeDefined();
 
-    const expectedTotalActual = 0.05 + 0.02 + 0.01;
-    expect(baseline!.simulatedTotalCostUsd).toBeCloseTo(expectedTotalActual, 4);
-    expect(baseline!.totalSavingsUsd).toBe(0);
-    expect(baseline!.weeklySavingsUsd).toBe(0);
+    // u1 sonnet: 100*15 + 500*3 + 5,000*3.75 = 21,750 -> $0.02175
+    // u2 sonnet: 150*15 + 200*3 + 5,000*0.30 + 400*3.75 = 5,850 -> $0.00585
+    // sub1 haiku: 80*5 + 100*1 + 2,000*1.25 = 3,000 -> $0.003
+    const expectedTokenPriced = 0.02175 + 0.00585 + 0.003;
+    expect(baseline!.simulatedTotalCostUsd).toBeCloseTo(expectedTokenPriced, 8);
+    expect(analysis.reconciliation.readerCostUsd).toBeCloseTo(0.08, 8);
+    expect(analysis.reconciliation.tokenPricedCostUsd).toBeCloseTo(expectedTokenPriced, 8);
+    expect(analysis.reconciliation.deltaUsd).toBeCloseTo(0.08 - expectedTokenPriced, 8);
+  });
+
+  it("reconciliation surfaces the gap when the reader priced 1h writes at the 5m rate", () => {
+    const a = analyzeCacheEconomics({
+      mainTurns: [{
+        uuid: "u1", sessionId: "s1", timestampMs: 1_000, model: "claude-sonnet-4-6", outputTokens: 0,
+        inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 1_000_000, cacheWrite1hTokens: 1_000_000, costUsd: 3.75,
+      }],
+      sinceSec: 0,
+      nowMs: 86_400_000,
+    });
+    expect(a.reconciliation.tokenPricedCostUsd).toBeCloseTo(6.0, 8);
+    expect(a.reconciliation.deltaUsd).toBeCloseTo(3.75 - 6.0, 8);
   });
 });
 

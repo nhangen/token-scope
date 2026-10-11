@@ -54,6 +54,7 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
       subagent_misses: analysis.subagentMisses,
       gap_histogram: analysis.gapHistogram,
       simulations: analysis.simulations,
+      reconciliation: analysis.reconciliation,
     }, null, 2));
     return;
   }
@@ -77,6 +78,9 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
         analysis.misses.totalExpiryExtraCostUsd + analysis.subagentMisses.totalExpiryExtraCostUsd +
         analysis.misses.totalInvalidationExtraCostUsd + analysis.subagentMisses.totalInvalidationExtraCostUsd
       )],
+      ...(analysis.reconciliation.turns > 0
+        ? [["Reader vs Tier-Priced", `${formatUsd(analysis.reconciliation.readerCostUsd)} vs ${formatUsd(analysis.reconciliation.tokenPricedCostUsd)} ${dim(`(Δ ${formatUsd(analysis.reconciliation.deltaUsd)})`)}`] as [string, string]]
+        : []),
     ]));
 
     console.log(`\n${bold("  Input Token & Cost Mix")}`);

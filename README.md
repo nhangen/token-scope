@@ -359,6 +359,8 @@ Subagents      │ Invalidation     │          1 │      $0.4100 │ Subagent
   - **`invalidation`**: Gap $\le \text{TTL}$, but prefix read was missed and write is far larger than new content (model switch, system prompt / tools change, or compaction). Priced with the same rebuild formula as `expiry`; the summary's **Rebuild Miss Cost** is expiry plus invalidation across both loops.
   - **`cold`**: First turn of a main session or subagent loop.
 
+- **Reconciliation**: The baseline is token-priced with the 5m/1h write tiers, the same rates every simulation uses. **Reader vs Tier-Priced** compares that against the cost the reader reports per turn, which prices every write at the 5m rate; a negative delta means the reader under-counts 1h-tier writes.
+
 - **Policy Simulations ("What Would Have Saved")**:
   Replays actual user transcripts over the analyzed window under counterfactual behaviors:
   1. **TTL 5m vs 1h**: Evaluates trade-off between cheaper write rate (1.25x vs 2.0x, applied only to tokens actually billed at the 1h tier) and expiry rebuilds on pauses between 5m and 60m.
