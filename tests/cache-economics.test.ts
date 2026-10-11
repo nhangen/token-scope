@@ -794,6 +794,18 @@ describe("Cache Economics — unpriced models", () => {
     expect(json.summary.unpriced_turns).toBe(1);
     expect(json.summary.unpriced_models).toEqual(["mystery-model-x"]);
   });
+
+  it("discloses included simulation credits separately from excluded dollars for unpriced models", () => {
+    const unpriced = [{ ...turns[1]!, cacheWrite1hTokens: 50_000 }];
+    const opts = { since: 0, sinceStr: "7d", limit: 10 } as const;
+    const text = capture(() => renderCacheReport(stubReader(unpriced), { ...opts, json: false }));
+    const json = JSON.parse(capture(() => renderCacheReport(stubReader(unpriced), { ...opts, json: true })));
+    expect(text).toContain("left out of the dollar cost mix, rebuild costs, and simulation savings");
+    expect(text).toContain("model-independent weighted-token credits are included");
+    const sim = json.simulations.find((s: { policyId: string }) => s.policyId === "main_5m_ttl");
+    expect(sim.weeklySavingsCredits).toBeGreaterThan(0);
+    expect(sim.totalSavingsUsd).toBe(0);
+  });
 });
 
 describe("Cache Economics — empty-data guard", () => {
