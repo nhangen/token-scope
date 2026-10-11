@@ -761,7 +761,7 @@ cache cold
 | `TOKEN_SCOPE_CHECKPOINT_TURNS` | Checkpoint at this turn count (default `50`) |
 | `TOKEN_SCOPE_TURN_WARN_PCT` | Warn when one turn's CONTEXT costs this % of the cap (default `0.0056`) |
 | `TOKEN_SCOPE_CHECKPOINT_DIR` | Checkpoint output dir (default `~/.claude/checkpoints`) |
-| `TOKEN_SCOPE_CACHE_TIMER` | Disable status-line cache timer mod (`0` or `false` to opt out) |
+| `TOKEN_SCOPE_CACHE_TIMER` | Disable status-line cache timer mod (`0`, `false`, `no`, or `off` to opt out) |
 | `TOKEN_SCOPE_DISABLE_CACHE_TIMER` | Disable status-line cache timer mod (`1` to disable) |
 | `NO_COLOR` | Disable ANSI color |
 

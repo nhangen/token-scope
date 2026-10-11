@@ -8,7 +8,6 @@ import {
   register,
 } from "./register";
 
-// Prototype tests (must continue passing)
 test("no request yet shows nothing", () => {
   expect(label(1000, undefined, undefined)).toBe(undefined);
 });
@@ -108,12 +107,10 @@ describe("Usage-overage fallback detection", () => {
   const ONE_HOUR = 3_600_000;
 
   test("gap under 5m does not trigger fallback", () => {
-    // 4 minutes gap
     expect(isOverageFallback(240_000, ONE_HOUR, 0, 5000)).toBe(false);
   });
 
   test("gap beyond TTL does not trigger fallback (natural expiration)", () => {
-    // 65 minutes gap
     expect(isOverageFallback(3_900_000, ONE_HOUR, 0, 5000)).toBe(false);
   });
 
@@ -146,6 +143,15 @@ describe("Opt-out configuration", () => {
     expect(isOptedOut(undefined, { TOKEN_SCOPE_CACHE_TIMER: "false" })).toBe(true);
     expect(isOptedOut(undefined, { TOKEN_SCOPE_DISABLE_CACHE_TIMER: "1" })).toBe(true);
     expect(isOptedOut(undefined, {})).toBe(false);
+  });
+
+  test("TOKEN_SCOPE_CACHE_TIMER uses the same false-y forms as the other flags", () => {
+    for (const v of ["off", "no", " 0", "FALSE"]) {
+      expect(isOptedOut(undefined, { TOKEN_SCOPE_CACHE_TIMER: v })).toBe(true);
+    }
+    for (const v of ["1", "true", "on", ""]) {
+      expect(isOptedOut(undefined, { TOKEN_SCOPE_CACHE_TIMER: v })).toBe(false);
+    }
   });
 });
 

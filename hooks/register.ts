@@ -44,7 +44,8 @@ export function isOptedOut(
   env: Record<string, string | undefined> = {}
 ): boolean {
   if (options?.["cacheTimer"] === false) return true;
-  if (env["TOKEN_SCOPE_CACHE_TIMER"] === "0" || env["TOKEN_SCOPE_CACHE_TIMER"]?.toLowerCase() === "false") return true;
+  const timer = env["TOKEN_SCOPE_CACHE_TIMER"];
+  if (timer !== undefined && timer.trim() !== "" && !isEnvTrue(timer)) return true;
   if (isEnvTrue(env["TOKEN_SCOPE_DISABLE_CACHE_TIMER"])) return true;
   return false;
 }
@@ -102,8 +103,7 @@ export const register: Register = (on, options) => {
     }
     resetConversation();
 
-    // Check userConfig opt-out first
-    if (opts?.["cacheTimer"] === false) {
+    if (isOptedOut(opts)) {
       isEnabled = false;
       $.ui.status(undefined);
       return next(e);
@@ -129,14 +129,12 @@ export const register: Register = (on, options) => {
       if (read.status === "fulfilled") env[keys[i]!] = read.value;
     });
 
-    // Check env-level opt-out
     if (isOptedOut(opts, env)) {
       isEnabled = false;
       $.ui.status(undefined);
       return next(e);
     }
 
-    // Read user settings via $.settings.read()
     let settings: Record<string, unknown> | undefined;
     try {
       settings = (await $.settings.read()) as Record<string, unknown>;
@@ -146,7 +144,6 @@ export const register: Register = (on, options) => {
 
     const ttl = resolveTtl(env, settings);
     if (ttl === null) {
-      // DISABLE_PROMPT_CACHING active: show nothing
       isEnabled = false;
       $.ui.status(undefined);
       return next(e);
