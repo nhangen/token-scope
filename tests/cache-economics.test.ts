@@ -366,3 +366,60 @@ describe("Cache Economics Report — CLI & Formatting Integration", () => {
     expect(simOutput).toContain("Cache Savings Simulations");
   });
 });
+
+describe("Cache Economics — TTL tier pricing", () => {
+  // claude-sonnet-4-6: input $3.00/M, 5m write $3.75/M (1.25x), 1h write $6.00/M (2.0x), read $0.30/M.
+  const t0 = 1_700_000_000_000;
+  const base = { sessionId: "s1", model: "claude-sonnet-4-6", outputTokens: 10, inputTokens: 0, cacheReadTokens: 0, costUsd: null };
+
+  it("prices 1h-tier writes at 2.0x input in the cost mix", () => {
+    const a = analyzeCacheEconomics({
+      mainTurns: [
+        { ...base, uuid: "a", timestampMs: t0, cacheWriteTokens: 1_000_000, cacheWrite1hTokens: 1_000_000 },
+        { ...base, uuid: "b", timestampMs: t0 + 1000, cacheWriteTokens: 1_000_000, cacheWrite1hTokens: 0 },
+      ],
+      sinceSec: 0,
+      nowMs: t0 + 7 * 86_400_000,
+    });
+    expect(a.costMix.cacheWriteCostUsd).toBeCloseTo(6.0 + 3.75, 6);
+  });
+
+  it("5m-TTL sim credits write savings only on writes actually billed at the 1h tier", () => {
+    const a = analyzeCacheEconomics({
+      mainTurns: [
+        { ...base, uuid: "a", timestampMs: t0, cacheWriteTokens: 1_000_000, cacheWrite1hTokens: 0 },
+        { ...base, uuid: "b", timestampMs: t0 + 1000, cacheWriteTokens: 1_000_000, cacheWrite1hTokens: 0 },
+      ],
+      sinceSec: 0,
+      nowMs: t0 + 7 * 86_400_000,
+    });
+    const sim = a.simulations.find((s) => s.policyId === "main_5m_ttl")!;
+    expect(sim.totalSavingsUsd).toBe(0);
+
+    const b = analyzeCacheEconomics({
+      mainTurns: [
+        { ...base, uuid: "a", timestampMs: t0, cacheWriteTokens: 1_000_000, cacheWrite1hTokens: 1_000_000 },
+      ],
+      sinceSec: 0,
+      nowMs: t0 + 7 * 86_400_000,
+    });
+    // (6.00 - 3.75) per M on 1M tokens
+    expect(b.simulations.find((s) => s.policyId === "main_5m_ttl")!.totalSavingsUsd).toBeCloseTo(2.25, 6);
+  });
+
+  it("prices a 1h-tier expiry rebuild at the 1h write rate", () => {
+    const prev: CacheTurnRecord = { ...base, uuid: "a", timestampMs: t0, cacheWriteTokens: 10_000, cacheWrite1hTokens: 10_000 };
+    const curr: CacheTurnRecord = { ...base, uuid: "b", timestampMs: t0 + 2 * MAIN_TTL_MS, cacheWriteTokens: 10_000, cacheWrite1hTokens: 10_000 };
+    const c = classifyTurn(prev, curr, false, 2);
+    expect(c.type).toBe("expiry");
+    // 10,000 * (6.00 - 0.30) / 1M
+    expect(c.extraCostUsd).toBeCloseTo(0.057, 6);
+  });
+
+  it("JSONL reader carries the 1h write split from usage.cache_creation", () => {
+    const reader = createReader({ source: "jsonl", projectsDirs: [new URL("./fixtures/cache-tier-projects", import.meta.url).pathname] });
+    const { mainTurns } = reader.queryCacheTurns(0);
+    reader.close();
+    expect(mainTurns.map((t) => t.cacheWrite1hTokens).sort()).toEqual([0, 4000]);
+  });
+});

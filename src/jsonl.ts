@@ -20,6 +20,7 @@ interface JsonlTurn {
   inputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  cacheWrite1hTokens: number;
   stopReason: string | null;
   messageJson: string;
   costUsd: number | null;
@@ -126,6 +127,8 @@ function loadTurns(dirs: string[], sinceMs?: number, scan = scanJsonlFiles): Jso
       const inp = Number(usage["input_tokens"] ?? 0);
       const cacheRead = Number(usage["cache_read_input_tokens"] ?? 0);
       const cacheWrite = Number(usage["cache_creation_input_tokens"] ?? 0);
+      const creation = usage["cache_creation"] as Record<string, unknown> | undefined;
+      const cacheWrite1h = Number(creation?.["ephemeral_1h_input_tokens"] ?? 0);
       turns.push({
         uuid: String(obj["uuid"] ?? ""),
         sessionId: String(obj["sessionId"] ?? ""),
@@ -136,6 +139,7 @@ function loadTurns(dirs: string[], sinceMs?: number, scan = scanJsonlFiles): Jso
         inputTokens: inp,
         cacheReadTokens: cacheRead,
         cacheWriteTokens: cacheWrite,
+        cacheWrite1hTokens: cacheWrite1h,
         stopReason: msg["stop_reason"] ? String(msg["stop_reason"]) : null,
         messageJson: JSON.stringify(msg),
         costUsd: computeTurnCost(model, out, inp, cacheRead, cacheWrite),
@@ -695,6 +699,7 @@ export class JsonlReader implements Reader {
         inputTokens: t.inputTokens,
         cacheReadTokens: t.cacheReadTokens,
         cacheWriteTokens: t.cacheWriteTokens,
+        cacheWrite1hTokens: t.cacheWrite1hTokens,
         costUsd: t.costUsd,
         isSubagent: false,
       }));
@@ -714,6 +719,7 @@ export class JsonlReader implements Reader {
         inputTokens: t.inputTokens,
         cacheReadTokens: t.cacheReadTokens,
         cacheWriteTokens: t.cacheWriteTokens,
+        cacheWrite1hTokens: t.cacheWrite1hTokens,
         costUsd: t.costUsd,
         isSubagent: true,
       }));

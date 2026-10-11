@@ -344,22 +344,23 @@ Subagents      │ Growth (no gap)  │        190 │      $0.0000 │ Subagent
   Evaluated at model prices (and credit weights matching `--credits`):
   - **Cache Read**: 0.1x base input rate (90% discount).
   - **Cache Write (5m TTL)**: 1.25x base input rate (Anthropic 5-minute standard write rate).
-  - **Extended Cache Write (1h TTL)**: 2.0x base input rate (Anthropic extended caching rate).
+  - **Extended Cache Write (1h TTL)**: 2.0x base input rate (Anthropic extended caching rate). The split comes from `usage.cache_creation.ephemeral_1h_input_tokens`; writes with no split are priced at the 5m rate.
   - **Uncached Input**: 1.0x base rate.
-  - **Credits**: Weighted as 0.1x read, 1.25x write, 1.0x uncached input, and 5.0x output.
+  - **Credits**: Weighted as 0.1x read, 1.25x write (2.0x for 1h-tier writes), 1.0x uncached input, and 5.0x output.
 
 - **Miss Classification**:
   Each request with a cache write is classified:
   - **`expiry`**: Time gap since the previous request on the same loop $> \text{TTL}$ (1h default for main session, 5m for subagents). The cache expired due to idle time; the previous context prefix had to be rewritten.
     $$\text{Rebuild Prefix} = \min(\text{prev\_context}, \text{cache\_write\_tokens})$$
     $$\text{Expiry Cost} = \frac{\text{Rebuild Prefix} \times (P_{\text{write}} - P_{\text{read}})}{1,000,000}$$
+    where $P_{\text{write}}$ is the turn's blended write rate across its 5m and 1h tiers.
   - **`growth`**: Gap $\le \text{TTL}$, and write corresponds to new content entering context ($\text{cache\_read} \approx \text{prev\_context}$). Extra miss cost is $\$0.00$.
   - **`invalidation`**: Gap $\le \text{TTL}$, but prefix read was missed and write is far larger than new content (model switch, system prompt / tools change, or compaction).
   - **`cold`**: First turn of a main session or subagent loop.
 
 - **Policy Simulations ("What Would Have Saved")**:
   Replays actual user transcripts over the analyzed window under counterfactual behaviors:
-  1. **TTL 5m vs 1h**: Evaluates trade-off between cheaper write rate (1.25x vs 2.0x) and expiry rebuilds on pauses between 5m and 60m.
+  1. **TTL 5m vs 1h**: Evaluates trade-off between cheaper write rate (1.25x vs 2.0x, applied only to tokens actually billed at the 1h tier) and expiry rebuilds on pauses between 5m and 60m.
   2. **/compact before breaks > 30m**: Measures cost of compacting on a warm cache before an idle break vs paying a full-context rebuild upon return.
   3. **Auto-compact threshold (35%)**: Evaluates per-turn read volume reduction across deep sessions.
   4. **Resume stale session (>24h) vs starting fresh**: Compares rebuild and carryover costs against a fresh session baseline.

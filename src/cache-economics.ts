@@ -1,4 +1,4 @@
-import { getPricing } from "@/pricing";
+import { getPricing, type ModelPricing } from "@/pricing";
 import { CREDIT_WEIGHTS } from "@/credits";
 
 export interface CacheTurnRecord {
@@ -11,6 +11,8 @@ export interface CacheTurnRecord {
   inputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  /** Portion of cacheWriteTokens billed at the 1h tier (usage.cache_creation.ephemeral_1h_input_tokens). */
+  cacheWrite1hTokens?: number;
   costUsd: number | null;
   isSubagent?: boolean;
 }
@@ -53,6 +55,7 @@ export interface MissClassification {
   contextTokens: number;
   prevContextTokens: number;
   cacheWriteTokens: number;
+  cacheWrite1hTokens: number;
   cacheReadTokens: number;
   inputTokens: number;
   rebuildPrefixTokens: number;
@@ -122,6 +125,26 @@ export interface CacheEconomicsInput {
 export const MAIN_TTL_MS = 60 * 60 * 1000; // 1 hour default
 export const SUBAGENT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+// pricing.ts carries only the 5m write rate (1.25x input); the 1h tier bills 2.0x input.
+const ONE_HOUR_WRITE_INPUT_MULTIPLE = 2.0;
+
+type WriteSplit = { cacheWriteTokens: number; cacheWrite1hTokens?: number };
+
+function splitWrites(t: WriteSplit): { w5m: number; w1h: number } {
+  const w1h = Math.min(Math.max(0, t.cacheWrite1hTokens ?? 0), t.cacheWriteTokens);
+  return { w5m: t.cacheWriteTokens - w1h, w1h };
+}
+
+export function cacheWriteCostUsd(t: WriteSplit, p: ModelPricing): number {
+  const { w5m, w1h } = splitWrites(t);
+  return (w5m * p.cacheWritePerMillion + w1h * p.inputPerMillion * ONE_HOUR_WRITE_INPUT_MULTIPLE) / 1_000_000;
+}
+
+export function cacheWriteCredits(t: WriteSplit): number {
+  const { w5m, w1h } = splitWrites(t);
+  return w5m * CREDIT_WEIGHTS.cacheWrite + w1h * CREDIT_WEIGHTS.input * ONE_HOUR_WRITE_INPUT_MULTIPLE;
+}
+
 export function classifyTurn(
   prev: CacheTurnRecord | null,
   curr: CacheTurnRecord,
@@ -141,8 +164,9 @@ export function classifyTurn(
   let extraCredits = 0;
 
   const p = getPricing(curr.model);
-  const writePerM = p ? p.cacheWritePerMillion : 0;
-  const readPerM = p ? p.cacheReadPerMillion : 0;
+  const writePerToken = p && curr.cacheWriteTokens > 0 ? cacheWriteCostUsd(curr, p) / curr.cacheWriteTokens : 0;
+  const readPerToken = p ? p.cacheReadPerMillion / 1_000_000 : 0;
+  const writeCreditsPerToken = curr.cacheWriteTokens > 0 ? cacheWriteCredits(curr) / curr.cacheWriteTokens : 0;
 
   if (isCold) {
     type = "cold";
@@ -150,8 +174,8 @@ export function classifyTurn(
     if (gapMs !== null && gapMs > ttlMs) {
       type = "expiry";
       rebuildPrefixTokens = Math.min(prevContext, curr.cacheWriteTokens);
-      extraCostUsd = (rebuildPrefixTokens * (writePerM - readPerM)) / 1_000_000;
-      extraCredits = rebuildPrefixTokens * (CREDIT_WEIGHTS.cacheWrite - CREDIT_WEIGHTS.cacheRead);
+      extraCostUsd = rebuildPrefixTokens * (writePerToken - readPerToken);
+      extraCredits = rebuildPrefixTokens * (writeCreditsPerToken - CREDIT_WEIGHTS.cacheRead);
     } else {
       // Gap <= TTL: check whether write corresponds to new content
       // If previous context was mostly read and write is within expected growth margin, it's growth
@@ -164,8 +188,8 @@ export function classifyTurn(
       } else {
         type = "invalidation";
         rebuildPrefixTokens = Math.min(prevContext, curr.cacheWriteTokens);
-        extraCostUsd = (rebuildPrefixTokens * (writePerM - readPerM)) / 1_000_000;
-        extraCredits = rebuildPrefixTokens * (CREDIT_WEIGHTS.cacheWrite - CREDIT_WEIGHTS.cacheRead);
+        extraCostUsd = rebuildPrefixTokens * (writePerToken - readPerToken);
+        extraCredits = rebuildPrefixTokens * (writeCreditsPerToken - CREDIT_WEIGHTS.cacheRead);
       }
     }
   }
@@ -179,6 +203,7 @@ export function classifyTurn(
     contextTokens: currContext,
     prevContextTokens: prevContext,
     cacheWriteTokens: curr.cacheWriteTokens,
+    cacheWrite1hTokens: splitWrites(curr).w1h,
     cacheReadTokens: curr.cacheReadTokens,
     inputTokens: curr.inputTokens,
     rebuildPrefixTokens,
@@ -238,16 +263,18 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
   let totalReadUsd = 0;
   let totalWriteUsd = 0;
   let totalInputUsd = 0;
+  let totalWriteCredits = 0;
 
   for (const t of allTurns) {
     totalRead += t.cacheReadTokens;
     totalWrite += t.cacheWriteTokens;
     totalInput += t.inputTokens;
+    totalWriteCredits += cacheWriteCredits(t);
 
     const p = getPricing(t.model);
     if (p) {
       totalReadUsd += (t.cacheReadTokens * p.cacheReadPerMillion) / 1_000_000;
-      totalWriteUsd += (t.cacheWriteTokens * p.cacheWritePerMillion) / 1_000_000;
+      totalWriteUsd += cacheWriteCostUsd(t, p);
       totalInputUsd += (t.inputTokens * p.inputPerMillion) / 1_000_000;
     }
   }
@@ -265,7 +292,6 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
 
   const totalInputCostUsd = totalReadUsd + totalWriteUsd + totalInputUsd;
   const totalReadCredits = totalRead * CREDIT_WEIGHTS.cacheRead;
-  const totalWriteCredits = totalWrite * CREDIT_WEIGHTS.cacheWrite;
   const totalInputCreditsOnly = totalInput * CREDIT_WEIGHTS.input;
   const totalInputCredits = totalReadCredits + totalWriteCredits + totalInputCreditsOnly;
 
@@ -371,9 +397,9 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
         actualTotalCostUsd +=
           (t.outputTokens * p.outputPerMillion +
             t.inputTokens * p.inputPerMillion +
-            t.cacheReadTokens * p.cacheReadPerMillion +
-            t.cacheWriteTokens * p.cacheWritePerMillion) /
-          1_000_000;
+            t.cacheReadTokens * p.cacheReadPerMillion) /
+            1_000_000 +
+          cacheWriteCostUsd(t, p);
       }
     }
   }
@@ -391,10 +417,6 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     simulatedTotalCostUsd: actualTotalCostUsd,
   });
 
-  // 2. Main TTL: 5m vs 1h
-  // Under 5m TTL:
-  // Write rate drops by 37.5% (from 2.0x to 1.25x of input price)
-  // BUT requests with gaps between 5m and 60m expire, turning reads into writes
   let main5mWriteSavingsUsd = 0;
   let main5mExpiryPenaltiesUsd = 0;
   let main5mBreakEvenGapsCount = 0;
@@ -402,15 +424,14 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
   for (const m of mainMissItems) {
     const p = getPricing(m.model);
     if (!p) continue;
-    // If write occurred, 1h write is 2x base, 5m write is 1.25x base -> diff is 0.75x base
-    if (m.cacheWriteTokens > 0) {
-      main5mWriteSavingsUsd += (m.cacheWriteTokens * (p.inputPerMillion * 0.75)) / 1_000_000;
+    if (m.cacheWrite1hTokens > 0) {
+      main5mWriteSavingsUsd +=
+        cacheWriteCostUsd(m, p) - cacheWriteCostUsd({ cacheWriteTokens: m.cacheWriteTokens, cacheWrite1hTokens: 0 }, p);
     }
-    // If gap was in (5m, 60m] and read tokens occurred, under 5m TTL this would expire!
+    // A read that survived a (5m, 60m] gap only hit because the prefix was on the 1h tier.
     if (m.gapMs !== null && m.gapMs > 5 * 60 * 1000 && m.gapMs <= 60 * 60 * 1000 && m.cacheReadTokens > 0) {
       main5mBreakEvenGapsCount++;
-      // Rebuild cost at 1.25x instead of read at 0.1x -> diff is 1.15x base
-      main5mExpiryPenaltiesUsd += (m.cacheReadTokens * (p.inputPerMillion * 1.15)) / 1_000_000;
+      main5mExpiryPenaltiesUsd += (m.cacheReadTokens * (p.cacheWritePerMillion - p.cacheReadPerMillion)) / 1_000_000;
     }
   }
 
@@ -423,6 +444,7 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     weeklySavingsCredits: (Math.abs(net5mSavingsUsd) / (totalInputCostUsd || 1)) * totalInputCredits / windowWeeks,
     assumptions: [
       "5m cache write = 1.25x input price; 1h cache write = 2.0x input price; cache read = 0.1x",
+      "Write savings apply only to tokens billed at the 1h tier (usage.cache_creation.ephemeral_1h_input_tokens)",
       `Gaps in (5m, 60m] observed: ${main5mBreakEvenGapsCount}`,
       net5mSavingsUsd >= 0
         ? "Fast-paced turns dominate; 37.5% write savings outweigh the few 5m-60m expiry rebuilds"
@@ -445,7 +467,8 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
       if (p) {
         const compactedContext = 15000;
         const tokensSaved = Math.max(0, m.rebuildPrefixTokens - compactedContext);
-        const rebuildSavedUsd = (tokensSaved * (p.cacheWritePerMillion - p.cacheReadPerMillion)) / 1_000_000;
+        const writePerToken = cacheWriteCostUsd(m, p) / m.cacheWriteTokens;
+        const rebuildSavedUsd = tokensSaved * (writePerToken - p.cacheReadPerMillion / 1_000_000);
         const compactCostUsd = (m.prevContextTokens * p.cacheReadPerMillion + 1000 * p.outputPerMillion) / 1_000_000;
         const net = rebuildSavedUsd - compactCostUsd;
         if (net > 0) compactBeforeBreakSavingsUsd += net;

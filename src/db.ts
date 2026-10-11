@@ -859,6 +859,7 @@ export function queryCacheTurns(db: Database, since: number): { mainTurns: Cache
     inputTokens: number;
     cacheReadTokens: number;
     cacheWriteTokens: number;
+    cacheWrite1hTokens: number;
     costUsd: number | null;
     model: string;
   }, [number]>(`
@@ -867,6 +868,7 @@ export function queryCacheTurns(db: Database, since: number): { mainTurns: Cache
       CAST(COALESCE(json_extract(am.message, '$.usage.input_tokens'), 0) AS INTEGER) AS inputTokens,
       CAST(COALESCE(json_extract(am.message, '$.usage.cache_read_input_tokens'), 0) AS INTEGER) AS cacheReadTokens,
       CAST(COALESCE(json_extract(am.message, '$.usage.cache_creation_input_tokens'), 0) AS INTEGER) AS cacheWriteTokens,
+      CAST(COALESCE(json_extract(am.message, '$.usage.cache_creation.ephemeral_1h_input_tokens'), 0) AS INTEGER) AS cacheWrite1hTokens,
       am.cost_usd AS costUsd, am.model
     FROM assistant_messages am
     JOIN base_messages bm ON am.uuid = bm.uuid
@@ -885,6 +887,7 @@ export function queryCacheTurns(db: Database, since: number): { mainTurns: Cache
       inputTokens: t.inputTokens,
       cacheReadTokens: t.cacheReadTokens,
       cacheWriteTokens: t.cacheWriteTokens,
+      cacheWrite1hTokens: t.cacheWrite1hTokens,
       costUsd: t.costUsd,
       isSubagent: false,
     })),
