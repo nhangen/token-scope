@@ -777,6 +777,44 @@ the cap is denominated in.
 
 ---
 
+## Cache-timer status-line mod (Claude Code plugin)
+
+Installing `token-scope` as a Claude Code plugin ships the `cache-timer` mod. It displays the main session's prompt-cache state and an active countdown to expiry directly in Claude Code's status line:
+
+```
+cache warm 47:12 · hit 98%
+```
+
+Once the cache lifetime has elapsed since the last main-session request, it transitions to:
+
+```
+cache cold
+```
+
+### What the status entry means
+- **`cache warm mm:ss`**: Time remaining before the prompt cache expires.
+- **`· hit XX%`**: The cache hit rate of the last main-session request, computed as `cache_read / (cache_read + cache_creation + input)`. Unlike `--cache`, this counts cache writes.
+- **`cache cold`**: Cache has expired after the TTL has passed with no requests.
+- **`(5m)` tag**: If usage-overage forces Claude Code to fall back from the standard 1-hour cache TTL to a 5-minute TTL (detected when a request after a >5m gap yields a near-zero cache read alongside a large cache write), the countdown automatically adjusts to 5 minutes and marks the entry (e.g. `cache warm 3:10 (5m)`).
+- **Subagent exclusion**: Subagents operate with their own 5-minute cache entries; only the main interactive session is tracked.
+
+### Requirements & Installation
+- **Minimum Claude Code version**: Requires Claude Code `2.1.294` or later (which supports function-hook mods declared via `hooks/hooks.json`).
+- **Install via plugin**:
+  ```bash
+  claude plugin install token-scope@nhangen-tools
+  ```
+  Or for local development:
+  ```bash
+  claude plugin install ~/ML-AI/claude/token-scope
+  ```
+- **Opt-out**: The status-line mod is enabled by default. To opt out:
+  - In `/config` (or settings `pluginConfigs["token-scope"].options`): set `cacheTimer: false`
+  - Or via environment variable: `TOKEN_SCOPE_CACHE_TIMER=0` (or `TOKEN_SCOPE_DISABLE_CACHE_TIMER=1`)
+- **TTL configuration**: The countdown defaults to 1 hour. `FORCE_PROMPT_CACHING_5M` forces 5 minutes; otherwise the first valid value of `CLAUDE_CODE_PROMPT_CACHE_TTL` or settings `promptCacheTtl` wins (an unparseable value is skipped, not honored). Values take a unit (`5m`, `1h`, `300s`, `500ms`); a bare number is seconds. `DISABLE_PROMPT_CACHING` hides the status entry.
+
+---
+
 ## Flags
 
 | Flag | Default | Description |
@@ -801,6 +839,8 @@ the cap is denominated in.
 | `TOKEN_SCOPE_CHECKPOINT_TURNS` | Checkpoint at this turn count (default `50`) |
 | `TOKEN_SCOPE_TURN_WARN_PCT` | Warn when one turn's CONTEXT costs this % of the cap (default `0.0056`) |
 | `TOKEN_SCOPE_CHECKPOINT_DIR` | Checkpoint output dir (default `~/.claude/checkpoints`) |
+| `TOKEN_SCOPE_CACHE_TIMER` | Disable status-line cache timer mod (`0`, `false`, `no`, or `off` to opt out) |
+| `TOKEN_SCOPE_DISABLE_CACHE_TIMER` | Disable status-line cache timer mod (`1` to disable) |
 | `NO_COLOR` | Disable ANSI color |
 
 ## Accuracy Notes

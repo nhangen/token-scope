@@ -20,6 +20,7 @@ git clone https://github.com/nhangen/token-scope ~/ML-AI/claude/token-scope
 cd ~/ML-AI/claude/token-scope
 bun install
 claude skill add ~/ML-AI/claude/token-scope/skill/SKILL.md
+claude plugin install ~/ML-AI/claude/token-scope
 ```
 
 ## Usage
