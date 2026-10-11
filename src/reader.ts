@@ -4,7 +4,7 @@ import type {
   ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow,
   SessionBudgetRow, SubagentSpend, CreditWeekRow, CreditWeeks,
 } from "@/db";
-import type { CacheTurnRecord } from "@/cache-economics";
+import type { CacheTurnRecord, CacheTurnSet } from "@/cache-economics";
 import { existsSync, readdirSync } from "fs";
 import { join } from "path";
 
@@ -25,7 +25,7 @@ export interface Reader {
   queryProjectMatches(fragment: string): ProjectMatch[];
   queryContextStats(since: number, limit: number): ContextStatRow[];
   queryCacheStats(since: number, limit: number): CacheStatRow[];
-  queryCacheTurns(since: number): { mainTurns: CacheTurnRecord[]; subagentTurns: CacheTurnRecord[] };
+  queryCacheTurns(since: number): CacheTurnSet;
   queryContextContributors(since: number, limit: number, projectFragment?: string): ContributorRow[];
   queryBaseLoad(since: number, limit: number): BaseLoadRow[];
   queryCacheGrowth(sessionId: string): CacheGrowthRow[];

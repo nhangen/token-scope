@@ -472,7 +472,7 @@ describe("Cache Economics — subagent streams", () => {
 function stubReader(mainTurns: CacheTurnRecord[], subagentTurns: CacheTurnRecord[] = [], extra: Record<string, unknown> = {}): Reader {
   return {
     queryCacheStats: () => [],
-    queryCacheTurns: () => ({ mainTurns, subagentTurns, ...extra }),
+    queryCacheTurns: () => ({ mainTurns, subagentTurns, subagentsSupported: true, ...extra }),
   } as unknown as Reader;
 }
 
@@ -536,5 +536,27 @@ describe("Corrected hit rate at user-visible sites", () => {
     const share = out.split("\n").find((l) => l.includes("Read Share (non-write)"))!;
     expect(hit).toContain(`${((604_000 / 639_541) * 100).toFixed(1)}%`);
     expect(share).toContain(`${((604_000 / 634_641) * 100).toFixed(1)}%`);
+  });
+});
+
+describe("Cache Economics — subagent visibility by source", () => {
+  it("SQLite declares subagents unsupported and the JSONL reader declares them supported", () => {
+    const sqlite = createReader({ source: "sqlite" });
+    const jsonl = createReader({ source: "jsonl" });
+    expect(sqlite.queryCacheTurns(0).subagentsSupported).toBe(false);
+    expect(jsonl.queryCacheTurns(0).subagentsSupported).toBe(true);
+    sqlite.close();
+    jsonl.close();
+  });
+
+  it("renders subagent rows as n/a, and flags JSON, when the source cannot see subagents", () => {
+    const reader = createReader({ source: "sqlite" });
+    const text = capture(() => renderCacheReport(reader, { since: 0, sinceStr: "30d", limit: 10, json: false, focus: "misses" }));
+    const json = JSON.parse(capture(() => renderCacheReport(reader, { since: 0, sinceStr: "30d", limit: 10, json: true })));
+    reader.close();
+    const subRows = text.split("\n").filter((l) => l.includes("Subagents"));
+    expect(subRows.length).toBeGreaterThan(0);
+    for (const row of subRows) expect(row).toContain("n/a");
+    expect(json.summary.subagents_supported).toBe(false);
   });
 });

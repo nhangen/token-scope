@@ -9,6 +9,7 @@ import type {
   SessionBudgetRow, SubagentSpend, CreditWeekRow, CreditWeeks, CacheTurnRecord,
 } from "@/reader";
 import type { Reader } from "@/reader";
+import type { CacheTurnSet } from "@/cache-economics";
 
 interface JsonlTurn {
   uuid: string;
@@ -687,7 +688,7 @@ export class JsonlReader implements Reader {
       .slice(0, limit);
   }
 
-  queryCacheTurns(since: number): { mainTurns: CacheTurnRecord[]; subagentTurns: CacheTurnRecord[] } {
+  queryCacheTurns(since: number): CacheTurnSet {
     const sinceMs = since * 1000;
     const mainTurns: CacheTurnRecord[] = this.turns
       .filter((t) => t.timestampMs > sinceMs)
@@ -727,7 +728,7 @@ export class JsonlReader implements Reader {
         isSubagent: true,
       }));
 
-    return { mainTurns, subagentTurns };
+    return { mainTurns, subagentTurns, subagentsSupported: true };
   }
 
   queryContextContributors(since: number, limit: number, projectFragment?: string): ContributorRow[] {

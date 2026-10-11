@@ -19,6 +19,13 @@ export interface CacheTurnRecord {
   isSubagent?: boolean;
 }
 
+export interface CacheTurnSet {
+  mainTurns: CacheTurnRecord[];
+  subagentTurns: CacheTurnRecord[];
+  /** False when the source has no subagent transcripts (SQLite), so subagent counts are unmeasured, not zero. */
+  subagentsSupported: boolean;
+}
+
 export interface TokenMix {
   cacheReadTokens: number;
   cacheWriteTokens: number;

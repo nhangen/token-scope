@@ -20,7 +20,7 @@ function renderBar(pct: number, maxBar = 24): string {
 
 export function renderCacheReport(reader: Reader, opts: Options): void {
   const rows = reader.queryCacheStats(opts.since, opts.limit);
-  const { mainTurns, subagentTurns } = reader.queryCacheTurns(opts.since);
+  const { mainTurns, subagentTurns, subagentsSupported } = reader.queryCacheTurns(opts.since);
   const analysis = analyzeCacheEconomics({
     mainTurns,
     subagentTurns,
@@ -39,6 +39,7 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
       report: "cache",
       summary: {
         projects: rows.length,
+        subagents_supported: subagentsSupported,
         overall_cache_hit_pct: analysis.correctedHitPct,
         legacy_read_share_pct: analysis.legacyHitPct,
         estimated_total_savings_usd: totalSavings > 0 ? totalSavings : null,
@@ -161,10 +162,7 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
         ["Main session", "Growth (no gap)", String(analysis.misses.growths), formatUsd(0), "Normal incremental context expansion"],
         ["Main session", "Invalidation", String(analysis.misses.invalidations), formatUsd(analysis.misses.totalInvalidationExtraCostUsd), "Prefix invalidated (model/prompt change)"],
         ["Main session", "Cold initial", String(analysis.misses.colds), formatUsd(0), "Session start / first request"],
-        ["Subagents", "Cold starts", String(analysis.subagentMisses.coldStarts), formatUsd(0), "Subagent first turn (5m TTL)"],
-        ["Subagents", "Expiry (>5m gap)", String(analysis.subagentMisses.expiries), formatUsd(analysis.subagentMisses.totalExpiryExtraCostUsd), "Subagent pause exceeded 5m TTL"],
-        ["Subagents", "Growth (no gap)", String(analysis.subagentMisses.growths), formatUsd(0), "Subagent context growth"],
-        ["Subagents", "Invalidation", String(analysis.subagentMisses.invalidations), formatUsd(analysis.subagentMisses.totalInvalidationExtraCostUsd), "Subagent prefix invalidated"],
+        ...subagentRows(analysis, subagentsSupported),
       ]
     ));
 
@@ -214,6 +212,21 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
 
   console.log(renderFootnote("Corrected hit rate accounts for cache writes (misses). Rebuild cost (expiry + invalidation) reflects rebuilding the prefix at write price instead of read price."));
   console.log("");
+}
+
+function subagentRows(analysis: CacheEconomicsAnalysis, supported: boolean): string[][] {
+  const s = analysis.subagentMisses;
+  const rows: [string, number, number | null, string][] = [
+    ["Cold starts", s.coldStarts, 0, "Subagent first turn (5m TTL)"],
+    ["Expiry (>5m gap)", s.expiries, s.totalExpiryExtraCostUsd, "Subagent pause exceeded 5m TTL"],
+    ["Growth (no gap)", s.growths, 0, "Subagent context growth"],
+    ["Invalidation", s.invalidations, s.totalInvalidationExtraCostUsd, "Subagent prefix invalidated"],
+  ];
+  return rows.map(([label, count, cost, note]) =>
+    supported
+      ? ["Subagents", label, String(count), formatUsd(cost), note]
+      : ["Subagents", label, "n/a", "n/a", "Source has no subagent transcripts"]
+  );
 }
 
 function renderGapHistogramTable(buckets: GapHistogramBucket[]): string {

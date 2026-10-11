@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "fs";
 import { join } from "path";
 import type { Reader } from "./reader";
-import type { CacheTurnRecord } from "./cache-economics";
+import type { CacheTurnRecord, CacheTurnSet } from "./cache-economics";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -849,7 +849,7 @@ export function querySubagentSpendSqlite(): SubagentSpend {
   };
 }
 
-export function queryCacheTurns(db: Database, since: number): { mainTurns: CacheTurnRecord[]; subagentTurns: CacheTurnRecord[] } {
+export function queryCacheTurns(db: Database, since: number): CacheTurnSet {
   const turns = db.query<{
     uuid: string;
     sessionId: string;
@@ -892,6 +892,7 @@ export function queryCacheTurns(db: Database, since: number): { mainTurns: Cache
       isSubagent: false,
     })),
     subagentTurns: [],
+    subagentsSupported: false,
   };
 }
 
