@@ -33,13 +33,14 @@ function runProviders(extraArgs: string[] = [], geminiRoot = join(FX, "gemini-cl
 
 describe("--providers production CLI path", () => {
   it("renders the full report from fixture stores via env overrides", () => {
-    const { code, out } = runProviders();
+    const { code, out } = runProviders(["--since", "10000d"]);
     expect(code).toBe(0);
     expect(out).toContain("provider usage by harness / provider / billing route / model");
+    expect(out).toMatch(/^claude\s+anthropic\s+subscription\s+claude-x\s+4\s/m);
     expect(out).toContain("unavailable sources (volume unknown, not zero): opencode");
     expect(out).toContain("unsupported sources (not ingested): google-ai-api, vertex-ai");
     expect(out).toContain("gemini-cli");
-    expect(out).toContain("all values measured from source records; no estimates");
+    expect(out).toContain("measurement incomplete:");
   });
 
   it("emits valid JSON with the documented shape under --json", () => {
