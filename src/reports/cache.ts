@@ -27,6 +27,10 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
     sinceSec: opts.since,
   });
 
+  const focus = opts.focus ?? "all";
+  const showMisses = focus === "all" || focus === "misses";
+  const showSim = focus === "all" || focus === "sim";
+
   if (opts.json) {
     const totalSavings = rows.reduce((s, r) => s + (r.estimatedSavingsUsd ?? 0), 0);
     console.log(JSON.stringify({
@@ -36,7 +40,7 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
         limit: opts.limit,
         token_scope_version: VERSION,
       },
-      report: "cache",
+      report: focus === "misses" ? "cache-misses" : focus === "sim" ? "cache-sim" : "cache",
       summary: {
         projects: rows.length,
         subagents_supported: subagentsSupported,
@@ -51,10 +55,10 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
       token_mix: analysis.tokenMix,
       cost_mix: analysis.costMix,
       rows,
-      misses: analysis.misses,
-      subagent_misses: analysis.subagentMisses,
-      gap_histogram: analysis.gapHistogram,
-      simulations: analysis.simulations,
+      ...(showMisses
+        ? { misses: analysis.misses, subagent_misses: analysis.subagentMisses, gap_histogram: analysis.gapHistogram }
+        : {}),
+      ...(showSim ? { simulations: analysis.simulations } : {}),
       reconciliation: analysis.reconciliation,
     }, null, 2));
     return;
@@ -65,10 +69,9 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
     return;
   }
 
-  const focus = opts.focus ?? "all";
   const totalSavings = rows.reduce((s, r) => s + (r.estimatedSavingsUsd ?? 0), 0);
 
-  if (focus === "all" || focus === "misses") {
+  if (showMisses) {
     console.log(renderHeader("token-scope — Cache Economics & Efficiency"));
     console.log(renderKV([
       ["Projects", String(rows.length)],
@@ -170,7 +173,7 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
     console.log(renderGapHistogramTable(analysis.gapHistogram.buckets));
   }
 
-  if (focus === "all" || focus === "sim") {
+  if (showSim) {
     if (focus === "sim") {
       console.log(renderHeader("token-scope — Cache Savings Simulations"));
     } else {

@@ -627,3 +627,25 @@ describe("Cache Economics — compact sim threshold", () => {
     expect(fresh.assumptions.some((x) => x.includes("not additive"))).toBe(true);
   });
 });
+
+describe("Cache report — JSON focus", () => {
+  const run = (focus: "all" | "misses" | "sim") => {
+    const reader = createReader({ source: "jsonl" });
+    const out = JSON.parse(capture(() => renderCacheReport(reader, { since: 0, sinceStr: "30d", limit: 10, json: true, focus })));
+    reader.close();
+    return out;
+  };
+
+  it("names the report per mode and scopes the payload", () => {
+    const all = run("all");
+    const misses = run("misses");
+    const sim = run("sim");
+    expect([all.report, misses.report, sim.report]).toEqual(["cache", "cache-misses", "cache-sim"]);
+    expect(misses).toHaveProperty("misses");
+    expect(misses).toHaveProperty("gap_histogram");
+    expect(misses).not.toHaveProperty("simulations");
+    expect(sim).toHaveProperty("simulations");
+    expect(sim).not.toHaveProperty("misses");
+    expect(sim).not.toHaveProperty("gap_histogram");
+  });
+});
