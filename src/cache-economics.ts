@@ -202,8 +202,6 @@ export function classifyTurn(
       extraCostUsd = rebuildPrefixTokens * (writePerToken - readPerToken);
       extraCredits = rebuildPrefixTokens * (writeCreditsPerToken - CREDIT_WEIGHTS.cacheRead);
     } else {
-      // Gap <= TTL: check whether write corresponds to new content
-      // If previous context was mostly read and write is within expected growth margin, it's growth
       const isGrowth =
         curr.cacheReadTokens >= prevContext * 0.75 ||
         curr.cacheWriteTokens <= Math.max(deltaContext * 1.25, 2048);
@@ -281,7 +279,6 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
   const subagentTurns = (input.subagentTurns ?? []).slice().sort((a, b) => a.timestampMs - b.timestampMs);
   const allTurns = [...mainTurns, ...subagentTurns];
 
-  // Token totals
   let totalRead = 0;
   let totalWrite = 0;
   let totalInput = 0;
@@ -348,7 +345,6 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
   const nonWriteTokens = totalRead + totalInput;
   const legacyHitPct = nonWriteTokens > 0 ? (totalRead / nonWriteTokens) * 100 : null;
 
-  // Group main turns by session
   const mainBySession = new Map<string, CacheTurnRecord[]>();
   for (const t of mainTurns) {
     const list = mainBySession.get(t.sessionId) ?? [];
@@ -540,14 +536,11 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     simulatedTotalCostUsd: actualTotalCostUsd - compactBeforeBreakSavingsUsd,
   });
 
-  // 4. Auto-compact threshold at 35% context (vs default ~80%)
-  // Capping context earlier keeps per-turn reads smaller
   let autoCompactSavingsUsd = 0;
   for (const m of mainMissItems) {
     if (m.contextTokens > 70000) {
       const p = getPricing(m.model);
       if (p) {
-        // Excess reads above 70k tokens
         const excess = m.contextTokens - 70000;
         autoCompactSavingsUsd += (excess * 0.4 * p.cacheReadPerMillion) / 1_000_000;
       }
@@ -567,7 +560,6 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     simulatedTotalCostUsd: actualTotalCostUsd - autoCompactSavingsUsd,
   });
 
-  // 5. Fresh session vs resuming stale (>24h)
   let freshSessionSavingsUsd = 0;
   let staleResumesCount = 0;
 
@@ -576,7 +568,6 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
       staleResumesCount++;
       const p = getPricing(m.model);
       if (p) {
-        // Rebuild of stale history vs fresh start (~15k base context)
         const savedWrite = Math.max(0, m.prevContextTokens - 15000);
         freshSessionSavingsUsd += (savedWrite * (p.cacheWritePerMillion - p.cacheReadPerMillion)) / 1_000_000;
       }
