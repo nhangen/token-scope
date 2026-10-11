@@ -350,7 +350,7 @@ Subagents      │ Invalidation     │          1 │      $0.4100 │ Subagent
   - **Credits**: Weighted as 0.1x read, 1.25x write (2.0x for 1h-tier writes), 1.0x uncached input, and 5.0x output.
 
 - **Miss Classification**:
-  Each request with a cache write is classified:
+  Each request with a cache write is classified as below, on both loops; requests with no write are `hit` and are excluded from miss counts and `items`:
   - **`expiry`**: Time gap since the previous request on the same loop $> \text{TTL}$ (1h default for main session, 5m for subagents). The cache expired due to idle time; the previous context prefix had to be rewritten.
     $$\text{Rebuild Prefix} = \min(\text{prev\_context}, \text{cache\_write\_tokens})$$
     $$\text{Expiry Cost} = \frac{\text{Rebuild Prefix} \times (P_{\text{write}} - P_{\text{read}})}{1,000,000}$$

@@ -586,3 +586,26 @@ describe("Cache Economics — 5m TTL sim sign", () => {
     expect(row).toContain("cost");
   });
 });
+
+describe("Cache Economics — miss populations", () => {
+  const t0 = 1_700_000_000_000;
+  const t = (uuid: string, off: number, read: number, write: number, isSubagent = false): CacheTurnRecord => ({
+    uuid, sessionId: "s1", agentId: isSubagent ? "x" : undefined, timestampMs: t0 + off, model: "claude-sonnet-4-6",
+    outputTokens: 10, inputTokens: 0, cacheReadTokens: read, cacheWriteTokens: write, costUsd: null, isSubagent,
+  });
+
+  it("classifies a non-cold turn with no cache write as a hit", () => {
+    expect(classifyTurn(t("a", 0, 0, 5_000), t("b", 30_000, 5_000, 0), false, 2).type).toBe("hit");
+  });
+
+  it("counts main and subagent misses over the same write-only population and omits hits from items", () => {
+    const main = [t("m1", 0, 0, 5_000), t("m2", 30_000, 5_000, 0), t("m3", 60_000, 5_000, 300)];
+    const sub = [t("s1", 0, 0, 5_000, true), t("s2", 30_000, 5_000, 0, true), t("s3", 60_000, 5_000, 300, true)];
+    const a = analyzeCacheEconomics({ mainTurns: main, subagentTurns: sub, sinceSec: 0, nowMs: t0 + 86_400_000 });
+    expect(a.misses.growths).toBe(1);
+    expect(a.subagentMisses.growths).toBe(1);
+    expect(a.misses.items.map((m) => m.type)).toEqual(["cold", "growth"]);
+    expect(a.subagentMisses.items.map((m) => m.type)).toEqual(["cold", "growth"]);
+    expect(a.subagentMisses.totalTurns).toBe(3);
+  });
+});

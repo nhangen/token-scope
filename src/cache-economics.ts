@@ -53,7 +53,7 @@ export interface CostMix {
   uncachedInputCreditsPct: number | null;
 }
 
-export type MissType = "expiry" | "growth" | "invalidation" | "cold";
+export type MissType = "expiry" | "growth" | "invalidation" | "cold" | "hit";
 
 export interface MissClassification {
   type: MissType;
@@ -190,7 +190,9 @@ export function classifyTurn(
 
   if (isCold) {
     type = "cold";
-  } else if (curr.cacheWriteTokens > 0) {
+  } else if (curr.cacheWriteTokens === 0) {
+    type = "hit";
+  } else {
     if (gapMs !== null && gapMs > ttlMs) {
       type = "expiry";
       rebuildPrefixTokens = Math.min(prevContext, curr.cacheWriteTokens);
@@ -382,7 +384,6 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     }
   }
 
-  // Summary counts for main misses
   const writesOnly = mainMissItems.filter((m) => m.cacheWriteTokens > 0);
   const expiries = writesOnly.filter((m) => m.type === "expiry");
   const growths = writesOnly.filter((m) => m.type === "growth");
@@ -393,11 +394,11 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
   const totalInvalidationExtraCostUsd = invalidations.reduce((s, m) => s + m.extraCostUsd, 0);
   const totalInvalidationExtraCredits = invalidations.reduce((s, m) => s + m.extraCredits, 0);
 
-  // Summary counts for subagents
-  const subColdStarts = subagentMissItems.filter((m) => m.type === "cold");
-  const subExpiries = subagentMissItems.filter((m) => m.type === "expiry");
-  const subGrowths = subagentMissItems.filter((m) => m.type === "growth");
-  const subInvalidations = subagentMissItems.filter((m) => m.type === "invalidation");
+  const subWritesOnly = subagentMissItems.filter((m) => m.cacheWriteTokens > 0);
+  const subColdStarts = subWritesOnly.filter((m) => m.type === "cold");
+  const subExpiries = subWritesOnly.filter((m) => m.type === "expiry");
+  const subGrowths = subWritesOnly.filter((m) => m.type === "growth");
+  const subInvalidations = subWritesOnly.filter((m) => m.type === "invalidation");
   const subExpiryCostUsd = subExpiries.reduce((s, m) => s + m.extraCostUsd, 0);
   const subExpiryCredits = subExpiries.reduce((s, m) => s + m.extraCredits, 0);
   const subInvalidationCostUsd = subInvalidations.reduce((s, m) => s + m.extraCostUsd, 0);
@@ -601,7 +602,7 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
       totalExpiryExtraCredits,
       totalInvalidationExtraCostUsd,
       totalInvalidationExtraCredits,
-      items: mainMissItems,
+      items: writesOnly,
     },
     subagentMisses: {
       totalTurns: subagentMissItems.length,
@@ -613,7 +614,7 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
       totalExpiryExtraCredits: subExpiryCredits,
       totalInvalidationExtraCostUsd: subInvalidationCostUsd,
       totalInvalidationExtraCredits: subInvalidationCredits,
-      items: subagentMissItems,
+      items: subWritesOnly,
     },
     gapHistogram,
     simulations: rankedSimulations,
