@@ -25,6 +25,7 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
     mainTurns,
     subagentTurns,
     sinceSec: opts.since,
+    nowMs: Date.now(),
   });
 
   const focus = opts.focus ?? "all";

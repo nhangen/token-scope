@@ -649,3 +649,18 @@ describe("Cache report — JSON focus", () => {
     expect(sim).not.toHaveProperty("gap_histogram");
   });
 });
+
+describe("Cache Economics — weekly extrapolation window", () => {
+  it("divides by the query window, not the span of activity", () => {
+    const nowMs = 1_700_000_000_000;
+    const sinceSec = (nowMs - 28 * 86_400_000) / 1000;
+    const turns: CacheTurnRecord[] = [
+      { uuid: "a", sessionId: "s1", timestampMs: nowMs - 86_400_000, model: "claude-sonnet-4-6", outputTokens: 0, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 1_000_000, cacheWrite1hTokens: 1_000_000, costUsd: null },
+    ];
+    const a = analyzeCacheEconomics({ mainTurns: turns, sinceSec, nowMs });
+    expect(a.windowWeeks).toBeCloseTo(4, 8);
+    const sim = a.simulations.find((s) => s.policyId === "main_5m_ttl")!;
+    // $2.25 total over a 4-week window.
+    expect(sim.weeklySavingsUsd).toBeCloseTo(2.25 / 4, 8);
+  });
+});

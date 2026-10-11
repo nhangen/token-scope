@@ -126,6 +126,7 @@ export interface CacheEconomicsAnalysis {
     buckets: GapHistogramBucket[];
   };
   simulations: PolicySimulationResult[];
+  windowWeeks: number;
   /** Turns that are both priced and carry a reader costUsd: reader total vs tier-aware token pricing. */
   reconciliation: {
     turns: number;
@@ -406,11 +407,15 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
 
   const gapHistogram = computeGapHistogram(gapsSec);
 
-  // Simulations
-  // Estimate window duration in weeks
-  const minTs = allTurns.length > 0 ? Math.min(...allTurns.map((t) => t.timestampMs)) : input.sinceSec * 1000;
-  const maxTs = input.nowMs ?? (allTurns.length > 0 ? Math.max(...allTurns.map((t) => t.timestampMs)) : Date.now());
-  const windowWeeks = Math.max(0.14, (maxTs - minTs) / (7 * 86_400_000));
+  let earliestTs = Infinity;
+  let latestTs = -Infinity;
+  for (const t of allTurns) {
+    if (t.timestampMs < earliestTs) earliestTs = t.timestampMs;
+    if (t.timestampMs > latestTs) latestTs = t.timestampMs;
+  }
+  const windowStart = input.sinceSec > 0 ? input.sinceSec * 1000 : allTurns.length > 0 ? earliestTs : 0;
+  const windowEnd = input.nowMs ?? (allTurns.length > 0 ? latestTs : windowStart);
+  const windowWeeks = Math.max(0.14, (windowEnd - windowStart) / (7 * 86_400_000));
 
   // Sims price their deltas from tokens, so the baseline must too; the reader's
   // costUsd prices every write at the 5m rate and is only used for unpriced models.
@@ -449,6 +454,7 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     assumptions: [
       "Current observed configuration: 1h TTL on main loop, 5m TTL on subagents",
       "Token-priced with 5m/1h write tiers; see reconciliation for the gap against reader-reported cost",
+      `Weekly figures extrapolated over a ${(windowWeeks * 7).toFixed(1)}-day window`,
     ],
     simulatedTotalCostUsd: actualTotalCostUsd,
   });
@@ -616,6 +622,7 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     },
     gapHistogram,
     simulations: rankedSimulations,
+    windowWeeks,
     reconciliation: {
       turns: reconciledTurns,
       readerCostUsd,
