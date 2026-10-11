@@ -137,8 +137,9 @@ describe("Opt-out configuration", () => {
 describe("register hook wiring and coexistence", () => {
   function makeMock$(envVars: Record<string, string | undefined> = {}, settings: Record<string, unknown> = {}) {
     let timerCancelled = false;
+    let timerStarted = false;
     let timerCallback: (() => void) | undefined;
-    let currentStatus: string | undefined;
+    let currentStatus: string | undefined = "stale";
     let currentTime = 1_000_000;
 
     const $ = {
@@ -151,6 +152,7 @@ describe("register hook wiring and coexistence", () => {
       clock: {
         now: async () => currentTime,
         every: (_ms: number, fn: () => void) => {
+          timerStarted = true;
           timerCallback = fn;
           return () => {
             timerCancelled = true;
@@ -168,6 +170,7 @@ describe("register hook wiring and coexistence", () => {
       $,
       getStatus: () => currentStatus,
       isTimerCancelled: () => timerCancelled,
+      isTimerStarted: () => timerStarted,
       tick: async () => {
         timerCallback?.();
         await Promise.resolve();
@@ -189,36 +192,67 @@ describe("register hook wiring and coexistence", () => {
     expect(events).toContain("turn.step");
   });
 
-  test("session.start honors userConfig opt-out and sets status undefined", async () => {
+  function wire(options: Record<string, unknown>) {
     let startHandler: any;
+    let turnHandler: any;
     const fakeOn = ((event: string, handler: any) => {
       if (event === "session.start") startHandler = handler;
+      if (event === "turn.step") turnHandler = handler;
     }) as any;
+    register(fakeOn, options);
+    return {
+      start: ($: any) => startHandler($, {}, (e: any) => e),
+      turn: async ($: any, e: Record<string, unknown>, usage: Record<string, number> | undefined) =>
+        (await turnHandler($, e, async function* () {
+          return usage === undefined ? {} : { usage };
+        }).next()).value,
+    };
+  }
 
-    register(fakeOn, { cacheTimer: false });
-    const { $, getStatus } = makeMock$();
+  const HEALTHY = { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0 };
 
+  async function expectDisabled(options: Record<string, unknown>, envVars: Record<string, string | undefined>) {
+    const m = makeMock$(envVars);
+    const w = wire(options);
+    await w.start(m.$);
+    expect(m.getStatus()).toBe(undefined);
+    expect(m.isTimerStarted()).toBe(false);
+    await w.turn(m.$, {}, HEALTHY);
+    await m.tick();
+    expect(m.getStatus()).toBe(undefined);
+  }
+
+  test("session.start honors userConfig opt-out and clears the status", async () => {
     let nextCalled = false;
-    await startHandler($, {}, (e: any) => {
+    let startHandler: any;
+    register(((event: string, handler: any) => {
+      if (event === "session.start") startHandler = handler;
+    }) as any, { cacheTimer: false });
+    await startHandler(makeMock$().$, {}, (e: any) => {
       nextCalled = true;
       return e;
     });
-
     expect(nextCalled).toBe(true);
-    expect(getStatus()).toBe(undefined);
+    await expectDisabled({ cacheTimer: false }, {});
+  });
+
+  test("session.start honors env opt-out read via $.env.get", async () => {
+    await expectDisabled({ cacheTimer: true }, { TOKEN_SCOPE_CACHE_TIMER: "0" });
+    await expectDisabled({ cacheTimer: true }, { TOKEN_SCOPE_DISABLE_CACHE_TIMER: "1" });
   });
 
   test("session.start honors DISABLE_PROMPT_CACHING via $.env.get", async () => {
-    let startHandler: any;
-    const fakeOn = ((event: string, handler: any) => {
-      if (event === "session.start") startHandler = handler;
-    }) as any;
+    await expectDisabled({ cacheTimer: true }, { DISABLE_PROMPT_CACHING: "1" });
+  });
 
-    register(fakeOn, { cacheTimer: true });
-    const { $, getStatus } = makeMock$({ DISABLE_PROMPT_CACHING: "1" });
-
-    await startHandler($, {}, (e: any) => e);
-    expect(getStatus()).toBe(undefined);
+  test("an enabled session shows the countdown, so the disabled assertions are not vacuous", async () => {
+    const m = makeMock$();
+    const w = wire({ cacheTimer: true });
+    await w.start(m.$);
+    expect(m.isTimerStarted()).toBe(true);
+    await w.turn(m.$, {}, HEALTHY);
+    await m.tick();
+    expect(m.getStatus()).toBe("cache warm 60:00 · hit 90%");
   });
 
   test("session.start honors promptCacheTtl from $.settings.read", async () => {
@@ -234,7 +268,6 @@ describe("register hook wiring and coexistence", () => {
 
     await startHandler($, {}, (e: any) => e);
 
-    // Initial tick before turn shows nothing
     await tick();
     expect(getStatus()).toBe(undefined);
 
