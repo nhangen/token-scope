@@ -221,7 +221,7 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
   }
 
   if (analysis.unpriced.turns > 0) {
-    console.log(renderFootnote(`${analysis.unpriced.turns} turns on unpriced models (${analysis.unpriced.models.join(", ")}) are excluded from every dollar figure.`));
+    console.log(renderFootnote(`${analysis.unpriced.turns} turns on unpriced models (${analysis.unpriced.models.join(", ")}) are left out of the cost mix, rebuild costs, and simulation savings.`));
   }
   console.log(renderFootnote("Corrected hit rate accounts for cache writes (misses). Rebuild cost (expiry + invalidation) reflects rebuilding the prefix at write price instead of read price."));
   console.log("");

@@ -282,33 +282,34 @@ token-scope — Cache Economics & Efficiency
   Projects                     20
   Overall Cache Hit %          96.2% (read / (read + write + input))
   Read Share (non-write)       99.8% (legacy read / (read + input))
-  Est. Total Savings           $10,159.63
-  Rebuild Miss Cost            $161.41
+  Est. Total Savings           $10159.6300
+  Rebuild Miss Cost            $143.2100
+  Reader vs Tier-Priced        $412.6000 vs $427.7000 (Δ $-15.1000)
 
   Input Token & Cost Mix
 Category         │         Tokens │   Token % │    Cost ($) │   Cost % │        Credits │  Credits %
 ─────────────────┼────────────────┼───────────┼─────────────┼──────────┼────────────────┼───────────
-Cache Read       │    895,151,000 │     96.2% │     $268.55 │    62.8% │     89,515,100 │      51.1%
-Cache Write      │     24,800,000 │      2.7% │      $93.00 │    21.7% │     31,000,000 │      17.7%
-Uncached Input   │     10,500,000 │      1.1% │      $66.15 │    15.5% │     54,500,000 │      31.2%
+Cache Read       │    895,151,000 │     96.2% │     $268.5500 │    62.8% │     89,515,100 │      51.1%
+Cache Write      │     24,800,000 │      2.7% │      $93.0000 │    21.7% │     31,000,000 │      17.7%
+Uncached Input   │     10,500,000 │      1.1% │      $66.1500 │    15.5% │     54,500,000 │      31.2%
 
   By Project
 Project                      │ Sessions │ Turns │ Cache Hit % │ Read Share │ Cache Reads │ Est. Savings
 ─────────────────────────────┼──────────┼───────┼─────────────┼────────────┼─────────────┼─────────────
-public                       │       12 │ 3,431 │       97.1% │     100.0% │ 405,001,821 │    $3,974.15
-wp-content-6879-hubspot-v3   │        2 │   449 │       95.4% │     100.0% │ 130,063,498 │    $1,700.55
-wp-content                   │        4 │   863 │       96.8% │     100.0% │ 122,866,030 │    $1,513.68
+public                       │       12 │ 3,431 │       97.1% │     100.0% │ 405,001,821 │   $3974.1500
+wp-content-6879-hubspot-v3   │        2 │   449 │       95.4% │     100.0% │ 130,063,498 │   $1700.5500
+wp-content                   │        4 │   863 │       96.8% │     100.0% │ 122,866,030 │   $1513.6800
 ...
 
   Miss Classification & Extra Rebuild Costs
 Loop           │ Classification   │   Requests │   Extra Cost │ Note
 ───────────────┼──────────────────┼────────────┼──────────────┼─────────────────────────────────────
-Main session   │ Expiry (>1h gap) │         18 │     $112.40  │ Idle pause exceeded 1h TTL; rebuilt
+Main session   │ Expiry (>1h gap) │         18 │    $112.4000 │ Idle pause exceeded 1h TTL; rebuilt
 Main session   │ Growth (no gap)  │      4,720 │      $0.0000 │ Normal incremental context expansion
 Main session   │ Invalidation     │          4 │     $18.2000 │ Prefix invalidated (model/tools)
 Main session   │ Cold initial     │         24 │      $0.0000 │ Session start / first request
 Subagents      │ Cold starts      │         82 │      $0.0000 │ Subagent first turn (5m TTL)
-Subagents      │ Expiry (>5m gap) │          6 │      $12.20  │ Subagent pause exceeded 5m TTL
+Subagents      │ Expiry (>5m gap) │          6 │     $12.2000 │ Subagent pause exceeded 5m TTL
 Subagents      │ Growth (no gap)  │        190 │      $0.0000 │ Subagent context growth
 Subagents      │ Invalidation     │          1 │      $0.4100 │ Subagent prefix invalidated
 
@@ -329,10 +330,10 @@ Subagents      │ Invalidation     │          1 │      $0.4100 │ Subagent
   What Would Have Saved (Simulations)
   # │ Policy Change                              │   Est. Savings/Wk │   Credits Saved │ Simulated Cost
 ────┼────────────────────────────────────────────┼───────────────────┼─────────────────┼───────────────
-  1 │ Run /compact before breaks > 1 hour        │         ~$24.50/wk│     ~6,125,000/wk│        $329.70
-  2 │ Start fresh session instead of resume >24h │         ~$18.20/wk│     ~4,550,000/wk│        $356.90
-  3 │ Lower auto-compact threshold to 35%        │         ~$11.40/wk│     ~2,850,000/wk│        $384.10
-  4 │ Switch main session to 5m TTL              │     +$8.90/wk cost│      +2,225,000/wk│        $411.90
+  1 │ Run /compact before breaks > 1 hour        │         ~$24.50/wk│     ~6,125,000/wk│      $403.2000
+  2 │ Start a fresh session instead of resuming after > 24h │         ~$18.20/wk│     ~4,550,000/wk│      $409.5000
+  3 │ Lower auto-compact threshold to 35% of context window│         ~$11.40/wk│     ~2,850,000/wk│      $416.3000
+  4 │ Switch main session to 5m TTL              │     +$8.90/wk cost│      +2,225,000/wk│      $436.6000
 ```
 
 #### Formulas & Definitions
@@ -360,7 +361,7 @@ Subagents      │ Invalidation     │          1 │      $0.4100 │ Subagent
   - **`cold`**: First turn of a main session or subagent loop.
 
 - **Reconciliation**: The baseline is token-priced with the 5m/1h write tiers, the same rates every simulation uses. **Reader vs Tier-Priced** compares that against the cost the reader reports per turn, which prices every write at the 5m rate; a negative delta means the reader under-counts 1h-tier writes.
-- **Unpriced models**: Turns on a model with no pricing entry still count toward the token mix and hit rate but add $0 to every dollar figure. The report names them in a footnote, and JSON carries `summary.unpriced_turns` and `summary.unpriced_models`.
+- **Unpriced models**: Turns on a model with no pricing entry still count toward the token mix and hit rate but are left out of the cost mix, rebuild costs, and simulation savings (on SQLite, the baseline still includes their stored reader cost). The report names them in a footnote, and JSON carries `summary.unpriced_turns` and `summary.unpriced_models`.
 
 - **Policy Simulations ("What Would Have Saved")**:
   Replays actual user transcripts over the analyzed window under counterfactual behaviors:
