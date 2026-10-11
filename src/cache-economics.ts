@@ -87,6 +87,7 @@ export interface PolicySimulationResult {
   title: string;
   weeklySavingsUsd: number;
   totalSavingsUsd: number;
+  /** Model-independent token-delta estimate, including turns with unknown USD pricing. */
   weeklySavingsCredits: number;
   assumptions: string[];
   simulatedTotalCostUsd: number;
@@ -466,19 +467,21 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
 
   let main5mWriteSavingsUsd = 0;
   let main5mExpiryPenaltiesUsd = 0;
+  let main5mSavingsCredits = 0;
   let main5mBreakEvenGapsCount = 0;
 
   for (const m of mainMissItems) {
     const p = getPricing(m.model);
-    if (!p) continue;
     if (m.cacheWrite1hTokens > 0) {
-      main5mWriteSavingsUsd +=
-        cacheWriteCostUsd(m, p) - cacheWriteCostUsd({ cacheWriteTokens: m.cacheWriteTokens, cacheWrite1hTokens: 0 }, p);
+      const writes5m = { cacheWriteTokens: m.cacheWriteTokens, cacheWrite1hTokens: 0 };
+      main5mSavingsCredits += cacheWriteCredits(m) - cacheWriteCredits(writes5m);
+      if (p) main5mWriteSavingsUsd += cacheWriteCostUsd(m, p) - cacheWriteCostUsd(writes5m, p);
     }
     // A read that survived a (5m, 60m] gap only hit because the prefix was on the 1h tier.
     if (m.gapMs !== null && m.gapMs > 5 * 60 * 1000 && m.gapMs <= 60 * 60 * 1000 && m.cacheReadTokens > 0) {
       main5mBreakEvenGapsCount++;
-      main5mExpiryPenaltiesUsd += (m.cacheReadTokens * (p.cacheWritePerMillion - p.cacheReadPerMillion)) / 1_000_000;
+      main5mSavingsCredits -= m.cacheReadTokens * (CREDIT_WEIGHTS.cacheWrite - CREDIT_WEIGHTS.cacheRead);
+      if (p) main5mExpiryPenaltiesUsd += (m.cacheReadTokens * (p.cacheWritePerMillion - p.cacheReadPerMillion)) / 1_000_000;
     }
   }
 
@@ -488,7 +491,7 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     title: "Switch main session to 5m TTL",
     weeklySavingsUsd: net5mSavingsUsd / windowWeeks,
     totalSavingsUsd: net5mSavingsUsd,
-    weeklySavingsCredits: (net5mSavingsUsd / (totalInputCostUsd || 1)) * totalInputCredits / windowWeeks,
+    weeklySavingsCredits: main5mSavingsCredits / windowWeeks,
     assumptions: [
       "5m cache write = 1.25x input price; 1h cache write = 2.0x input price; cache read = 0.1x",
       "Write savings apply only to tokens billed at the 1h tier (usage.cache_creation.ephemeral_1h_input_tokens)",
@@ -497,21 +500,27 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
         ? "Fast-paced turns dominate; 37.5% write savings outweigh the few 5m-60m expiry rebuilds"
         : net5mSavingsUsd < 0
           ? "Negative savings: 1h TTL avoids rebuilds on 5m-60m pauses, so switching would cost more"
-          : "No 1h-tier writes or 5m-60m rebuilds in this window, so switching changes nothing",
+          : "No net dollar savings can be estimated in this window",
     ],
     simulatedTotalCostUsd: actualTotalCostUsd - net5mSavingsUsd,
   });
 
   let compactBeforeBreakSavingsUsd = 0;
+  let compactBeforeBreakSavingsCredits = 0;
   let breaksCount = 0;
 
   for (const m of mainMissItems) {
     if (m.type === "expiry" && m.prevContextTokens > 20000) {
       breaksCount++;
+      const compactedContext = 15000;
+      const tokensSaved = Math.max(0, m.rebuildPrefixTokens - compactedContext);
+      const writeCreditsPerToken = cacheWriteCredits(m) / m.cacheWriteTokens;
+      const rebuildSavedCredits = tokensSaved * (writeCreditsPerToken - CREDIT_WEIGHTS.cacheRead);
+      const compactCostCredits = m.prevContextTokens * CREDIT_WEIGHTS.cacheRead + 1000 * CREDIT_WEIGHTS.output;
+      const netCredits = rebuildSavedCredits - compactCostCredits;
+      if (netCredits > 0) compactBeforeBreakSavingsCredits += netCredits;
       const p = getPricing(m.model);
       if (p) {
-        const compactedContext = 15000;
-        const tokensSaved = Math.max(0, m.rebuildPrefixTokens - compactedContext);
         const writePerToken = cacheWriteCostUsd(m, p) / m.cacheWriteTokens;
         const rebuildSavedUsd = tokensSaved * (writePerToken - p.cacheReadPerMillion / 1_000_000);
         const compactCostUsd = (m.prevContextTokens * p.cacheReadPerMillion + 1000 * p.outputPerMillion) / 1_000_000;
@@ -526,7 +535,7 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     title: "Run /compact before breaks > 1 hour",
     weeklySavingsUsd: compactBeforeBreakSavingsUsd / windowWeeks,
     totalSavingsUsd: compactBeforeBreakSavingsUsd,
-    weeklySavingsCredits: (compactBeforeBreakSavingsUsd / (totalInputCostUsd || 1)) * totalInputCredits / windowWeeks,
+    weeklySavingsCredits: compactBeforeBreakSavingsCredits / windowWeeks,
     assumptions: [
       `Detected ${breaksCount} long breaks (>1h) on large context (>20k tokens)`,
       "Compaction reduces context to ~15k tokens before idle expiry, drastically lowering rebuild size upon return",
@@ -537,11 +546,13 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
   });
 
   let autoCompactSavingsUsd = 0;
+  let autoCompactSavingsCredits = 0;
   for (const m of mainMissItems) {
     if (m.contextTokens > 70000) {
+      const excess = m.contextTokens - 70000;
+      autoCompactSavingsCredits += excess * 0.4 * CREDIT_WEIGHTS.cacheRead;
       const p = getPricing(m.model);
       if (p) {
-        const excess = m.contextTokens - 70000;
         autoCompactSavingsUsd += (excess * 0.4 * p.cacheReadPerMillion) / 1_000_000;
       }
     }
@@ -552,7 +563,7 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     title: "Lower auto-compact threshold to 35% of context window",
     weeklySavingsUsd: autoCompactSavingsUsd / windowWeeks,
     totalSavingsUsd: autoCompactSavingsUsd,
-    weeklySavingsCredits: (autoCompactSavingsUsd / (totalInputCostUsd || 1)) * totalInputCredits / windowWeeks,
+    weeklySavingsCredits: autoCompactSavingsCredits / windowWeeks,
     assumptions: [
       "Caps context near 70k tokens, reducing ongoing read token volume across long sessions",
       "Net savings account for ~40% reduced per-turn read context in deep sessions",
@@ -561,14 +572,17 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
   });
 
   let freshSessionSavingsUsd = 0;
+  let freshSessionSavingsCredits = 0;
   let staleResumesCount = 0;
 
   for (const m of mainMissItems) {
     if (m.type === "expiry" && m.gapMs !== null && m.gapMs > 24 * 60 * 60 * 1000 && m.prevContextTokens > 30000) {
       staleResumesCount++;
+      const savedWrite = Math.max(0, m.prevContextTokens - 15000);
+      const writeCreditsPerToken = cacheWriteCredits(m) / m.cacheWriteTokens;
+      freshSessionSavingsCredits += savedWrite * (writeCreditsPerToken - CREDIT_WEIGHTS.cacheRead);
       const p = getPricing(m.model);
       if (p) {
-        const savedWrite = Math.max(0, m.prevContextTokens - 15000);
         const writePerToken = cacheWriteCostUsd(m, p) / m.cacheWriteTokens;
         freshSessionSavingsUsd += savedWrite * (writePerToken - p.cacheReadPerMillion / 1_000_000);
       }
@@ -580,7 +594,7 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     title: "Start a fresh session instead of resuming after > 24h",
     weeklySavingsUsd: freshSessionSavingsUsd / windowWeeks,
     totalSavingsUsd: freshSessionSavingsUsd,
-    weeklySavingsCredits: (freshSessionSavingsUsd / (totalInputCostUsd || 1)) * totalInputCredits / windowWeeks,
+    weeklySavingsCredits: freshSessionSavingsCredits / windowWeeks,
     assumptions: [
       `Detected ${staleResumesCount} session continuations after > 24h pause on large context`,
       "Starting fresh eliminates full rebuild of expired historic context and lowers subsequent turn volume",
