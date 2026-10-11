@@ -267,30 +267,108 @@ Filters all reports to sessions where `wp-content` appears in the working direct
 
 ---
 
-### Cache efficiency
+### Cache economics & efficiency
 
 ```bash
 token-scope --cache --since 30d
+token-scope --cache-misses --since 30d      # focus on miss classification and gap histogram
+token-scope --cache-sim --since 30d         # focus on policy simulations
+token-scope --cache --json                  # machine-readable full analysis
 ```
 
 ```
-token-scope — Cache Efficiency
+token-scope — Cache Economics & Efficiency
 ────────────────────────────────────────────────────────────
   Projects                     20
-  Overall Cache Hit %          100.0%
-  Est. Total Savings           $10,159.63
+  Overall Cache Hit %          96.2% (read / (read + write + input))
+  Read Share (non-write)       99.8% (legacy read / (read + input))
+  Est. Total Savings           $10159.6300
+  Rebuild Miss Cost            $143.2100
+  Reader vs Tier-Priced        $412.6000 vs $427.7000 (Δ $-15.1000)
+
+  Input Token & Cost Mix
+Category         │         Tokens │   Token % │    Cost ($) │   Cost % │        Credits │  Credits %
+─────────────────┼────────────────┼───────────┼─────────────┼──────────┼────────────────┼───────────
+Cache Read       │    895,151,000 │     96.2% │     $268.5500 │    62.8% │     89,515,100 │      51.1%
+Cache Write      │     24,800,000 │      2.7% │      $93.0000 │    21.7% │     31,000,000 │      17.7%
+Uncached Input   │     10,500,000 │      1.1% │      $66.1500 │    15.5% │     54,500,000 │      31.2%
 
   By Project
-Project                    │ Sessions │ Turns  │ Cache Hit % │ Cache Reads   │ Est. Savings
-───────────────────────────┼──────────┼────────┼─────────────┼───────────────┼─────────────
-public                     │       12 │  3,431 │      100.0% │   405,001,821 │   $3,974.15
-wp-content-6879-hubspot-v3 │        2 │    449 │      100.0% │   130,063,498 │   $1,700.55
-wp-content                 │        4 │    863 │      100.0% │   122,866,030 │   $1,513.68
-token-scope                │        1 │    314 │      100.0% │    37,219,623 │     $100.49
+Project                      │ Sessions │ Turns │ Cache Hit % │ Read Share │ Cache Reads │ Est. Savings
+─────────────────────────────┼──────────┼───────┼─────────────┼────────────┼─────────────┼─────────────
+public                       │       12 │ 3,431 │       97.1% │     100.0% │ 405,001,821 │   $3974.1500
+wp-content-6879-hubspot-v3   │        2 │   449 │       95.4% │     100.0% │ 130,063,498 │   $1700.5500
+wp-content                   │        4 │   863 │       96.8% │     100.0% │ 122,866,030 │   $1513.6800
 ...
+
+  Miss Classification & Extra Rebuild Costs
+Loop           │ Classification   │   Requests │   Extra Cost │ Note
+───────────────┼──────────────────┼────────────┼──────────────┼─────────────────────────────────────
+Main session   │ Expiry (>1h gap) │         18 │    $112.4000 │ Idle pause exceeded 1h TTL; rebuilt
+Main session   │ Growth (no gap)  │      4,720 │      $0.0000 │ Normal incremental context expansion
+Main session   │ Invalidation     │          4 │     $18.2000 │ Prefix invalidated (model/tools)
+Main session   │ Cold initial     │         24 │      $0.0000 │ Session start / first request
+Subagents      │ Cold starts      │         82 │      $0.0000 │ Subagent first turn (5m TTL)
+Subagents      │ Expiry (>5m gap) │          6 │     $12.2000 │ Subagent pause exceeded 5m TTL
+Subagents      │ Growth (no gap)  │        190 │      $0.0000 │ Subagent context growth
+Subagents      │ Invalidation     │          1 │      $0.4100 │ Subagent prefix invalidated
+
+  Request Gap Distribution (Main Loop)
+  Bucket       │   Count │   Share │ Distribution
+  ─────────────┼─────────┼─────────┼──────────────────────────────
+  < 1m         │    3412 │   71.8% │ █████████████████
+  1m – 5m      │     980 │   20.6% │ █████
+  ─────────────── 5m TTL (subagents / 5m policy / overage) ───────────────
+  5m – 15m     │     210 │    4.4% │ █
+  15m – 30m    │      95 │    2.0% │ 
+  30m – 60m    │      38 │    0.8% │ 
+  ─────────────── 1h TTL (default main-session policy) ───────────────────
+  1h – 2h      │      12 │    0.3% │ 
+  2h – 4h      │       4 │    0.1% │ 
+  > 4h         │       2 │    0.0% │ 
+
+  What Would Have Saved (Simulations)
+  # │ Policy Change                              │   Est. Savings/Wk │   Credits Saved │ Simulated Cost
+────┼────────────────────────────────────────────┼───────────────────┼─────────────────┼───────────────
+  1 │ Run /compact before breaks > 1 hour        │         ~$24.50/wk│     ~6,125,000/wk│      $403.2000
+  2 │ Start a fresh session instead of resuming after > 24h │         ~$18.20/wk│     ~4,550,000/wk│      $409.5000
+  3 │ Lower auto-compact threshold to 35% of context window│         ~$11.40/wk│     ~2,850,000/wk│      $416.3000
+  4 │ Switch main session to 5m TTL              │     +$8.90/wk cost│      +2,225,000/wk│      $436.6000
 ```
 
-Cache hit % and estimated dollar savings by project. Savings are estimated from Anthropic's cache read vs full input pricing differential.
+#### Formulas & Definitions
+
+- **Corrected Hit Rate**:
+  $$\text{Hit Rate} = \frac{\text{cache\_read\_tokens}}{\text{cache\_read\_tokens} + \text{cache\_write\_tokens} + \text{input\_tokens}}$$
+  Unlike the legacy formula $\frac{\text{cache\_read}}{\text{cache\_read} + \text{input}}$ (which omitted cache creation writes and made rebuild costs invisible), the corrected hit rate accounts for all input tokens processed. The legacy number remains available labeled as **Read Share (non-write)** for continuity.
+
+- **Token & Cost Mix**:
+  Evaluated at model prices (and credit weights matching `--credits`):
+  - **Cache Read**: 0.1x base input rate (90% discount).
+  - **Cache Write (5m TTL)**: 1.25x base input rate (Anthropic 5-minute standard write rate).
+  - **Extended Cache Write (1h TTL)**: 2.0x base input rate (Anthropic extended caching rate). The split comes from `usage.cache_creation.ephemeral_1h_input_tokens`; writes with no split are priced at the 5m rate.
+  - **Uncached Input**: 1.0x base rate.
+  - **Credits**: Weighted as 0.1x read, 1.25x write (2.0x for 1h-tier writes), 1.0x uncached input, and 5.0x output.
+
+- **Miss Classification**:
+  Each request with a cache write is classified as below, on both loops; requests with no write are `hit` and are excluded from miss counts and `items`:
+  - **`expiry`**: Time gap since the previous request on the same loop $> \text{TTL}$ (1h default for main session, 5m for subagents). The cache expired due to idle time; the previous context prefix had to be rewritten.
+    $$\text{Rebuild Prefix} = \min(\text{prev\_context}, \text{cache\_write\_tokens})$$
+    $$\text{Expiry Cost} = \frac{\text{Rebuild Prefix} \times (P_{\text{write}} - P_{\text{read}})}{1,000,000}$$
+    where $P_{\text{write}}$ is the turn's blended write rate across its 5m and 1h tiers.
+  - **`growth`**: Gap $\le \text{TTL}$, and write corresponds to new content entering context ($\text{cache\_read} \approx \text{prev\_context}$). Extra miss cost is $\$0.00$.
+  - **`invalidation`**: Gap $\le \text{TTL}$, but prefix read was missed and write is far larger than new content (model switch, system prompt / tools change, or compaction). Priced with the same rebuild formula as `expiry`; the summary's **Rebuild Miss Cost** is expiry plus invalidation across both loops.
+  - **`cold`**: First turn of a main session or subagent loop.
+
+- **Reconciliation**: The baseline is token-priced with the 5m/1h write tiers, the same rates every simulation uses. **Reader vs Tier-Priced** compares that against the cost the reader reports per turn, which prices every write at the 5m rate; a negative delta means the reader under-counts 1h-tier writes.
+- **Unpriced models**: Turns on a model with no pricing entry still count toward the token mix and hit rate but are left out of the cost mix, rebuild costs, and simulation savings (on SQLite, the baseline still includes their stored reader cost). The report names them in a footnote, and JSON carries `summary.unpriced_turns` and `summary.unpriced_models`.
+
+- **Policy Simulations ("What Would Have Saved")**:
+  Replays actual user transcripts over the analyzed window under counterfactual behaviors:
+  1. **TTL 5m vs 1h**: Evaluates trade-off between cheaper write rate (1.25x vs 2.0x, applied only to tokens actually billed at the 1h tier) and expiry rebuilds on pauses between 5m and 60m.
+  2. **/compact before breaks > 1h**: Measures cost of compacting on a warm cache before an idle break long enough to expire the 1h cache vs paying a full-context rebuild upon return. Overlaps sim 4 on the same expiries, so the two savings are not additive.
+  3. **Auto-compact threshold (35%)**: Evaluates per-turn read volume reduction across deep sessions.
+  4. **Resume stale session (>24h) vs starting fresh**: Compares rebuild and carryover costs against a fresh session baseline.
 
 ---
 

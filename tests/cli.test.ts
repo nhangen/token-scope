@@ -291,3 +291,20 @@ describe("parseArgs --spend / --turns", () => {
     expect(args.sessionId).toBe("abc123");
   });
 });
+
+describe("parseArgs cache modes", () => {
+  beforeEach(installFakes);
+  afterEach(restoreFakes);
+
+  it("--cache sets cache mode", () => {
+    expect(parseArgs(["--cache"]).mode).toBe("cache");
+  });
+
+  it("--cache-misses sets cache-misses mode", () => {
+    expect(parseArgs(["--cache-misses"]).mode).toBe("cache-misses");
+  });
+
+  it("--cache-sim sets cache-sim mode", () => {
+    expect(parseArgs(["--cache-sim"]).mode).toBe("cache-sim");
+  });
+});

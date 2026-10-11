@@ -6,13 +6,15 @@ import type {
   SummaryTotals, ToolRow, ProjectRow, SessionRow, TurnRow,
   WeekRow, ThinkingTurnRow, BashCommandRow, ProjectMatch, RawTurnForTool, RawTurnForArtifact,
   ContextStatRow, CacheStatRow, ContributorRow, BaseLoadRow, CacheGrowthRow,
-  SessionBudgetRow, SubagentSpend, CreditWeekRow, CreditWeeks,
+  SessionBudgetRow, SubagentSpend, CreditWeekRow, CreditWeeks, CacheTurnRecord,
 } from "@/reader";
 import type { Reader } from "@/reader";
+import type { CacheTurnSet } from "@/cache-economics";
 
 interface JsonlTurn {
   uuid: string;
   sessionId: string;
+  agentId: string | null;
   cwd: string;
   timestampMs: number;
   model: string;
@@ -20,6 +22,7 @@ interface JsonlTurn {
   inputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  cacheWrite1hTokens: number;
   stopReason: string | null;
   messageJson: string;
   costUsd: number | null;
@@ -126,9 +129,12 @@ function loadTurns(dirs: string[], sinceMs?: number, scan = scanJsonlFiles): Jso
       const inp = Number(usage["input_tokens"] ?? 0);
       const cacheRead = Number(usage["cache_read_input_tokens"] ?? 0);
       const cacheWrite = Number(usage["cache_creation_input_tokens"] ?? 0);
+      const creation = usage["cache_creation"] as Record<string, unknown> | undefined;
+      const cacheWrite1h = Number(creation?.["ephemeral_1h_input_tokens"] ?? 0);
       turns.push({
         uuid: String(obj["uuid"] ?? ""),
         sessionId: String(obj["sessionId"] ?? ""),
+        agentId: typeof obj["agentId"] === "string" && obj["agentId"] !== "" ? obj["agentId"] : null,
         cwd: String(obj["cwd"] ?? ""),
         timestampMs: new Date(String(obj["timestamp"] ?? "")).getTime(),
         model,
@@ -136,6 +142,7 @@ function loadTurns(dirs: string[], sinceMs?: number, scan = scanJsonlFiles): Jso
         inputTokens: inp,
         cacheReadTokens: cacheRead,
         cacheWriteTokens: cacheWrite,
+        cacheWrite1hTokens: cacheWrite1h,
         stopReason: msg["stop_reason"] ? String(msg["stop_reason"]) : null,
         messageJson: JSON.stringify(msg),
         costUsd: computeTurnCost(model, out, inp, cacheRead, cacheWrite),
@@ -671,12 +678,57 @@ export class JsonlReader implements Reader {
         totalInputTokens: d.totalInputTokens,
         totalCacheReadTokens: d.totalCacheReadTokens,
         totalCacheWriteTokens: d.totalCacheWriteTokens,
-        cacheHitPct: d.totalInputTokens + d.totalCacheReadTokens > 0
+        cacheHitPct: d.totalInputTokens + d.totalCacheReadTokens + d.totalCacheWriteTokens > 0
+          ? (d.totalCacheReadTokens / (d.totalInputTokens + d.totalCacheReadTokens + d.totalCacheWriteTokens)) * 100 : null,
+        readSharePct: d.totalInputTokens + d.totalCacheReadTokens > 0
           ? (d.totalCacheReadTokens / (d.totalInputTokens + d.totalCacheReadTokens)) * 100 : null,
         estimatedSavingsUsd: d.savings > 0 ? d.savings : null,
       }))
       .sort((a, b) => (b.estimatedSavingsUsd ?? 0) - (a.estimatedSavingsUsd ?? 0))
       .slice(0, limit);
+  }
+
+  queryCacheTurns(since: number): CacheTurnSet {
+    const sinceMs = since * 1000;
+    const mainTurns: CacheTurnRecord[] = this.turns
+      .filter((t) => t.timestampMs > sinceMs)
+      .map((t) => ({
+        uuid: t.uuid,
+        sessionId: t.sessionId,
+        cwd: t.cwd,
+        timestampMs: t.timestampMs,
+        model: t.model,
+        outputTokens: t.outputTokens,
+        inputTokens: t.inputTokens,
+        cacheReadTokens: t.cacheReadTokens,
+        cacheWriteTokens: t.cacheWriteTokens,
+        cacheWrite1hTokens: t.cacheWrite1hTokens,
+        costUsd: t.costUsd,
+        isSubagent: false,
+      }));
+
+    if (this.subagentTurns === null) {
+      this.subagentTurns = loadTurns(this.projectsDirs, this.loadSinceMs, scanSubagentFiles);
+    }
+    const subagentTurns: CacheTurnRecord[] = this.subagentTurns
+      .filter((t) => t.timestampMs > sinceMs)
+      .map((t) => ({
+        uuid: t.uuid,
+        sessionId: t.sessionId,
+        cwd: t.cwd,
+        timestampMs: t.timestampMs,
+        model: t.model,
+        outputTokens: t.outputTokens,
+        inputTokens: t.inputTokens,
+        cacheReadTokens: t.cacheReadTokens,
+        cacheWriteTokens: t.cacheWriteTokens,
+        cacheWrite1hTokens: t.cacheWrite1hTokens,
+        costUsd: t.costUsd,
+        agentId: t.agentId ?? undefined,
+        isSubagent: true,
+      }));
+
+    return { mainTurns, subagentTurns, subagentsSupported: true };
   }
 
   queryContextContributors(since: number, limit: number, projectFragment?: string): ContributorRow[] {
