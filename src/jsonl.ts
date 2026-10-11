@@ -13,6 +13,7 @@ import type { Reader } from "@/reader";
 interface JsonlTurn {
   uuid: string;
   sessionId: string;
+  agentId: string | null;
   cwd: string;
   timestampMs: number;
   model: string;
@@ -132,6 +133,7 @@ function loadTurns(dirs: string[], sinceMs?: number, scan = scanJsonlFiles): Jso
       turns.push({
         uuid: String(obj["uuid"] ?? ""),
         sessionId: String(obj["sessionId"] ?? ""),
+        agentId: typeof obj["agentId"] === "string" && obj["agentId"] !== "" ? obj["agentId"] : null,
         cwd: String(obj["cwd"] ?? ""),
         timestampMs: new Date(String(obj["timestamp"] ?? "")).getTime(),
         model,
@@ -721,6 +723,7 @@ export class JsonlReader implements Reader {
         cacheWriteTokens: t.cacheWriteTokens,
         cacheWrite1hTokens: t.cacheWrite1hTokens,
         costUsd: t.costUsd,
+        agentId: t.agentId ?? undefined,
         isSubagent: true,
       }));
 

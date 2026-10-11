@@ -4,6 +4,8 @@ import { CREDIT_WEIGHTS } from "@/credits";
 export interface CacheTurnRecord {
   uuid: string;
   sessionId: string;
+  /** Subagent transcripts share the parent sessionId; agentId separates their cache streams. */
+  agentId?: string;
   cwd?: string;
   timestampMs: number;
   model: string;
@@ -342,16 +344,16 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
     }
   }
 
-  // Group subagents by sessionId (or agentId)
-  const subagentBySession = new Map<string, CacheTurnRecord[]>();
+  const subagentByStream = new Map<string, CacheTurnRecord[]>();
   for (const t of subagentTurns) {
-    const list = subagentBySession.get(t.sessionId) ?? [];
+    const key = `${t.sessionId}\u0000${t.agentId ?? ""}`;
+    const list = subagentByStream.get(key) ?? [];
     list.push(t);
-    subagentBySession.set(t.sessionId, list);
+    subagentByStream.set(key, list);
   }
 
   const subagentMissItems: MissClassification[] = [];
-  for (const [, sTurns] of subagentBySession) {
+  for (const [, sTurns] of subagentByStream) {
     sTurns.sort((a, b) => a.timestampMs - b.timestampMs);
     let prev: CacheTurnRecord | null = null;
     for (let i = 0; i < sTurns.length; i++) {

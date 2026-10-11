@@ -423,3 +423,29 @@ describe("Cache Economics — TTL tier pricing", () => {
     expect(mainTurns.map((t) => t.cacheWrite1hTokens).sort()).toEqual([0, 4000]);
   });
 });
+
+describe("Cache Economics — subagent streams", () => {
+  const t0 = 1_700_000_000_000;
+  const sub = (uuid: string, agentId: string, offsetMs: number): CacheTurnRecord => ({
+    uuid, sessionId: "parent", agentId, timestampMs: t0 + offsetMs, model: "claude-haiku-4-5",
+    outputTokens: 50, inputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 3_000, costUsd: null, isSubagent: true,
+  });
+
+  it("treats each subagent's first turn as a cold start, not an expiry of a sibling", () => {
+    const a = analyzeCacheEconomics({
+      mainTurns: [],
+      subagentTurns: [sub("a1", "alpha", 0), sub("b1", "beta", 10 * 60 * 1000)],
+      sinceSec: 0,
+      nowMs: t0 + 86_400_000,
+    });
+    expect(a.subagentMisses.coldStarts).toBe(2);
+    expect(a.subagentMisses.expiries).toBe(0);
+  });
+
+  it("JSONL reader tags subagent turns with their agentId", () => {
+    const reader = createReader({ source: "jsonl", projectsDirs: [new URL("./fixtures/cache-tier-projects", import.meta.url).pathname] });
+    const { subagentTurns } = reader.queryCacheTurns(0);
+    reader.close();
+    expect(subagentTurns.map((t) => t.agentId).sort()).toEqual(["alpha", "beta"]);
+  });
+});
