@@ -5,6 +5,14 @@
   "author": {
     "name": "nhangen"
   },
+  "userConfig": {
+    "cacheTimer": {
+      "type": "boolean",
+      "title": "Cache timer",
+      "description": "Show prompt-cache state and countdown to expiry in the status line",
+      "default": true
+    }
+  },
   "license": "MIT",
   "keywords": ["tokens", "analytics", "cost", "cache", "efficiency", "tools", "alerts"]
 }
