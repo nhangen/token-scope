@@ -488,9 +488,11 @@ export function analyzeCacheEconomics(input: CacheEconomicsInput): CacheEconomic
       "5m cache write = 1.25x input price; 1h cache write = 2.0x input price; cache read = 0.1x",
       "Write savings apply only to tokens billed at the 1h tier (usage.cache_creation.ephemeral_1h_input_tokens)",
       `Gaps in (5m, 60m] observed: ${main5mBreakEvenGapsCount}`,
-      net5mSavingsUsd >= 0
+      net5mSavingsUsd > 0
         ? "Fast-paced turns dominate; 37.5% write savings outweigh the few 5m-60m expiry rebuilds"
-        : "Negative savings: 1h TTL avoids rebuilds on 5m-60m pauses, so switching would cost more",
+        : net5mSavingsUsd < 0
+          ? "Negative savings: 1h TTL avoids rebuilds on 5m-60m pauses, so switching would cost more"
+          : "No 1h-tier writes or 5m-60m rebuilds in this window, so switching changes nothing",
     ],
     simulatedTotalCostUsd: actualTotalCostUsd - net5mSavingsUsd,
   });

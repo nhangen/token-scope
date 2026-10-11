@@ -759,3 +759,17 @@ describe("Cache Economics — boundaries, aggregates, and sim triggers", () => {
     expect(simOutput).not.toContain("Miss Classification");
   });
 });
+
+describe("Cache Economics — 5m sim assumption text", () => {
+  it("does not claim write savings outweigh rebuilds when there are no 1h-tier writes", () => {
+    const t0 = 1_700_000_000_000;
+    const a = analyzeCacheEconomics({
+      mainTurns: [{ uuid: "a", sessionId: "s", timestampMs: t0, model: "claude-sonnet-4-6", outputTokens: 10, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 50_000, costUsd: null }],
+      sinceSec: 0,
+      nowMs: t0 + 86_400_000,
+    });
+    const s = a.simulations.find((x) => x.policyId === "main_5m_ttl")!;
+    expect(s.totalSavingsUsd).toBe(0);
+    expect(s.assumptions.join("\n")).not.toContain("outweigh");
+  });
+});
