@@ -664,3 +664,98 @@ describe("Cache Economics — weekly extrapolation window", () => {
     expect(sim.weeklySavingsUsd).toBeCloseTo(2.25 / 4, 8);
   });
 });
+
+describe("Cache Economics — boundaries, aggregates, and sim triggers", () => {
+  // claude-sonnet-4-6: 5m write $3.75/M, read $0.30/M, output $15/M. Credit weights: write 1.25, read 0.1, input 1.
+  const t0 = 1_700_000_000_000;
+  const rec = (uuid: string, sessionId: string, off: number, read: number, write: number, extra: Partial<CacheTurnRecord> = {}): CacheTurnRecord => ({
+    uuid, sessionId, timestampMs: t0 + off, model: "claude-sonnet-4-6", outputTokens: 10,
+    inputTokens: 0, cacheReadTokens: read, cacheWriteTokens: write, costUsd: null, ...extra,
+  });
+  const run = (mainTurns: CacheTurnRecord[]) => analyzeCacheEconomics({ mainTurns, sinceSec: 0, nowMs: t0 + 7 * 86_400_000 });
+  const sim = (a: ReturnType<typeof run>, id: string) => a.simulations.find((s) => s.policyId === id)!;
+
+  it("a gap of exactly the TTL is not an expiry; one millisecond more is", () => {
+    const prev = rec("p", "s", 0, 0, 50_000);
+    expect(classifyTurn(prev, rec("c", "s", MAIN_TTL_MS, 50_000, 1_000)).type).toBe("growth");
+    expect(classifyTurn(prev, rec("c", "s", MAIN_TTL_MS + 1, 50_000, 1_000)).type).toBe("expiry");
+    expect(classifyTurn(prev, rec("c", "s", SUBAGENT_TTL_MS, 50_000, 1_000), true).type).toBe("growth");
+    expect(classifyTurn(prev, rec("c", "s", SUBAGENT_TTL_MS + 1, 50_000, 1_000), true).type).toBe("expiry");
+  });
+
+  it("a 30-minute main-loop gap is not an expiry, while the same gap on a subagent is", () => {
+    const prev = rec("p", "s", 0, 0, 50_000);
+    const curr = rec("c", "s", 30 * 60 * 1000, 50_000, 1_000);
+    expect(classifyTurn(prev, curr).type).toBe("growth");
+    expect(classifyTurn(prev, curr, true).type).toBe("expiry");
+    expect(classifyTurn(prev, rec("c", "s", 4 * 60 * 1000, 50_000, 1_000), true).type).toBe("growth");
+  });
+
+  it("aggregates miss counts and expiry cost/credits per session across interleaved sessions", () => {
+    const a = run([
+      rec("a1", "s1", 0, 0, 50_000),
+      rec("b1", "s2", 1_000, 0, 30_000),
+      rec("a2", "s1", 2_000, 50_000, 1_000),
+      rec("a3", "s1", 2_000 + 2 * MAIN_TTL_MS, 0, 51_000),
+    ]);
+    expect(a.misses.totalWrites).toBe(4);
+    expect(a.misses.colds).toBe(2);
+    expect(a.misses.growths).toBe(1);
+    expect(a.misses.expiries).toBe(1);
+    expect(a.misses.invalidations).toBe(0);
+    // Rebuild 51,000 tokens: 51,000 * (3.75 - 0.30) / 1M; credits 51,000 * (1.25 - 0.1).
+    expect(a.misses.totalExpiryExtraCostUsd).toBeCloseTo(0.17595, 8);
+    expect(a.misses.totalExpiryExtraCredits).toBeCloseTo(58_650, 6);
+  });
+
+  it("prices 1h-tier expiry credits at 2x input", () => {
+    const m = classifyTurn(rec("p", "s", 0, 0, 50_000), rec("c", "s", 2 * MAIN_TTL_MS, 0, 50_000, { cacheWrite1hTokens: 50_000 }));
+    expect(m.extraCredits).toBeCloseTo(50_000 * (2.0 - 0.1), 6);
+  });
+
+  it("credits the compact-before-break sim for an expiry on large context", () => {
+    const a = run([rec("a1", "s1", 0, 50_000, 1_000), rec("a2", "s1", 2 * MAIN_TTL_MS, 0, 51_000)]);
+    // Saved rebuild 36,000 * 3.45/M = 0.1242, minus compact cost (51,000 * 0.30 + 1,000 * 15)/M = 0.0303.
+    expect(sim(a, "compact_before_breaks").totalSavingsUsd).toBeCloseTo(0.0939, 8);
+  });
+
+  it("credits the auto-compact sim for context above 70k", () => {
+    const a = run([rec("a1", "s1", 0, 100_000, 0)]);
+    // 30,000 excess * 0.4 * 0.30/M.
+    expect(sim(a, "auto_compact_35pct").totalSavingsUsd).toBeCloseTo(0.0036, 8);
+  });
+
+  it("credits the fresh-session sim for a resume after more than 24h on large context", () => {
+    const a = run([rec("a1", "s1", 0, 0, 50_000), rec("a2", "s1", 25 * 3_600_000, 0, 50_000)]);
+    // (50,000 - 15,000) * 3.45/M.
+    expect(sim(a, "fresh_session_vs_stale").totalSavingsUsd).toBeCloseTo(0.12075, 8);
+  });
+
+  it("buckets histogram gaps on inclusive lower edges at 300s and 3600s", () => {
+    const { buckets } = computeGapHistogram([299, 300, 3599, 3600]);
+    const count = (label: string) => buckets.find((b) => b.label === label)!.count;
+    expect(count("1m – 5m")).toBe(1);
+    expect(count("5m – 15m")).toBe(1);
+    expect(count("30m – 60m")).toBe(1);
+    expect(count("1h – 2h")).toBe(1);
+  });
+
+  it("SQLite queryCacheTurns returns millisecond timestamps", () => {
+    const reader = createReader({ source: "sqlite" });
+    const { mainTurns } = reader.queryCacheTurns(0);
+    reader.close();
+    expect(mainTurns.length).toBeGreaterThan(0);
+    for (const t of mainTurns) expect(t.timestampMs).toBeGreaterThan(1e12);
+  });
+
+  it("omits the other section under each focus", () => {
+    const turns = [rec("a1", "s1", 0, 0, 50_000), rec("a2", "s1", 2 * MAIN_TTL_MS, 0, 51_000)];
+    const opts = { since: 0, sinceStr: "7d", limit: 10, json: false } as const;
+    const missOutput = capture(() => renderCacheReport(stubReader(turns), { ...opts, focus: "misses" }));
+    const simOutput = capture(() => renderCacheReport(stubReader(turns), { ...opts, focus: "sim" }));
+    expect(missOutput).toContain("Miss Classification");
+    expect(missOutput).not.toContain("What Would Have Saved");
+    expect(simOutput).toContain("Policy Change");
+    expect(simOutput).not.toContain("Miss Classification");
+  });
+});
