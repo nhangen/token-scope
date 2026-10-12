@@ -14,7 +14,8 @@
  *   subdirectories), and --since prefilters by file mtime instead of parsing
  *   the whole multi-GB store.
  */
-import { readFileSync, readdirSync, existsSync, statSync } from "fs";
+import { readFileSync, existsSync, statSync } from "fs";
+import * as fs from "fs";
 import { join } from "path";
 import { providerIdRejected, qualifiedProviderId, stableId, type PartialReason, type ProviderEvent } from "./types";
 
@@ -89,16 +90,22 @@ export function claudeEventsFromTranscript(
 }
 
 /** Recursively collect *.jsonl paths under dir (subagent transcripts nest). */
-function walkJsonl(dir: string, out: string[], sinceMs?: number): void {
+function walkJsonl(
+  dir: string,
+  out: string[],
+  sinceMs: number | undefined,
+  onUnreadableDirectory: () => void,
+): void {
   let entries;
   try {
-    entries = readdirSync(dir, { withFileTypes: true });
+    entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
-    return; // unreadable subdir: skip it here; the caller counts misses
+    onUnreadableDirectory();
+    return;
   }
   for (const e of entries) {
     const p = join(dir, e.name);
-    if (e.isDirectory()) walkJsonl(p, out, sinceMs);
+    if (e.isDirectory()) walkJsonl(p, out, sinceMs, onUnreadableDirectory);
     else if (e.name.endsWith(".jsonl")) {
       if (sinceMs !== undefined) {
         // mtime prefilter: a file never touched inside the window cannot hold
@@ -123,7 +130,7 @@ export function claudeEvents(
   const out: ProviderEvent[] = [];
   let skipped = 0;
   const reasons = new Set<PartialReason>();
-  for (const proj of readdirSync(projectsDir)) {
+  for (const proj of fs.readdirSync(projectsDir)) {
     const dir = join(projectsDir, proj);
     // Stray files (.DS_Store) live alongside project dirs; stat, don't assume.
     let st;
@@ -134,7 +141,10 @@ export function claudeEvents(
     }
     if (!st.isDirectory()) continue;
     const files: string[] = [];
-    walkJsonl(dir, files, sinceMs);
+    walkJsonl(dir, files, sinceMs, () => {
+      skipped += 1;
+      reasons.add("unreadable");
+    });
     for (const p of files) {
       let text: string;
       try {

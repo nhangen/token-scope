@@ -1,5 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { readFileSync } from "fs";
+import * as fs from "fs";
 import { join } from "path";
 import { claudeEvents, claudeEventsFromTranscript } from "@/providers/claude";
 import { ollamaEvents, ollamaEventsFromRuns } from "@/providers/ollama";
@@ -253,6 +254,52 @@ describe("claude collector", () => {
     expect(t).toBeDefined();
     // genuine zero must survive as 0 — null is for absent classes (#38 panel)
     expect(t!.cacheWriteTokens).not.toBeNull();
+  });
+
+  it("surfaces unreadable nested directories while keeping readable sibling events (#145)", async () => {
+    const { tmpdir } = await import("os");
+    const root = fs.mkdtempSync(join(tmpdir(), "claude-unreadable-subdir-"));
+    const project = join(root, "projects", "project-a");
+    const unreadableDirs = [join(project, "unreadable-a"), join(project, "unreadable-b")];
+    const readableFile = join(project, "readable.jsonl");
+    for (const dir of unreadableDirs) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(readableFile, JSON.stringify({
+      type: "assistant",
+      sessionId: "session-145",
+      message: {
+        id: "readable-145",
+        model: "claude-sonnet-4-6",
+        usage: { input_tokens: 17, output_tokens: 8 },
+      },
+    }) + "\n");
+
+    const originalReaddir = fs.readdirSync.bind(fs) as (...args: unknown[]) => unknown;
+    const injectedReaddir = ((path: unknown, options?: unknown) => {
+      if (unreadableDirs.includes(String(path))) throw new Error("injected EACCES for regression test");
+      return originalReaddir(path, options);
+    }) as typeof fs.readdirSync;
+    const readdirSpy = spyOn(fs, "readdirSync").mockImplementation(injectedReaddir);
+    try {
+      const direct = claudeEvents(root);
+      expect(direct.skipped).toBe(2);
+      expect(direct.reasons).toEqual(["unreadable"]);
+      expect(direct.events.some((event) => event.requestId === "claude:readable-145")).toBe(true);
+
+      const collected = collectProviderEvents({
+        claudeRoot: root,
+        ledgerPath: join(root, "missing-ledger.jsonl"),
+        codexHome: join(root, "missing-codex-home"),
+        opencodeDb: join(root, "missing-opencode.db"),
+        geminiRoot: join(root, "missing-gemini-home"),
+      });
+      expect(collected.partial).toMatchObject({ claude: 2 });
+      expect(collected.partialReasons?.claude).toContain("unreadable");
+      expect(collected.unavailable).not.toContain("claude");
+      expect(collected.events.some((event) => event.requestId === "claude:readable-145")).toBe(true);
+    } finally {
+      readdirSpy.mockRestore();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
