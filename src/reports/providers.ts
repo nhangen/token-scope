@@ -260,9 +260,14 @@ export function providerReportJson(
     partial,
     partialReasons,
     untimedExcluded,
-    measured: rows.every((row) => row.malformedEvents === 0
-      && row.partialEvents === 0
-      && row.legacyCumulativeEvents === 0),
+    measured: rows.length > 0
+      && !Object.values(partial).some((count) => count > 0)
+      && untimedExcluded === 0
+      && rows.every((row) => (
+        row.malformedEvents === 0
+        && row.partialEvents === 0
+        && row.legacyCumulativeEvents === 0
+      )),
     unsupported,
     redactedLabels: rows.reduce((sum, row) => sum + row.redactedLabels, 0),
   };

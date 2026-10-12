@@ -281,6 +281,33 @@ describe("provider report", () => {
     expect(out).toContain("all values measured from source records; no estimates");
     expect(providerReportJson(rows, []).measured).toBe(true);
   });
+
+  it("marks measured false when source coverage is incomplete", () => {
+    const row = {
+      harness: "claude",
+      billingRoute: "subscription",
+      model: "m1",
+      events: 1,
+      input: 1,
+      output: 2,
+      cacheRead: null,
+      cacheWrite: null,
+      reasoning: null,
+      retries: 0,
+      malformedEvents: 0,
+      partialEvents: 0,
+      legacyCumulativeEvents: 0,
+      cashUsd: null,
+      partialClasses: [],
+      provenance: ["p.jsonl"],
+      redactedLabels: 0,
+    };
+
+    expect(providerReportJson([row], []).measured).toBe(true);
+    expect(providerReportJson([row], [], { claude: 1 }).measured).toBe(false);
+    expect(providerReportJson([row], [], {}, 1).measured).toBe(false);
+    expect(providerReportJson([], []).measured).toBe(false);
+  });
 });
 
 describe("ollama adapter", () => {
