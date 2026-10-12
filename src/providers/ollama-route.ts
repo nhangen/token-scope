@@ -86,7 +86,7 @@ function readRecord(value: unknown, provenance: string, line: number): ProviderE
     runId: null,
     sessionId: null,
     endpointName,
-    ttftMs: promptDurationNs === null ? null : promptDurationNs / 1_000_000,
+    promptEvalDurationMs: promptDurationNs === null ? null : promptDurationNs / 1_000_000,
     totalLatencyMs,
     decodeTps,
   };

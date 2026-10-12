@@ -64,6 +64,7 @@ export interface FleetReportRow {
   placement_state: FleetJoinState;
   route_state: FleetJoinState;
   ttft: FleetMeasurement | null;
+  prompt_eval_duration: FleetMeasurement | null;
   decode_tps: FleetMeasurement | null;
   total_latency: FleetMeasurement | null;
   provenance: Array<FleetProvenance & { scope: "usage" | "placement" | "aggregate" }>;
@@ -363,6 +364,7 @@ export function fleetReportJson(
         route_state: route.state,
         ttft: requestMeasurement(event.ttftMs, "ms")
           ?? (routeSnapshot === null ? null : aggregateMeasurement(routeSnapshot, ["avg_ttft_ms", "ttft_ms"], "ms")),
+        prompt_eval_duration: requestMeasurement(event.promptEvalDurationMs, "ms"),
         decode_tps: requestMeasurement(event.decodeTps, "tokens/s")
           ?? (routeSnapshot === null ? null : aggregateMeasurement(routeSnapshot, ["avg_decode_tps", "decode_tps"], "tokens/s")),
         total_latency: requestMeasurement(event.totalLatencyMs, "ms")
@@ -542,6 +544,7 @@ export function renderFleetReport(report: FleetReportJson): string {
       `  input tokens: ${show(row.input_tokens)}`,
       `  output tokens: ${show(row.output_tokens)}`,
       `  TTFT: ${measurement(row.ttft)}`,
+      `  prompt evaluation duration: ${measurement(row.prompt_eval_duration)}`,
       `  decode TPS: ${measurement(row.decode_tps)}`,
       `  total latency: ${measurement(row.total_latency)}`,
       `  placement state: ${row.placement_state}`,

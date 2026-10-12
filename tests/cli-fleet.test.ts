@@ -213,13 +213,14 @@ describe("--fleet production CLI path", () => {
       "prompt origin:", "agent execution host:", "router host:", "backend host:",
       "backend:", "harness:", "provider:", "model:", "request identity:",
       "run identity:", "session identity:", "status:", "billing route:",
-      "cash charge USD:", "input tokens:", "output tokens:", "TTFT:",
+      "cash charge USD:", "input tokens:", "output tokens:", "TTFT:", "prompt evaluation duration:",
       "decode TPS:", "total latency:", "placement state:", "route state:", "provenance:",
     ]) {
       expect(result.out, label).toContain(label);
     }
     expect(result.out).toContain("prompt origin: unknown");
     expect(result.out).toContain("TTFT: unknown");
+    expect(result.out).toContain("prompt evaluation duration: unknown");
     expect(result.out).toContain("total latency: 110ms aggregate");
     expect(result.out).toContain("total latency: 1250ms request");
   });
@@ -626,13 +627,14 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     expect(local).toMatchObject({ request_id: null, status: "incomplete" });
   });
 
-  it("reports request-scoped TTFT and decode TPS from route telemetry", async () => {
+  it("reports prompt evaluation separately from request TTFT in route telemetry", async () => {
     const result = await runFleet({
       routes: "olla-routes-empty.json",
       routeTelemetry: join(FX, "providers", "olla-routing.jsonl"),
     });
     const local = JSON.parse(result.out).rows.find((row: any) => row.harness === "ollama-route");
-    expect(local.ttft).toEqual({ value: 987.654321, unit: "ms", scope: "request" });
+    expect(local.ttft).toBeNull();
+    expect(local.prompt_eval_duration).toEqual({ value: 987.654321, unit: "ms", scope: "request" });
     expect(local.decode_tps.scope).toBe("request");
     expect(local.decode_tps.value).toBeCloseTo(40 / 0.000654321, 3);
   });
