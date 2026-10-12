@@ -161,7 +161,8 @@ export interface ProviderReportJson {
   partialReasons: Record<string, PartialReason[]>;
   /** Events outside --since only because they carry no timestamp. */
   untimedExcluded: number;
-  /** False when source records have malformed or incomplete observations. */
+  /** False for empty reports, skipped/partial files, untimed exclusions,
+   * or malformed/incomplete observations. */
   measured: boolean;
   /** Source surfaces intentionally excluded rather than conflated. */
   unsupported: string[];
