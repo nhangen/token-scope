@@ -1,4 +1,5 @@
 import { describe, it, expect } from "bun:test";
+import { Database } from "bun:sqlite";
 import {
   classifyTurn,
   analyzeCacheEconomics,
@@ -8,6 +9,7 @@ import {
   type CacheTurnRecord,
 } from "@/cache-economics";
 import { createReader } from "@/reader";
+import { queryCacheTurns } from "@/db";
 import { renderCacheReport } from "@/reports/cache";
 import type { Reader } from "@/reader";
 import { renderSummary } from "@/reports/summary";
@@ -746,6 +748,54 @@ describe("Cache Economics — boundaries, aggregates, and sim triggers", () => {
     reader.close();
     expect(mainTurns.length).toBeGreaterThan(0);
     for (const t of mainTurns) expect(t.timestampMs).toBeGreaterThan(1e12);
+  });
+
+  it("SQLite cache turns skip zero-usage assistant rows so expiry rebuild cost survives", () => {
+    const db = new Database(":memory:");
+    db.exec(`
+      CREATE TABLE base_messages (uuid TEXT PRIMARY KEY, session_id TEXT, cwd TEXT, timestamp INTEGER);
+      CREATE TABLE assistant_messages (uuid TEXT PRIMARY KEY, message TEXT, cost_usd REAL, model TEXT);
+    `);
+    const insertBase = db.query("INSERT INTO base_messages VALUES (?, ?, ?, ?)");
+    const insertAssistant = db.query("INSERT INTO assistant_messages VALUES (?, ?, ?, ?)");
+    const sessionId = "expiry-session";
+    const cwd = "/fixture";
+    const model = "claude-sonnet-4-6";
+    const t0 = 1_700_000_000;
+    const fixture = [
+      {
+        uuid: "cache-seed",
+        timestamp: t0,
+        message: { usage: { output_tokens: 10, input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 10_000 } },
+      },
+      // SQLite must match the JSONL reader's completed-turn filter for zero usage.
+      {
+        uuid: "zero-usage",
+        timestamp: t0 + 3_601,
+        message: { usage: { output_tokens: 0, input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+      },
+      {
+        uuid: "expiry-rebuild",
+        timestamp: t0 + 3_602,
+        message: { usage: { output_tokens: 10, input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 10_000 } },
+      },
+    ];
+    try {
+      for (const row of fixture) {
+        insertBase.run(row.uuid, sessionId, cwd, row.timestamp);
+        insertAssistant.run(row.uuid, JSON.stringify(row.message), null, model);
+      }
+
+      const { mainTurns } = queryCacheTurns(db, 0);
+      expect(mainTurns.map((turn) => turn.uuid)).toEqual(["cache-seed", "expiry-rebuild"]);
+
+      const analysis = analyzeCacheEconomics({ mainTurns, sinceSec: 0, nowMs: (t0 + 3_602) * 1000 });
+      expect(analysis.misses.items.map((item) => item.type)).toEqual(["cold", "expiry"]);
+      // The 10k-token prefix is rebuilt at $3.75/M rather than read at $0.30/M.
+      expect(analysis.misses.totalExpiryExtraCostUsd).toBeCloseTo(0.0345, 8);
+    } finally {
+      db.close();
+    }
   });
 
   it("omits the other section under each focus", () => {

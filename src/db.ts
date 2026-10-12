@@ -873,6 +873,7 @@ export function queryCacheTurns(db: Database, since: number): CacheTurnSet {
     FROM assistant_messages am
     JOIN base_messages bm ON am.uuid = bm.uuid
     WHERE bm.timestamp > ? AND json_valid(am.message) = 1
+      AND CAST(COALESCE(json_extract(am.message, '$.usage.output_tokens'), 0) AS INTEGER) > 0
     ORDER BY bm.session_id, bm.timestamp ASC
   `).all(since);
 
