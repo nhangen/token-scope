@@ -83,12 +83,12 @@ function errorCode(error: unknown): string | null {
     : null;
 }
 
-function containedBy(root: string, candidate: string): boolean {
+export function containedBy(root: string, candidate: string): boolean {
   const path = relative(root, candidate);
   return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`));
 }
 
-function readRegularFile(path: string, sinceMs?: number): string | null {
+export function readRegularFile(path: string, sinceMs?: number): string | null {
   const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const stat = fstatSync(descriptor);

@@ -15,13 +15,16 @@ import { join } from "path";
 import {
   GEMINI_CLI_SOURCE_CONTRACT,
   UNSUPPORTED_GOOGLE_SURFACES,
+  containedBy,
   geminiCliEvents,
   geminiCliEventsFromTranscript,
+  readRegularFile,
 } from "@/providers/gemini-cli";
 import { collectProviderEvents } from "@/providers";
 import { providerReportJson, providerRows, renderProviderReport } from "@/reports/providers";
 
 const FX = join(import.meta.dir, "fixtures", "providers", "gemini-cli");
+const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
 
 describe("Gemini CLI source contract", () => {
   it("names the tested local record, authentication boundary, and unsupported surfaces", () => {
@@ -702,5 +705,172 @@ describe("Gemini CLI measurement completeness", () => {
     });
     const rows = providerRows({ events: parsed.events, unavailable: [], partial: {} });
     expect(providerReportJson(rows, []).measured).toBe(false);
+  });
+});
+
+describe("Gemini CLI mutation coverage (#128)", () => {
+  it("emits events with errors=1 when the sessionId header line is missing", () => {
+    const parsed = geminiCliEventsFromTranscript([
+      JSON.stringify({
+        id: "response-no-session-header",
+        timestamp: "2026-09-23T10:00:00.000Z",
+        type: "gemini",
+        model: "gemini-3-flash-preview",
+        tokens: { input: 10, output: 5, cached: 2, thoughts: 1 },
+      }),
+    ].join("\n"), "missing-session-header.jsonl");
+
+    expect(parsed.errors).toBe(1);
+    expect(parsed.events).toHaveLength(1);
+    expect(parsed.events[0]).toMatchObject({
+      eventId: "gemini-cli:response-no-session-header",
+      sessionId: null,
+      inputTokens: 8,
+      outputTokens: 5,
+      cacheReadTokens: 2,
+      reasoningTokens: 1,
+    });
+  });
+
+  it("turns negative token values into null and flags partial token classes", () => {
+    const parsed = geminiCliEventsFromTranscript([
+      JSON.stringify({ sessionId: "session-negative-tokens", messages: [] }),
+      JSON.stringify({
+        id: "response-negative",
+        timestamp: "2026-09-23T10:00:00.000Z",
+        type: "gemini",
+        model: "gemini-3-flash-preview",
+        tokens: { input: 10, output: -1, cached: 2, thoughts: 0 },
+      }),
+    ].join("\n"), "negative.jsonl");
+
+    expect(parsed.events).toHaveLength(1);
+    expect(parsed.events[0]!.outputTokens).toBeNull();
+    expect(parsed.events[0]!.partial).toContain("output_token_classes");
+  });
+
+  it("turns non-integer token values into null and flags partial token classes", () => {
+    const parsed = geminiCliEventsFromTranscript([
+      JSON.stringify({ sessionId: "session-float-tokens", messages: [] }),
+      JSON.stringify({
+        id: "response-float",
+        timestamp: "2026-09-23T10:00:00.000Z",
+        type: "gemini",
+        model: "gemini-3-flash-preview",
+        tokens: { input: 10, output: 2, cached: 0, thoughts: 1.5 },
+      }),
+    ].join("\n"), "float.jsonl");
+
+    expect(parsed.events).toHaveLength(1);
+    expect(parsed.events[0]!.reasoningTokens).toBeNull();
+    expect(parsed.events[0]!.partial).toContain("output_token_classes");
+  });
+
+  it("readRegularFile refuses to follow symlinks via O_NOFOLLOW", () => {
+    const dir = mkdtempSync(join(tmpdir(), "token-scope-gemini-onofollow-"));
+    try {
+      const target = join(dir, "target.jsonl");
+      const symlink = join(dir, "link.jsonl");
+      writeFileSync(target, "content\n");
+      symlinkSync(target, symlink);
+
+      expect(() => readRegularFile(symlink)).toThrow(expect.objectContaining({ code: "ELOOP" }));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("readRegularFile refuses a non-regular file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "token-scope-gemini-nonregular-"));
+    try {
+      expect(() => readRegularFile(dir)).toThrow("not a regular file");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("readRegularFile rechecks mtime on open file descriptor", () => {
+    const dir = mkdtempSync(join(tmpdir(), "token-scope-gemini-mtime-"));
+    try {
+      const file = join(dir, "session.jsonl");
+      writeFileSync(file, "content\n");
+      const now = Date.now();
+      const past = new Date(now - 100_000);
+      utimesSync(file, past, past);
+
+      expect(readRegularFile(file, now)).toBeNull();
+      expect(readRegularFile(file, now - 200_000)).toBe("content\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an internal project symlink under tmp via walk isSymbolicLink check", () => {
+    const root = mkdtempSync(join(tmpdir(), "token-scope-gemini-internal-symlink-"));
+    try {
+      const projectA = join(root, "tmp", "project-a");
+      const chatsA = join(projectA, "chats");
+      mkdirSync(chatsA, { recursive: true });
+      writeFileSync(join(chatsA, "session.jsonl"), [
+        JSON.stringify({ sessionId: "session-a", messages: [] }),
+        JSON.stringify({
+          id: "r1",
+          timestamp: "2026-09-23T10:00:00.000Z",
+          type: "gemini",
+          model: "gemini-3-flash-preview",
+          tokens: { input: 5, output: 2, cached: 0, thoughts: 0 },
+        }),
+      ].join("\n"));
+      symlinkSync(projectA, join(root, "tmp", "project-alias"));
+
+      const result = geminiCliEvents(root);
+      expect(result.source).toMatchObject({ state: "partial", reason: "unsafe_path" });
+      expect(result.skipped).toBe(1);
+      expect(result.reasons).toContain("unsafe_path");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("containedBy enforces path containment against traversal and escaping paths", () => {
+    const base = "/var/gemini/root";
+    expect(containedBy(base, base)).toBe(true);
+    expect(containedBy(base, "/var/gemini/root/sub/path")).toBe(true);
+    expect(containedBy(base, "/var/gemini/root/..")).toBe(false);
+    expect(containedBy(base, "/var/gemini/root/../other")).toBe(false);
+    expect(containedBy(base, "/var/gemini/outside")).toBe(false);
+    expect(containedBy(base, "/var/gemini/root-sibling")).toBe(false);
+  });
+
+  it.skipIf(isRoot)("records unreadable partial reasons when a project directory mid-walk is unreadable", () => {
+    const root = mkdtempSync(join(tmpdir(), "token-scope-gemini-unreadable-project-"));
+    const blockedProject = join(root, "tmp", "project-blocked");
+    try {
+      const readableChats = join(root, "tmp", "project-readable", "chats");
+      mkdirSync(readableChats, { recursive: true });
+      mkdirSync(blockedProject, { recursive: true });
+      writeFileSync(join(readableChats, "session.jsonl"), [
+        JSON.stringify({ sessionId: "session-readable", messages: [] }),
+        JSON.stringify({
+          id: "r1",
+          timestamp: "2026-09-23T10:00:00.000Z",
+          type: "gemini",
+          model: "gemini-3-flash-preview",
+          tokens: { input: 10, output: 5, cached: 0, thoughts: 0 },
+        }),
+      ].join("\n"));
+      chmodSync(blockedProject, 0);
+
+      const gemini = geminiCliEvents(root);
+      expect(gemini.reasons).toEqual(["unreadable"]);
+      expect(gemini.source.reason).toBe("unreadable");
+      expect(gemini.affectedFiles).toBe(1);
+      expect(gemini.events).toHaveLength(1);
+    } finally {
+      try {
+        chmodSync(blockedProject, 0o700);
+      } catch {}
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
