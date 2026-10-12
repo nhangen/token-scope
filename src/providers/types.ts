@@ -74,6 +74,8 @@ export interface ProviderEvent {
   endpointName?: string | null;
   /** Request-level measurements only. Aggregate telemetry stays on snapshots. */
   ttftMs?: number | null;
+  /** Olla prompt-evaluation duration, which excludes model loading and queueing. */
+  promptEvalDurationMs?: number | null;
   decodeTps?: number | null;
   totalLatencyMs?: number | null;
 }

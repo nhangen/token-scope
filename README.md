@@ -691,7 +691,7 @@ For each observed run, the report surfaces:
 - **Prompt origin & placement**: `prompt_origin_host` (from `TOKEN_SCOPE_PROMPT_ORIGIN_HOST`), `execution_host` (e.g. `orca:local` or `orca:ssh:<box>`), and `placement_state` (`matched`, `unmatched`, `ambiguous`, `stale`, `partial`, `unavailable`).
 - **Routing & telemetry**: `router_host`, `backend_host`, `backend`, and `route_state` (`matched`, `provider` for cloud non-local routes, `unmatched`, `ambiguous`, `stale`, `partial`, `unavailable`).
 - **Correlation identities**: `request_id`, `run_id`, and `session_id`.
-- **Accounting & metrics**: tokens (`input_tokens`, `output_tokens`), cash charge (`cash_charge_usd`, only for metered routes; subscription plans remain null without synthetic charges), TTFT, decode TPS, and total latency.
+- **Accounting & metrics**: tokens (`input_tokens`, `output_tokens`), cash charge (`cash_charge_usd`, only for metered routes; subscription plans remain null without synthetic charges), TTFT, prompt-evaluation duration, decode TPS, and total latency. Request-scoped Olla `prompt_duration_ns` is reported as `prompt_eval_duration`, not TTFT: it measures prompt evaluation and omits model loading and queueing. `ttft` remains actual request TTFT when available, or an aggregate snapshot TTFT when only that is available.
 - **Explicit measurement scopes**: Per-request measurements are labeled `scope: "request"`, while Olla snapshot aggregates are explicitly labeled `scope: "aggregate"`. Text `unknown` and JSON `null` represent unavailable data, never zero.
 - **Provenance**: Per-field audit trail identifying source, locator, collection timestamp, and completeness.
 
