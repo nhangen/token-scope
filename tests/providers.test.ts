@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { claudeEvents, claudeEventsFromTranscript } from "@/providers/claude";
@@ -6,6 +6,7 @@ import { ollamaEvents, ollamaEventsFromRuns } from "@/providers/ollama";
 import { opencodeEventsFromDb } from "@/providers/opencode";
 import type { LedgerRun } from "@/ledger";
 import { codexEventsFromRollout } from "@/providers/codex";
+import * as geminiCliModule from "@/providers/gemini-cli";
 import { collectProviderEvents, dedupeEvents } from "@/providers";
 import { stableId } from "@/providers/types";
 import { providerRows, renderProviderReport, providerReportJson, untimedExcluded } from "@/reports/providers";
@@ -708,6 +709,24 @@ describe("dedup + report", () => {
     // codex usage). Unavailable is reserved for present-but-unreadable sources
     // (locked/corrupt db) where volume is unknown rather than zero (#37).
     expect(c.unavailable).toEqual(["opencode"]);
+  });
+
+  it("isolates Gemini collection failures when geminiCliEvents throws", () => {
+    const spy = spyOn(geminiCliModule, "geminiCliEvents").mockImplementationOnce(() => {
+      throw new Error("injected crash in gemini collector");
+    });
+    try {
+      const c = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: "/nonexistent",
+      });
+      expect(c.unavailable).toContain("gemini-cli");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
