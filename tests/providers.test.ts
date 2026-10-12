@@ -9,6 +9,7 @@ import { codexEventsFromRollout } from "@/providers/codex";
 import { collectProviderEvents, dedupeEvents } from "@/providers";
 import { stableId } from "@/providers/types";
 import { providerRows, renderProviderReport, providerReportJson, untimedExcluded } from "@/reports/providers";
+import type { ProviderRow } from "@/reports/providers";
 
 const FX = join(import.meta.dir, "fixtures", "providers");
 
@@ -281,6 +282,44 @@ describe("provider report", () => {
     expect(out).toContain("all values measured from source records; no estimates");
     expect(providerReportJson(rows, []).measured).toBe(true);
   });
+
+  const cleanRow: ProviderRow = {
+    harness: "claude",
+    billingRoute: "subscription",
+    model: "m1",
+    events: 1,
+    input: 1,
+    output: 2,
+    cacheRead: null,
+    cacheWrite: null,
+    reasoning: null,
+    retries: 0,
+    malformedEvents: 0,
+    partialEvents: 0,
+    legacyCumulativeEvents: 0,
+    cashUsd: null,
+    partialClasses: [],
+    provenance: ["p.jsonl"],
+    redactedLabels: 0,
+  };
+
+  it("marks measured false when source coverage is incomplete", () => {
+    expect(providerReportJson([cleanRow], []).measured).toBe(true);
+    expect(providerReportJson([cleanRow], [], { claude: 0, codex: 0 }).measured).toBe(true);
+    expect(providerReportJson([cleanRow], [], { claude: 1 }).measured).toBe(false);
+    expect(providerReportJson([cleanRow], [], { claude: 0, codex: 2 }).measured).toBe(false);
+    expect(providerReportJson([cleanRow], [], {}, 1).measured).toBe(false);
+    expect(providerReportJson([], []).measured).toBe(false);
+  });
+
+  it.each(["malformedEvents", "partialEvents", "legacyCumulativeEvents"] as const)(
+    "marks measured false for %s independently of source coverage",
+    (flag) => {
+      const incompleteRow = { ...cleanRow, [flag]: 1 };
+      expect(providerReportJson([incompleteRow], []).measured).toBe(false);
+      expect(providerReportJson([cleanRow, incompleteRow], []).measured).toBe(false);
+    },
+  );
 });
 
 describe("ollama adapter", () => {

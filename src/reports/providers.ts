@@ -161,7 +161,8 @@ export interface ProviderReportJson {
   partialReasons: Record<string, PartialReason[]>;
   /** Events outside --since only because they carry no timestamp. */
   untimedExcluded: number;
-  /** False when source records have malformed or incomplete observations. */
+  /** False for empty reports, skipped/partial files, untimed exclusions,
+   * or malformed/incomplete observations. */
   measured: boolean;
   /** Source surfaces intentionally excluded rather than conflated. */
   unsupported: string[];
@@ -260,9 +261,14 @@ export function providerReportJson(
     partial,
     partialReasons,
     untimedExcluded,
-    measured: rows.every((row) => row.malformedEvents === 0
-      && row.partialEvents === 0
-      && row.legacyCumulativeEvents === 0),
+    measured: rows.length > 0
+      && !Object.values(partial).some((count) => count > 0)
+      && untimedExcluded === 0
+      && rows.every((row) => (
+        row.malformedEvents === 0
+        && row.partialEvents === 0
+        && row.legacyCumulativeEvents === 0
+      )),
     unsupported,
     redactedLabels: rows.reduce((sum, row) => sum + row.redactedLabels, 0),
   };
