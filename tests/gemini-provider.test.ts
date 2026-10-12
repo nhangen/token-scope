@@ -774,7 +774,16 @@ describe("Gemini CLI mutation coverage (#128)", () => {
       writeFileSync(target, "content\n");
       symlinkSync(target, symlink);
 
-      expect(() => readRegularFile(symlink)).toThrow();
+      expect(() => readRegularFile(symlink)).toThrow(expect.objectContaining({ code: "ELOOP" }));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("readRegularFile refuses a non-regular file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "token-scope-gemini-nonregular-"));
+    try {
+      expect(() => readRegularFile(dir)).toThrow("not a regular file");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
