@@ -435,34 +435,49 @@ describe("JsonlReader — one row per API response (#19)", () => {
 describe("JsonlReader — cross-file message.id dedup (#21)", () => {
   // Two files in different project dirs carry the same message.id (a copied
   // transcript under a worktree slug, or a fork/resume). The seen Set in
-  // loadTurns is global: first-file-wins, second is skipped. This test pins
-  // that behavior so a future refactor can't flip it silently.
+  // loadTurns is global, so exactly one file's turn should survive. Filesystem
+  // enumeration order is not stable; pin the surviving record to either valid
+  // fixture rather than choosing which project wins.
   const dir = new URL("./fixtures/cross-session-dedup", import.meta.url).pathname;
   const r = new JsonlReader(dir);
+  const fixtureRecords = [
+    { sessionId: "sess-dup-a", cwd: "/Users/alice/projects/token-scope", outputTokens: 5000, inputTokens: 10000 },
+    { sessionId: "sess-dup-b", cwd: "/Users/alice/projects/beacon", outputTokens: 8000, inputTokens: 20000 },
+  ];
 
   it("deduplicates the same message.id across project dirs", () => {
     const totals = r.querySummaryTotals(0);
-    // Only one turn should survive — the first file's (10k in, 5k out).
-    // The second file's 20k in / 8k out must be deduped away.
     expect(totals.turnCount).toBe(1);
-    expect(totals.totalOutputTokens).toBe(5000);
-    expect(totals.totalInputTokens).toBe(10000);
+    expect(totals.sessionCount).toBe(1);
+    expect(fixtureRecords.map(({ outputTokens, inputTokens }) => [outputTokens, inputTokens]))
+      .toContainEqual([totals.totalOutputTokens, totals.totalInputTokens]);
   });
 
   it("attributes the surviving turn to exactly one session (order-independent)", () => {
-    // Exactly one of the two sessions should have the turn; the other should
-    // be empty. We don't assert which one wins — that depends on filesystem
-    // traversal order, which is not guaranteed across platforms.
     const turnsA = r.querySessionTurns("sess-dup-a");
     const turnsB = r.querySessionTurns("sess-dup-b");
     expect(turnsA.length + turnsB.length).toBe(1);
-    if (turnsA.length === 1) {
-      expect(turnsA[0]!.outputTokens).toBe(5000);
-      expect(turnsB.length).toBe(0);
-    } else {
-      expect(turnsB.length).toBe(1);
-      expect(turnsB[0]!.outputTokens).toBe(5000);
-      expect(turnsA.length).toBe(0);
-    }
+    const turn = [...turnsA, ...turnsB][0]!;
+    const sessions = r.querySessions(0, 10);
+    expect(sessions).toHaveLength(1);
+    const session = sessions[0]!;
+    expect(session.sessionId).toBe(turn.sessionId);
+    expect(session.outputTokens).toBe(turn.outputTokens);
+    expect(session.cwd).not.toBeNull();
+    const survivor = {
+      sessionId: turn.sessionId,
+      cwd: session.cwd!,
+      outputTokens: turn.outputTokens,
+      inputTokens: turn.inputTokens,
+    };
+    expect(fixtureRecords).toContainEqual(survivor);
+    expect(turnsA.length).toBe(survivor.sessionId === "sess-dup-a" ? 1 : 0);
+    expect(turnsB.length).toBe(survivor.sessionId === "sess-dup-b" ? 1 : 0);
+
+    const totals = r.querySummaryTotals(0);
+    expect(totals.turnCount).toBe(1);
+    expect(totals.sessionCount).toBe(1);
+    expect(totals.totalOutputTokens).toBe(survivor.outputTokens);
+    expect(totals.totalInputTokens).toBe(survivor.inputTokens);
   });
 });
