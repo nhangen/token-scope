@@ -964,18 +964,13 @@ export type FleetJoinResult =
   | { state: "ambiguous"; key: string; snapshot: null };
 
 /**
- * Joins a fleet usage event to an operational snapshot using deterministic correlation
- * key precedence (`request_id`, then `run_id`, then `session_id`) and half-open snapshot
- * windows (`[start, end)`).
+ * Callers should still run `dedupeFleetRecords` on ingested streams; matching snapshots
+ * are also deduplicated here so identical duplicates do not join as ambiguous.
  *
- * Matching snapshots are deduplicated by `record_id` and canonical content, so identical
- * duplicate snapshots do not produce spurious ambiguous joins. Callers are still expected
- * to deduplicate ingested record streams with `dedupeFleetRecords` before joining.
- *
- * When no snapshot matches, returns state `"unmatched"` with a specific `reason`:
+ * An unmatched result carries a `reason`:
  * - `"no_candidate"`: no snapshot shares any correlation key with the usage event
- * - `"undated"`: candidate snapshot(s) exist for a correlation key, but the usage event is undated (`timestamp: null`)
- * - `"out_of_window"`: candidate snapshot(s) exist, but the usage event timestamp falls outside every candidate window
+ * - `"undated"`: a snapshot shares a key, but the usage event has `timestamp: null`
+ * - `"out_of_window"`: a snapshot shares a key, but the timestamp falls outside every candidate window
  */
 export function joinUsageToSnapshots(
   usage: FleetUsageEvent,
