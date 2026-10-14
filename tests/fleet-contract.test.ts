@@ -118,11 +118,52 @@ describe("fleet schema v1 contract", () => {
       state: "unmatched",
       key: null,
       snapshot: null,
+      reason: "no_candidate",
     });
     expect(joinUsageToSnapshots(usage, [snapshot, { ...snapshot, record_id: "olla:snapshot:2" }])).toEqual({
       state: "ambiguous",
       key: "run_id=codex:run-3",
       snapshot: null,
+    });
+  });
+
+  it("deduplicates identical snapshots in join but preserves ambiguity for distinct or conflicting snapshots", () => {
+    expect(joinUsageToSnapshots(usage, [snapshot, snapshot])).toEqual({
+      state: "matched",
+      key: "run_id=codex:run-3",
+      snapshot,
+    });
+    expect(joinUsageToSnapshots(usage, [snapshot, { ...snapshot }])).toEqual({
+      state: "matched",
+      key: "run_id=codex:run-3",
+      snapshot,
+    });
+    const conflict = { ...snapshot, counters: { requests: 99, errors: null } };
+    expect(joinUsageToSnapshots(usage, [snapshot, conflict])).toEqual({
+      state: "ambiguous",
+      key: "run_id=codex:run-3",
+      snapshot: null,
+    });
+  });
+
+  it("reports no_candidate when the event has no keys or no snapshot shares one", () => {
+    expect(joinUsageToSnapshots({ ...usage, request_id: null, run_id: null, session_id: null }, [snapshot])).toEqual({
+      state: "unmatched",
+      key: null,
+      snapshot: null,
+      reason: "no_candidate",
+    });
+    expect(joinUsageToSnapshots(usage, [])).toEqual({
+      state: "unmatched",
+      key: null,
+      snapshot: null,
+      reason: "no_candidate",
+    });
+    expect(joinUsageToSnapshots(usage, [{ ...snapshot, request_id: null, run_id: null, session_id: null }])).toEqual({
+      state: "unmatched",
+      key: null,
+      snapshot: null,
+      reason: "no_candidate",
     });
   });
 
@@ -725,12 +766,12 @@ describe("fleet schema v1 contract", () => {
 
   it("does not join an event outside the snapshot window or without a timestamp", () => {
     expect(joinUsageToSnapshots({ ...usage, timestamp: "2026-09-22T13:59:59.999Z" }, [snapshot]))
-      .toEqual({ state: "unmatched", key: null, snapshot: null });
+      .toEqual({ state: "unmatched", key: null, snapshot: null, reason: "out_of_window" });
     expect(joinUsageToSnapshots({ ...usage, timestamp: null }, [snapshot]))
-      .toEqual({ state: "unmatched", key: null, snapshot: null });
+      .toEqual({ state: "unmatched", key: null, snapshot: null, reason: "undated" });
   });
 
-  it("prefers request_id over run_id and never falls through an ambiguous level", () => {
+  it("prefers request_id over run_id, falls through on out-of-window, and never falls through an ambiguous level", () => {
     const byRequest = { ...snapshot, record_id: "olla:snapshot:req", request_id: "openai:req-7", run_id: null };
     expect(joinUsageToSnapshots(usage, [snapshot, byRequest])).toEqual({
       state: "matched",
@@ -742,6 +783,16 @@ describe("fleet schema v1 contract", () => {
       state: "ambiguous",
       key: "request_id=openai:req-7",
       snapshot: null,
+    });
+    const outOfWindowByRequest = {
+      ...byRequest,
+      window: { start: "2026-09-22T13:00:00.000Z", end: "2026-09-22T13:05:00.000Z" },
+      timestamp: "2026-09-22T13:05:00.000Z",
+    };
+    expect(joinUsageToSnapshots(usage, [outOfWindowByRequest, snapshot])).toEqual({
+      state: "matched",
+      key: "run_id=codex:run-3",
+      snapshot,
     });
   });
 
