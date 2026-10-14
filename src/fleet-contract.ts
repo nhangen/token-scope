@@ -927,31 +927,6 @@ export function usageFallsInSnapshotWindow(
   return timestamp >= Date.parse(snapshot.window.start) && timestamp < Date.parse(snapshot.window.end);
 }
 
-export type FleetJoinResult =
-  | { state: "matched"; key: string; snapshot: FleetOperationalSnapshot }
-  | { state: "unmatched"; key: null; snapshot: null }
-  | { state: "ambiguous"; key: string; snapshot: null };
-
-export function joinUsageToSnapshots(
-  usage: FleetUsageEvent,
-  snapshots: FleetOperationalSnapshot[],
-): FleetJoinResult {
-  for (const field of CORRELATION_FIELDS) {
-    const value = usage[field];
-    if (value === null) continue;
-    const matches = snapshots.filter(
-      (snapshot) => snapshot[field] === value && usageFallsInSnapshotWindow(usage, snapshot) === true,
-    );
-    if (matches.length === 1) {
-      return { state: "matched", key: correlationKey(field, value), snapshot: matches[0]! };
-    }
-    if (matches.length > 1) {
-      return { state: "ambiguous", key: correlationKey(field, value), snapshot: null };
-    }
-  }
-  return { state: "unmatched", key: null, snapshot: null };
-}
-
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (typeof value !== "object" || value === null) return JSON.stringify(value);
@@ -979,6 +954,71 @@ export function dedupeFleetRecords(records: FleetRecord[]): {
     else conflicts.push(id);
   }
   return { records: deduped, conflicts };
+}
+
+export type FleetUnmatchedJoinReason = "no_key" | "undated" | "out_of_window";
+
+export type FleetJoinResult =
+  | { state: "matched"; key: string; snapshot: FleetOperationalSnapshot }
+  | { state: "unmatched"; key: null; snapshot: null; reason: FleetUnmatchedJoinReason }
+  | { state: "ambiguous"; key: string; snapshot: null };
+
+/**
+ * Joins a fleet usage event to an operational snapshot using deterministic correlation
+ * key precedence (`request_id`, then `run_id`, then `session_id`) and half-open snapshot
+ * windows (`[start, end)`).
+ *
+ * Matching snapshots are deduplicated by `record_id` and canonical content, so identical
+ * duplicate snapshots do not produce spurious ambiguous joins. Callers are still expected
+ * to deduplicate ingested record streams with `dedupeFleetRecords` before joining.
+ *
+ * When no snapshot matches, returns state `"unmatched"` with a specific `reason`:
+ * - `"no_key"`: no snapshot shares any correlation key with the usage event
+ * - `"undated"`: candidate snapshot(s) exist for a correlation key, but the usage event is undated (`timestamp: null`)
+ * - `"out_of_window"`: candidate snapshot(s) exist, but the usage event timestamp falls outside every candidate window
+ */
+export function joinUsageToSnapshots(
+  usage: FleetUsageEvent,
+  snapshots: FleetOperationalSnapshot[],
+): FleetJoinResult {
+  let hasCandidateSnapshot = false;
+
+  for (const field of CORRELATION_FIELDS) {
+    const value = usage[field];
+    if (value === null) continue;
+
+    const candidates = snapshots.filter((snapshot) => snapshot[field] === value);
+    if (candidates.length > 0) {
+      hasCandidateSnapshot = true;
+    }
+
+    const matches = candidates.filter(
+      (snapshot) => usageFallsInSnapshotWindow(usage, snapshot) === true,
+    );
+
+    if (matches.length === 1) {
+      return { state: "matched", key: correlationKey(field, value), snapshot: matches[0]! };
+    }
+    if (matches.length > 1) {
+      const { records, conflicts } = dedupeFleetRecords(matches);
+      if (conflicts.length === 0 && records.length === 1) {
+        return {
+          state: "matched",
+          key: correlationKey(field, value),
+          snapshot: records[0] as FleetOperationalSnapshot,
+        };
+      }
+      return { state: "ambiguous", key: correlationKey(field, value), snapshot: null };
+    }
+  }
+
+  const reason: FleetUnmatchedJoinReason = !hasCandidateSnapshot
+    ? "no_key"
+    : usage.timestamp === null
+      ? "undated"
+      : "out_of_window";
+
+  return { state: "unmatched", key: null, snapshot: null, reason };
 }
 
 export function classifySnapshotFreshness(
