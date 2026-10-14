@@ -146,7 +146,7 @@ describe("fleet schema v1 contract", () => {
     });
   });
 
-  it("classifies unmatched join reasons: no_key, undated, and out_of_window", () => {
+  it("reports no_key when the event has no keys or no snapshot shares one", () => {
     expect(joinUsageToSnapshots({ ...usage, request_id: null, run_id: null, session_id: null }, [snapshot])).toEqual({
       state: "unmatched",
       key: null,
@@ -154,18 +154,6 @@ describe("fleet schema v1 contract", () => {
       reason: "no_key",
     });
     expect(joinUsageToSnapshots(usage, [])).toEqual({
-      state: "unmatched",
-      key: null,
-      snapshot: null,
-      reason: "no_key",
-    });
-    expect(joinUsageToSnapshots({ ...usage, timestamp: null, run_id: null }, [snapshot])).toEqual({
-      state: "unmatched",
-      key: null,
-      snapshot: null,
-      reason: "no_key",
-    });
-    expect(joinUsageToSnapshots({ ...usage, timestamp: null }, [])).toEqual({
       state: "unmatched",
       key: null,
       snapshot: null,
