@@ -159,6 +159,12 @@ describe("fleet schema v1 contract", () => {
       snapshot: null,
       reason: "no_candidate",
     });
+    expect(joinUsageToSnapshots(usage, [{ ...snapshot, request_id: null, run_id: null, session_id: null }])).toEqual({
+      state: "unmatched",
+      key: null,
+      snapshot: null,
+      reason: "no_candidate",
+    });
   });
 
   it("deduplicates identical records but surfaces record-id collisions", () => {
