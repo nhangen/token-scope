@@ -118,7 +118,7 @@ describe("fleet schema v1 contract", () => {
       state: "unmatched",
       key: null,
       snapshot: null,
-      reason: "no_key",
+      reason: "no_candidate",
     });
     expect(joinUsageToSnapshots(usage, [snapshot, { ...snapshot, record_id: "olla:snapshot:2" }])).toEqual({
       state: "ambiguous",
@@ -146,18 +146,18 @@ describe("fleet schema v1 contract", () => {
     });
   });
 
-  it("reports no_key when the event has no keys or no snapshot shares one", () => {
+  it("reports no_candidate when the event has no keys or no snapshot shares one", () => {
     expect(joinUsageToSnapshots({ ...usage, request_id: null, run_id: null, session_id: null }, [snapshot])).toEqual({
       state: "unmatched",
       key: null,
       snapshot: null,
-      reason: "no_key",
+      reason: "no_candidate",
     });
     expect(joinUsageToSnapshots(usage, [])).toEqual({
       state: "unmatched",
       key: null,
       snapshot: null,
-      reason: "no_key",
+      reason: "no_candidate",
     });
   });
 

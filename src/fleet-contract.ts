@@ -956,7 +956,7 @@ export function dedupeFleetRecords(records: FleetRecord[]): {
   return { records: deduped, conflicts };
 }
 
-export type FleetUnmatchedJoinReason = "no_key" | "undated" | "out_of_window";
+export type FleetUnmatchedJoinReason = "no_candidate" | "undated" | "out_of_window";
 
 export type FleetJoinResult =
   | { state: "matched"; key: string; snapshot: FleetOperationalSnapshot }
@@ -973,7 +973,7 @@ export type FleetJoinResult =
  * to deduplicate ingested record streams with `dedupeFleetRecords` before joining.
  *
  * When no snapshot matches, returns state `"unmatched"` with a specific `reason`:
- * - `"no_key"`: no snapshot shares any correlation key with the usage event
+ * - `"no_candidate"`: no snapshot shares any correlation key with the usage event
  * - `"undated"`: candidate snapshot(s) exist for a correlation key, but the usage event is undated (`timestamp: null`)
  * - `"out_of_window"`: candidate snapshot(s) exist, but the usage event timestamp falls outside every candidate window
  */
@@ -1013,7 +1013,7 @@ export function joinUsageToSnapshots(
   }
 
   const reason: FleetUnmatchedJoinReason = !hasCandidateSnapshot
-    ? "no_key"
+    ? "no_candidate"
     : usage.timestamp === null
       ? "undated"
       : "out_of_window";
