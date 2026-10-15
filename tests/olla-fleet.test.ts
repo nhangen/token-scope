@@ -940,14 +940,18 @@ describe("Olla fleet telemetry adapter", () => {
   });
 
   it("distinguishes malformed Prometheus labels from other exposition failures", async () => {
-    const body = 'olla_requests_total{status="ok",,} 1\n';
-    const collected = await collect({ "/internal/metrics": body });
-    expect(collected.sources).toContainEqual(expect.objectContaining({
-      path: "/internal/metrics",
-      state: "partial",
-      reason: "malformed",
-      errorClass: "OllaMetricLabelsError",
-    }));
+    for (const body of [
+      'olla_requests_total{status="ok",,} 1\n',
+      'olla_requests_total{a="x",junk,b="y"} 1\n',
+    ]) {
+      const collected = await collect({ "/internal/metrics": body });
+      expect(collected.sources).toContainEqual(expect.objectContaining({
+        path: "/internal/metrics",
+        state: "partial",
+        reason: "malformed",
+        errorClass: "OllaMetricLabelsError",
+      }));
+    }
   });
 
   it("records a privacy error class when a Prometheus label carries a private key", async () => {
