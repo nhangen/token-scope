@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { fleetReportJson } from "@/reports/fleet";
+import { fleetReportJson, renderFleetReport } from "@/reports/fleet";
 import type { ProviderEvent } from "@/providers/types";
 
 function event(overrides: Partial<ProviderEvent>): ProviderEvent {
@@ -94,5 +94,28 @@ describe("fleet report contract rejections", () => {
       state: "unavailable",
       reason: "unreadable",
     });
+  });
+
+  it("counts undated provider events as untimed_excluded and renders the footer line", () => {
+    const undated1 = event({ eventId: "claude:undated1", ts: null });
+    const undated2 = event({ eventId: "claude:undated2", ts: "invalid-date" });
+    const dated = event({ eventId: "claude:dated", ts: "2026-09-22T14:02:00.000Z" });
+
+    const res = report([undated1, undated2, dated]);
+    expect(res.rows).toHaveLength(1);
+    expect(res.rows[0]!.timestamp).toBe("2026-09-22T14:02:00.000Z");
+    expect(res.untimed_excluded).toBe(2);
+
+    const rendered = renderFleetReport(res);
+    expect(rendered).toContain("2 event(s) outside --since only because they carry no timestamp");
+  });
+
+  it("omits the untimed footer line when untimed_excluded is zero", () => {
+    const dated = event({ eventId: "claude:dated", ts: "2026-09-22T14:02:00.000Z" });
+    const res = report([dated]);
+    expect(res.untimed_excluded).toBe(0);
+
+    const rendered = renderFleetReport(res);
+    expect(rendered).not.toContain("outside --since only because they carry no timestamp");
   });
 });

@@ -81,6 +81,7 @@ export interface FleetReportJson {
   window: string;
   rows: FleetReportRow[];
   sources: FleetSourceState[];
+  untimed_excluded: number;
 }
 
 interface FleetCollections {
@@ -379,6 +380,7 @@ export function fleetReportJson(
     window: options.window,
     rows,
     sources: sourceStates(collections, rejected),
+    untimed_excluded: collections.providers.events.filter((e) => tsMs(e) === null).length,
   };
 }
 
@@ -564,6 +566,9 @@ export function renderFleetReport(report: FleetReportJson): string {
   const nonAvailable = report.sources.filter((source) => source.state !== "available");
   if (nonAvailable.length > 0) {
     lines.push(`source states: ${nonAvailable.map((source) => `${source.source}=${source.state}${source.reason ? ` (${source.reason})` : ""}`).join(", ")}`);
+  }
+  if (report.untimed_excluded > 0) {
+    lines.push(`${report.untimed_excluded} event(s) outside --since only because they carry no timestamp`);
   }
   return lines.join("\n");
 }
