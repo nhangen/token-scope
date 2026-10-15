@@ -884,6 +884,69 @@ describe("dedup + report", () => {
     }
   });
 
+  it("maps a gemini unsafe_path source to the unsafe_path reason", () => {
+    const spy = spyOn(geminiCliModule, "geminiCliEvents").mockImplementationOnce(
+      () => ({ events: [], source: { state: "unavailable", reason: "unsafe_path" } }) as never,
+    );
+    try {
+      const c = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: "/nonexistent",
+      });
+      expect(c.unavailable).toContain("gemini-cli");
+      expect(c.unavailableReasons?.["gemini-cli"]).toEqual(["unsafe_path"]);
+      expect(c.collectorErrors?.["gemini-cli"]).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("records unreadable when the ollama-route telemetry read fails", () => {
+    const spy = spyOn(ollamaRouteModule, "ollamaRouteEvents").mockImplementationOnce(
+      () => ({ events: [], path: "/x", exists: true, readError: "EACCES", skippedLines: 0 }),
+    );
+    try {
+      const c = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: "/nonexistent",
+        ollamaRoutingTelemetry: "/nonexistent/routing.jsonl",
+      });
+      expect(c.unavailable).toContain("ollama-route");
+      expect(c.unavailableReasons?.["ollama-route"]).toEqual(["unreadable"]);
+      expect(c.collectorErrors?.["ollama-route"]).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("never carries the thrown message into collectorErrors", () => {
+    const spy = spyOn(claudeModule, "claudeEvents").mockImplementationOnce(() => {
+      throw new TypeError("secret /home/user/.ssh/id_rsa token=abc123");
+    });
+    try {
+      const c = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: "/nonexistent",
+      });
+      const json = JSON.stringify(c.collectorErrors);
+      expect(json).toContain("TypeError");
+      expect(json).not.toContain("secret");
+      expect(json).not.toContain("id_rsa");
+      expect(json).not.toContain("abc123");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("records unreadable for absent/locked opencode DB without collectorErrors", () => {
     const c = collectProviderEvents({
       claudeRoot: "/nonexistent",
@@ -906,13 +969,16 @@ describe("dedup + report", () => {
     expect(sanitizeErrorClass(null)).toBe("UnknownError");
     expect(sanitizeErrorClass(undefined)).toBe("UnknownError");
 
-    const withSpaces = new Error("msg");
-    withSpaces.name = "Invalid Error Name";
-    expect(sanitizeErrorClass(withSpaces)).toBe("Error");
-
-    const withControlChars = new Error("msg");
-    withControlChars.name = "Err\nLine";
-    expect(sanitizeErrorClass(withControlChars)).toBe("Error");
+    const named = (name: string): Error => {
+      class Thrown extends Error {}
+      Object.defineProperty(Thrown, "name", { value: name });
+      return new Thrown("msg");
+    };
+    expect(sanitizeErrorClass(named("CustomFailure"))).toBe("CustomFailure");
+    expect(sanitizeErrorClass(named("Invalid Error Name"))).toBe("Error");
+    expect(sanitizeErrorClass(named("Err\nLine"))).toBe("Error");
+    expect(sanitizeErrorClass(named("E".repeat(65)))).toBe("Error");
+    expect(sanitizeErrorClass(named(["sk", "live", "abcdefghijklmnop1234567890"].join("_")))).toBe("Error");
   });
 });
 

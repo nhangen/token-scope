@@ -74,4 +74,25 @@ describe("fleet report contract rejections", () => {
       reason: "collector_error",
     });
   });
+
+  it("falls back to unreadable when no unavailable reason was recorded", () => {
+    const result = fleetReportJson(
+      {
+        providers: {
+          events: [],
+          unavailable: ["gemini-cli"],
+          partial: {},
+        },
+        orca: { records: [], metadata: {}, hosts: {}, sources: [], runtime: { id: null, version: null } },
+        olla: null,
+        ollaState: { source: "olla", state: "unavailable", reason: "TOKEN_SCOPE_OLLA_URL not configured" },
+      },
+      { window: "1d", sinceMs: 0, collectedAt: "2026-09-22T14:05:01.000Z", promptOriginHost: null },
+    );
+    expect(result.sources).toContainEqual({
+      source: "provider-gemini-cli",
+      state: "unavailable",
+      reason: "unreadable",
+    });
+  });
 });
