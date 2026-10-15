@@ -43,8 +43,9 @@ export function sanitizeErrorClass(err: unknown): string {
   try {
     assertSafeLabelValue(name);
     return name;
-  } catch {
-    return "Error";
+  } catch (error) {
+    if (error instanceof PrivacyError) return "Error";
+    throw error;
   }
 }
 
