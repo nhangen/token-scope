@@ -100,4 +100,20 @@ describe("ollama-route telemetry parsing and event filtering", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("keeps a record whose request_id has a lone surrogate instead of throwing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "token-scope-route-surrogate-"));
+    try {
+      const file = join(dir, "routing.jsonl");
+      writeFileSync(file, `{"schema_version":1,"event":"result","decision":"completed","timestamp":"2026-09-22T14:00:00.000Z","request_id":"a\\ud800b","provider":"olla","model":"local-coder","endpoint_served":"gpu-1","prompt_tokens":50,"output_tokens":25}\n`);
+
+      const read = readOllaRouteTelemetry(file);
+      expect(read.skippedLines).toBe(0);
+      expect(read.events).toHaveLength(1);
+      expect(read.events[0]!.requestId).toBeNull();
+      expect(read.events[0]!.partial).toEqual(["incomplete_route_record"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
