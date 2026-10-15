@@ -135,7 +135,7 @@ export function qualifiedProviderId(namespace: string, value: unknown): string |
     assertSafeLabelValue(qualified);
     return qualified;
   } catch (error) {
-    if (error instanceof PrivacyError) return null;
+    if (error instanceof PrivacyError || error instanceof URIError) return null;
     throw error;
   }
 }

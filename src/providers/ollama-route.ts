@@ -32,10 +32,7 @@ function timestamp(value: unknown): string | null {
   return new Date(Date.parse(value)).toISOString();
 }
 
-function readRecord(value: unknown, provenance: string, line: number): ProviderEvent | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  if (record.event !== "result") return null;
+function readRecord(record: Record<string, unknown>, provenance: string, line: number): ProviderEvent {
   const rawRequestId = typeof record.olla_request_id === "string"
     ? record.olla_request_id
     : typeof record.request_id === "string" ? record.request_id : null;
@@ -108,12 +105,24 @@ export function readOllaRouteTelemetry(path: string): RouteRead {
   let skippedLines = 0;
   raw.split("\n").forEach((line, index) => {
     if (!line.trim()) return;
+    let parsed: unknown;
     try {
-      const event = readRecord(JSON.parse(line), path, index + 1);
-      if (event !== null) events.push(event);
+      parsed = JSON.parse(line);
     } catch {
       skippedLines += 1;
+      return;
     }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      skippedLines += 1;
+      return;
+    }
+    const record = parsed as Record<string, unknown>;
+    if (record.event !== "result" && record.event !== "decision") {
+      skippedLines += 1;
+      return;
+    }
+    if (record.event === "decision") return;
+    events.push(readRecord(record, path, index + 1));
   });
   return { events, path, exists: true, readError: null, skippedLines };
 }
@@ -123,6 +132,6 @@ export function ollamaRouteEvents(path: string, sinceMs?: number): RouteRead {
   if (sinceMs === undefined) return result;
   return {
     ...result,
-    events: result.events.filter((event) => event.ts !== null && Date.parse(event.ts) >= sinceMs),
+    events: result.events.filter((event) => event.ts === null || Date.parse(event.ts) >= sinceMs),
   };
 }
