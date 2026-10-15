@@ -358,6 +358,7 @@ export function hasUserinfo(locator: string): boolean {
 }
 
 export class PrivacyError extends Error {}
+export class OversizeLabelError extends PrivacyError {}
 
 /** An input value outside the contract, as opposed to a malformed record shape. */
 export class FleetValueError extends Error {}
@@ -632,9 +633,6 @@ function hasCredentialValue(decoded: string): boolean {
 }
 
 export function assertSafeLabelValue(value: string): void {
-  if (value.length > 256 || /[\u0000-\u001f\u007f-\u009f]/u.test(value)) {
-    throw new PrivacyError("credential-like label value rejected");
-  }
   const decoded = decodeLocator(value);
   if (
     decoded === null
@@ -646,6 +644,9 @@ export function assertSafeLabelValue(value: string): void {
       .some((match) => isCredentialParam(match[1]!))
   ) {
     throw new PrivacyError("credential-like label value rejected");
+  }
+  if (value.length > 256 || /[\u0000-\u001f\u007f-\u009f]/u.test(value)) {
+    throw new OversizeLabelError("oversize label value rejected");
   }
 }
 

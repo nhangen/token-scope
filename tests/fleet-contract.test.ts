@@ -4,6 +4,7 @@ import { join } from "path";
 import {
   assertSafeLabelValue,
   FLEET_SCHEMA_VERSION,
+  OversizeLabelError,
   PrivacyError,
   classifySnapshotFreshness,
   correlationKeys,
@@ -857,5 +858,23 @@ describe("shared label privacy check", () => {
 
   it("accepts ordinary qualified labels", () => {
     expect(() => assertSafeLabelValue("olla:auth-gw:40114")).not.toThrow();
+  });
+
+  it("rejects labels longer than 256 characters with OversizeLabelError", () => {
+    expect(() => assertSafeLabelValue("a".repeat(257))).toThrow(OversizeLabelError);
+  });
+
+  it("rejects harmless labels with control characters with OversizeLabelError", () => {
+    expect(() => assertSafeLabelValue("harmless\u0000label")).toThrow(OversizeLabelError);
+    expect(() => assertSafeLabelValue("endpoint\u001fhost")).toThrow(OversizeLabelError);
+  });
+
+  it("rejects credential-like labels with control characters with PrivacyError", () => {
+    expect(() => assertSafeLabelValue("term?api\u0000_key=leaked-secret")).toThrow(PrivacyError);
+  });
+
+  it("rejects credential-like labels longer than 256 characters with PrivacyError", () => {
+    const longCredential = `https://example.com/api?token=sk-ant-api03-${"a".repeat(250)}`;
+    expect(() => assertSafeLabelValue(longCredential)).toThrow(PrivacyError);
   });
 });

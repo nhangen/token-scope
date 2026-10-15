@@ -251,6 +251,19 @@ describe("Olla fleet telemetry adapter", () => {
     expect(JSON.stringify(collected)).not.toContain("Bearer secret");
   });
 
+  it("reports oversize_label reason when an endpoint name exceeds 256 characters", async () => {
+    const endpoints = JSON.parse(fixture("endpoints.json"));
+    endpoints.endpoints[0].name = "a".repeat(257);
+    const collected = await collect({
+      "/internal/status/endpoints": JSON.stringify(endpoints),
+    });
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      path: "/internal/status/endpoints",
+      state: "partial",
+      reason: "oversize_label",
+    }));
+  });
+
   it("rejects credential-like Prometheus label values without leaking them into records or IDs", async () => {
     const collected = await collect({
       "/internal/metrics": fixture("metrics-private.prom"),

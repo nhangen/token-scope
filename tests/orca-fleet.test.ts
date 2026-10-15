@@ -413,6 +413,22 @@ describe("Orca fleet placement adapter", () => {
     expect(JSON.stringify(collected)).not.toContain("leaked-secret");
   });
 
+  it("reports oversize_label reason when a terminal handle exceeds 256 characters", async () => {
+    const source = fixture("local.json");
+    source.terminals.result.terminals[0].handle = "a".repeat(257);
+    const { runner } = fixtureRunner(source);
+    const collected = await collectOrcaPlacement({ collectedAt: COLLECTED_AT, runner });
+
+    expect(collected.records).toEqual([]);
+    expect(collected.metadata).toEqual({});
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      command: "orca terminal list --json",
+      state: "partial",
+      reason: "oversize_label",
+      provenance: expect.objectContaining({ completeness: "partial" }),
+    }));
+  });
+
   it("marks terminal rows outside the authoritative host scope partial", async () => {
     const source = fixture("ssh.json");
     source.terminals = fixture("out-of-scope-terminal.json");

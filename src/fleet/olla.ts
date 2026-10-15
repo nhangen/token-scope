@@ -3,6 +3,7 @@ import {
   FLEET_SCHEMA_VERSION,
   hasUserinfo,
   objectValue,
+  OversizeLabelError,
   parseFleetRecord,
   PRIVATE_KEYS,
   PrivacyError,
@@ -64,6 +65,7 @@ export type OllaSourceReason =
   | "unreadable"
   | "malformed"
   | "privacy"
+  | "oversize_label"
   | "dependency"
   | "timeout"
   | null;
@@ -956,7 +958,11 @@ export async function collectOllaTelemetry(
         return { path, body, value, observation };
       } catch (error) {
         observation.state = "partial";
-        observation.reason = error instanceof PrivacyError ? "privacy" : "malformed";
+        observation.reason = error instanceof OversizeLabelError
+          ? "oversize_label"
+          : error instanceof PrivacyError
+            ? "privacy"
+            : "malformed";
         observation.errorClass = errorClassName(error);
         observation.provenance.completeness = "partial";
         return { path, body: null, value: null, observation };
@@ -1018,7 +1024,16 @@ export async function collectOllaTelemetry(
       for (const id of Object.keys(context.metadata)) {
         if (!metadataIds.has(id)) delete context.metadata[id];
       }
-      setObservation(source, "partial", error instanceof PrivacyError ? "privacy" : "malformed", errorClassName(error));
+      setObservation(
+        source,
+        "partial",
+        error instanceof OversizeLabelError
+          ? "oversize_label"
+          : error instanceof PrivacyError
+            ? "privacy"
+            : "malformed",
+        errorClassName(error),
+      );
     }
   }
   const { observedRoutes, rejectedRoutes } = normalizeObservedRoutes(options.observedRoutes);
