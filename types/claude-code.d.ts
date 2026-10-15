@@ -6,7 +6,7 @@
  * so no npm package is required or installed.
  *
  * Keep this file in sync with the engine hook API. The parameter types below are
- * intentionally minimal (event/next as `any`) because the engine does not publish
+ * intentionally minimal (the event and `next` are `any`; the context is typed) because the engine does not publish
  * a stable, documented TS API for hook handlers.
  */
 
@@ -21,7 +21,7 @@ declare module "claude-code" {
   };
 
   export type Register = (
-    on: (event: string, handler: (...args: any[]) => unknown) => void,
+    on: (event: string, handler: (ctx: HookContext, e: any, next: any) => unknown) => void,
     options?: Record<string, unknown>,
   ) => void;
 }

@@ -147,7 +147,7 @@ export const register: Register = (on, options) => {
     timer = $.clock.every(1000, () => {
       $.clock
         .now()
-        .then((now: number) => $.ui.status(label(now, lastAt, hit, effectiveTtl, is5mFallback)))
+        .then(now => $.ui.status(label(now, lastAt, hit, effectiveTtl, is5mFallback)))
         .catch(() => {});
     });
 
