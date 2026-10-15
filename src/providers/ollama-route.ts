@@ -127,6 +127,11 @@ export function readOllaRouteTelemetry(path: string): RouteRead {
   return { events, path, exists: true, readError: null, skippedLines };
 }
 
-export function ollamaRouteEvents(path: string, _sinceMs?: number): RouteRead {
-  return readOllaRouteTelemetry(path);
+export function ollamaRouteEvents(path: string, sinceMs?: number): RouteRead {
+  const result = readOllaRouteTelemetry(path);
+  if (sinceMs === undefined) return result;
+  return {
+    ...result,
+    events: result.events.filter((event) => event.ts === null || Date.parse(event.ts) >= sinceMs),
+  };
 }

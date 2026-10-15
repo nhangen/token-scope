@@ -654,5 +654,21 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     expect(textResult.code).toBe(0);
     expect(textResult.out).toContain("1 event(s) outside --since only because they carry no timestamp");
   });
-});
 
+  it("counts only undated route events as excluded when dated events straddle --since", async () => {
+    const telemetry = join(temp, "route-mixed.jsonl");
+    const record = JSON.parse(readFileSync(join(FX, "providers", "olla-routing.jsonl"), "utf8").split("\n")[0]!);
+    const at = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
+    writeFileSync(telemetry, [
+      { ...record, request_id: "in", olla_request_id: "in-1", timestamp: at(3600_000) },
+      { ...record, request_id: "old", olla_request_id: "old-1", timestamp: at(30 * 86_400_000) },
+      { ...record, request_id: "undated", olla_request_id: "undated-1", timestamp: null },
+    ].map((r) => JSON.stringify(r)).join("\n") + "\n");
+
+    const result = await runFleet({ routes: "olla-routes-empty.json", routeTelemetry: telemetry, since: "1d" });
+    expect(result.code).toBe(0);
+    const report = JSON.parse(result.out);
+    expect(report.untimed_excluded).toBe(1);
+    expect(report.rows.filter((row: any) => row.harness === "ollama-route")).toHaveLength(1);
+  });
+});

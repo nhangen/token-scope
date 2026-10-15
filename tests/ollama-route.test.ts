@@ -116,4 +116,26 @@ describe("ollama-route telemetry parsing and event filtering", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("keeps undated and in-window events but drops dated events before sinceMs", () => {
+    const dir = mkdtempSync(join(tmpdir(), "token-scope-route-since-"));
+    try {
+      const file = join(dir, "routing.jsonl");
+      const base = {
+        schema_version: 1, event: "result", decision: "completed", provider: "olla",
+        model: "local-coder", prompt_tokens: 50, output_tokens: 25,
+      };
+      writeFileSync(file, [
+        { ...base, timestamp: "2026-09-01T00:00:00.000Z", request_id: "old", olla_request_id: "old-1" },
+        { ...base, timestamp: "2026-09-22T14:00:00.000Z", request_id: "new", olla_request_id: "new-1" },
+        { ...base, timestamp: null, request_id: "undated", olla_request_id: "undated-1" },
+      ].map((r) => JSON.stringify(r)).join("\n") + "\n");
+
+      const routeEvents = ollamaRouteEvents(file, Date.parse("2026-09-22T00:00:00.000Z"));
+      expect(routeEvents.events.map((e) => e.requestId)).toEqual(["olla:new-1", "olla:undated-1"]);
+      expect(ollamaRouteEvents(file).events).toHaveLength(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
