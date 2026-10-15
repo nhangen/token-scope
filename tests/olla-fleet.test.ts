@@ -7,6 +7,13 @@ import {
   correlateOllaRoute,
   errorClassName,
   isTimeoutError,
+  OllaMetricLabelsError,
+  OllaMetricSampleError,
+  OllaMetricValueError,
+  OllaMetricFamilyError,
+  OllaMetricsBodyError,
+  MetricCollisionError,
+  OllaInfoError,
   type OllaFetch,
   type OllaSourceReason,
   type OllaTelemetryCollection,
@@ -914,14 +921,55 @@ describe("Olla fleet telemetry adapter", () => {
   });
 
   it("marks non-numeric and negative Prometheus values malformed", async () => {
-    for (const body of ["olla_requests_total NaN\n", "olla_requests_total -1\n", 'olla_model_requests_total{model="a" 1\n']) {
+    for (const body of ["olla_requests_total NaN\n", "olla_requests_total -1\n"]) {
       const collected = await collect({ "/internal/metrics": body });
       expect(collected.sources, body).toContainEqual(expect.objectContaining({
         path: "/internal/metrics",
         state: "partial",
         reason: "malformed",
+        errorClass: "OllaMetricValueError",
       }));
     }
+    const collected = await collect({ "/internal/metrics": 'olla_model_requests_total{model="a" 1\n' });
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      path: "/internal/metrics",
+      state: "partial",
+      reason: "malformed",
+      errorClass: "OllaMetricSampleError",
+    }));
+  });
+
+  it("distinguishes malformed Prometheus labels from other exposition failures", async () => {
+    const body = 'olla_requests_total{status="ok",,} 1\n';
+    const collected = await collect({ "/internal/metrics": body });
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      path: "/internal/metrics",
+      state: "partial",
+      reason: "malformed",
+      errorClass: "OllaMetricLabelsError",
+    }));
+  });
+
+  it("records a privacy error class when a Prometheus label carries a private key", async () => {
+    const collected = await collect({
+      "/internal/metrics": 'olla_requests_total{credentials="hunter2",status="ok"} 1\n',
+    });
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      path: "/internal/metrics",
+      state: "partial",
+      reason: "privacy",
+      errorClass: "PrivacyError",
+    }));
+  });
+
+  it("records a dedicated error class for each malformed-exposition failure family", async () => {
+    expect(errorClassName(new OllaMetricLabelsError("x"))).toBe("OllaMetricLabelsError");
+    expect(errorClassName(new OllaMetricSampleError("x"))).toBe("OllaMetricSampleError");
+    expect(errorClassName(new OllaMetricValueError("x"))).toBe("OllaMetricValueError");
+    expect(errorClassName(new OllaMetricFamilyError("x"))).toBe("OllaMetricFamilyError");
+    expect(errorClassName(new OllaMetricsBodyError("x"))).toBe("OllaMetricsBodyError");
+    expect(errorClassName(new MetricCollisionError("x"))).toBe("MetricCollisionError");
+    expect(errorClassName(new OllaInfoError("x"))).toBe("OllaInfoError");
   });
 
   it("keeps hosts whose name contains a credential word when a port follows", async () => {
@@ -1376,7 +1424,7 @@ describe("Olla fleet telemetry adapter", () => {
           path: "/internal/metrics",
           state: "partial",
           reason: "malformed",
-          errorClass: "Error",
+          errorClass: "OllaMetricFamilyError",
         }));
       }
     });
