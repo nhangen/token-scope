@@ -631,7 +631,7 @@ function parseMetricLabels(raw: string | undefined): Record<string, string> {
   const pattern = /([a-zA-Z_][a-zA-Z0-9_]*)="((?:\\.|[^"\\])*)"(?:,|$)/g;
   let consumed = 0;
   for (const match of raw.matchAll(pattern)) {
-    if (match.index !== consumed) throw new Error("malformed Prometheus labels");
+    if (match.index !== consumed) throw new OllaMetricLabelsError("malformed Prometheus labels");
     const key = match[1]!;
     if (PRIVATE_KEYS.has(key.toLowerCase().replaceAll("-", "_"))) {
       throw new PrivacyError("private metric label rejected");
@@ -641,7 +641,7 @@ function parseMetricLabels(raw: string | undefined): Record<string, string> {
     labels[key] = value;
     consumed = match.index + match[0].length;
   }
-  if (consumed !== raw.length) throw new Error("malformed Prometheus labels");
+  if (consumed !== raw.length) throw new OllaMetricLabelsError("malformed Prometheus labels");
   return labels;
 }
 
@@ -651,26 +651,30 @@ function parsePrometheus(body: string): MetricSample[] {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#")) continue;
     const match = /^(olla_[a-zA-Z0-9_]+)(?:\{(.*)\})?\s+([^\s]+)(?:\s+\d+)?$/.exec(line);
-    if (!match) throw new Error("malformed Prometheus sample");
+    if (!match) throw new OllaMetricSampleError("malformed Prometheus sample");
     const value = Number(match[3]);
-    if (!Number.isFinite(value) || value < 0) throw new Error("invalid Prometheus value");
+    if (!Number.isFinite(value) || value < 0) throw new OllaMetricValueError("invalid Prometheus value");
     samples.push({ name: match[1]!, labels: parseMetricLabels(match[2]), value });
   }
   return samples;
 }
 
 function counterName(metric: string, prefix: string): string {
-  if (!metric.startsWith(prefix)) throw new Error("Prometheus metric family does not match its labels");
+  if (!metric.startsWith(prefix)) throw new OllaMetricFamilyError("Prometheus metric family does not match its labels");
   if (prefix === "olla_" && (metric.startsWith("olla_endpoint_") || metric.startsWith("olla_model_"))) {
-    throw new Error("Prometheus metric family does not match its labels");
+    throw new OllaMetricFamilyError("Prometheus metric family does not match its labels");
   }
   if (prefix === "olla_model_" && metric.startsWith("olla_model_endpoint_")) {
-    throw new Error("Prometheus metric family does not match its labels");
+    throw new OllaMetricFamilyError("Prometheus metric family does not match its labels");
   }
   const name = metric.slice(prefix.length).replace(/_total$/, "");
   return prefix === "olla_endpoint_" && name === "up" ? "health_up" : name;
 }
 
+export class OllaMetricLabelsError extends Error {}
+export class OllaMetricSampleError extends Error {}
+export class OllaMetricValueError extends Error {}
+export class OllaMetricFamilyError extends Error {}
 class MetricCollisionError extends Error {}
 class OllaInfoError extends Error {}
 
