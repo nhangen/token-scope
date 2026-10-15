@@ -18,6 +18,36 @@ export type PartialReason =
   | "partial_records"
   | "corrupt_store";
 
+/** Why an unavailable source could not be read.
+ * - unreadable:      the source path or db was absent, locked, or unreadable by permissions
+ * - unsafe_path:     a symlink or path escaped the root
+ * - collector_error: an unexpected runtime exception was thrown during collection
+ */
+export type UnavailableReason =
+  | "unreadable"
+  | "unsafe_path"
+  | "collector_error";
+
+export interface CollectorError {
+  /** The sanitized JS error class / constructor name (e.g. 'TypeError', 'Error').
+   * Excludes message, paths, and stack traces for privacy. */
+  errorClass: string;
+}
+
+export function sanitizeErrorClass(err: unknown): string {
+  if (!(err instanceof Error)) {
+    return typeof err === "string" ? "String" : "UnknownError";
+  }
+  const name = err.constructor?.name || err.name || "Error";
+  if (!/^[A-Za-z0-9_$]{1,64}$/.test(name)) return "Error";
+  try {
+    assertSafeLabelValue(name);
+    return name;
+  } catch {
+    return "Error";
+  }
+}
+
 /** Provider-neutral usage event (#37).
  *
  * One normalized record per source observation. Token classes a source does

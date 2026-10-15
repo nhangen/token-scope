@@ -7,7 +7,7 @@
  * group report and others omit is aggregated but marked partial: summing
  * known values while hiding the gaps would overstate measurement (#37 audit).
  */
-import type { Collected, ProviderEvent, PartialReason } from "@/providers";
+import type { Collected, ProviderEvent, PartialReason, UnavailableReason, CollectorError } from "@/providers";
 import { tsMs } from "@/providers/types";
 import { assertSafeLabelValue, PrivacyError } from "@/fleet-contract";
 
@@ -155,6 +155,10 @@ export function untimedExcluded(collected: Collected, sinceMs?: number): number 
 export interface ProviderReportJson {
   rows: ProviderRow[];
   unavailable: string[];
+  /** Why each unavailable source could not be read, by harness (#174). */
+  unavailableReasons: Record<string, UnavailableReason[]>;
+  /** Error details for crashed collectors (#174). */
+  collectorErrors: Record<string, CollectorError>;
   /** Files that were skipped or contained partial records, by harness. */
   partial: Record<string, number>;
   /** Why each partially-read source is partial, by harness (#125). */
@@ -181,6 +185,7 @@ export function renderProviderReport(
   partial: Record<string, number> = {},
   unsupported: string[] = [],
   partialReasons: Record<string, PartialReason[]> = {},
+  unavailableReasons: Record<string, UnavailableReason[]> = {},
 ): string {
   const lines: string[] = [];
   lines.push("provider usage by harness / provider / billing route / model");
@@ -239,7 +244,12 @@ export function renderProviderReport(
     lines.push(`partially read (${parts.join(", ")}); unreported volume unknown`);
   }
   if (unavailable.length > 0) {
-    lines.push(`unavailable sources (volume unknown, not zero): ${unavailable.join(", ")}`);
+    const parts = unavailable.map((u) => {
+      const reasons = unavailableReasons[u] ?? [];
+      const suffix = reasons.length > 0 ? ` [${reasons.join(", ")}]` : "";
+      return `${u}${suffix}`;
+    });
+    lines.push(`unavailable sources (volume unknown, not zero): ${parts.join(", ")}`);
   }
   if (unsupported.length > 0) {
     lines.push(`unsupported sources (not ingested): ${unsupported.join(", ")}`);
@@ -254,10 +264,14 @@ export function providerReportJson(
   untimedExcluded = 0,
   unsupported: string[] = [],
   partialReasons: Record<string, PartialReason[]> = {},
+  unavailableReasons: Record<string, UnavailableReason[]> = {},
+  collectorErrors: Record<string, CollectorError> = {},
 ): ProviderReportJson {
   return {
     rows,
     unavailable,
+    unavailableReasons,
+    collectorErrors,
     partial,
     partialReasons,
     untimedExcluded,

@@ -16,13 +16,19 @@ import { codexEvents } from "./codex";
 import { opencodeEvents } from "./opencode";
 import { geminiCliEvents, UNSUPPORTED_GOOGLE_SURFACES } from "./gemini-cli";
 import { ollamaRouteEvents } from "./ollama-route";
-import type { PartialReason, ProviderEvent } from "./types";
-export type { PartialReason, ProviderEvent } from "./types";
+import type { CollectorError, PartialReason, ProviderEvent, UnavailableReason } from "./types";
+import { sanitizeErrorClass } from "./types";
+export type { CollectorError, PartialReason, ProviderEvent, UnavailableReason } from "./types";
+export { sanitizeErrorClass } from "./types";
 
 export interface Collected {
   events: ProviderEvent[];
   /** Sources that could not be read. Their volume is unknown, never zero. */
   unavailable: string[];
+  /** Why each unavailable source could not be read, by harness (#174). */
+  unavailableReasons?: Record<string, UnavailableReason[]>;
+  /** Captured error details when a collector throws unexpectedly (#174). */
+  collectorErrors?: Record<string, CollectorError>;
   /** Sources read partially: affected files by harness. Partial volume must
    * not masquerade as complete (#38 panel). */
   partial: Record<string, number>;
@@ -57,6 +63,16 @@ export function collectProviderEvents(opts?: {
   sinceMs?: number;
 }): Collected {
   const unavailable: string[] = [];
+  const unavailableReasons: Record<string, UnavailableReason[]> = {};
+  const collectorErrors: Record<string, CollectorError> = {};
+  const addUnavailableReason = (h: string, r: UnavailableReason): void => {
+    (unavailableReasons[h] ??= []).push(r);
+  };
+  const recordCollectorCrash = (h: string, err: unknown): void => {
+    unavailable.push(h);
+    addUnavailableReason(h, "collector_error");
+    collectorErrors[h] = { errorClass: sanitizeErrorClass(err) };
+  };
   const partial: Record<string, number> = {};
   const partialReasons: Record<string, PartialReason[]> = {};
   const addReason = (h: string, r: PartialReason): void => {
@@ -83,8 +99,8 @@ export function collectProviderEvents(opts?: {
       partial["claude"] = c.skipped;
       for (const r of c.reasons) addReason("claude", r);
     }
-  } catch {
-    unavailable.push("claude");
+  } catch (err) {
+    recordCollectorCrash("claude", err);
   }
   try {
     // readLedger's contract is "never throw", so an unreadable or fully
@@ -105,8 +121,8 @@ export function collectProviderEvents(opts?: {
         addReason("ollama-claude", "corrupt_store");
       }
     }
-  } catch {
-    unavailable.push("ollama-claude");
+  } catch (err) {
+    recordCollectorCrash("ollama-claude", err);
   }
   try {
     const cx = codexEvents(codexHome, sinceMs);
@@ -115,42 +131,63 @@ export function collectProviderEvents(opts?: {
       partial["codex"] = cx.skipped;
       for (const r of cx.reasons) addReason("codex", r);
     }
-  } catch {
-    unavailable.push("codex");
+  } catch (err) {
+    recordCollectorCrash("codex", err);
   }
   try {
     const oc = opencodeEvents(opencodeDb, sinceMs);
-    if (oc === null) unavailable.push("opencode");
-    else events.push(...oc);
-  } catch {
-    unavailable.push("opencode");
+    if (oc === null) {
+      unavailable.push("opencode");
+      addUnavailableReason("opencode", "unreadable");
+    } else {
+      events.push(...oc);
+    }
+  } catch (err) {
+    recordCollectorCrash("opencode", err);
   }
 
   try {
     const gemini = geminiCliEvents(geminiRoot, sinceMs);
     events.push(...gemini.events);
-    if (gemini.source.state === "unavailable") unavailable.push("gemini-cli");
+    if (gemini.source.state === "unavailable") {
+      unavailable.push("gemini-cli");
+      const r = gemini.source.reason === "unsafe_path" ? "unsafe_path" : "unreadable";
+      addUnavailableReason("gemini-cli", r);
+    }
     if (gemini.source.state === "partial") {
       partial["gemini-cli"] = gemini.affectedFiles;
       for (const r of gemini.reasons) addReason("gemini-cli", r);
     }
-  } catch {
-    unavailable.push("gemini-cli");
+  } catch (err) {
+    recordCollectorCrash("gemini-cli", err);
   }
 
   if (ollamaRoutingTelemetry !== undefined) {
-    const route = ollamaRouteEvents(ollamaRoutingTelemetry, sinceMs);
-    events.push(...route.events);
-    if (route.readError !== null) unavailable.push("ollama-route");
-    if (route.skippedLines > 0) {
-      partial["ollama-route"] = route.skippedLines;
-      addReason("ollama-route", "malformed");
+    try {
+      const route = ollamaRouteEvents(ollamaRoutingTelemetry, sinceMs);
+      events.push(...route.events);
+      if (route.readError !== null) {
+        unavailable.push("ollama-route");
+        addUnavailableReason("ollama-route", "unreadable");
+      }
+      if (route.skippedLines > 0) {
+        partial["ollama-route"] = route.skippedLines;
+        addReason("ollama-route", "malformed");
+      }
+    } catch (err) {
+      recordCollectorCrash("ollama-route", err);
     }
+  }
+
+  for (const h of Object.keys(unavailableReasons)) {
+    unavailableReasons[h]!.sort();
   }
 
   return {
     events: dedupeEvents(events),
     unavailable,
+    unavailableReasons,
+    collectorErrors,
     partial,
     partialReasons,
     unsupported: [...UNSUPPORTED_GOOGLE_SURFACES],

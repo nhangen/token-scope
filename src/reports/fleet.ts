@@ -273,7 +273,8 @@ function sourceStates(collections: FleetCollections, rejected: Map<string, Contr
     });
   }
   for (const source of collections.providers.unavailable) {
-    states.push({ source: `provider-${source}`, state: "unavailable", reason: "unreadable" });
+    const reason = collections.providers.unavailableReasons?.[source]?.[0] ?? "unreadable";
+    states.push({ source: `provider-${source}`, state: "unavailable", reason });
   }
   for (const [source, affected] of Object.entries(collections.providers.partial)) {
     states.push({ source: `provider-${source}`, state: "partial", reason: `${affected} affected file(s)` });
