@@ -32,7 +32,7 @@ describe("ollama-route telemetry parsing and event filtering", () => {
       writeFileSync(file, [
         JSON.stringify({ event: "resullt", request_id: "r1" }),
         JSON.stringify({ event: 123, request_id: "r2" }),
-        JSON.stringify({ request_id: "r3" }), // missing event
+        JSON.stringify({ request_id: "r3" }),
         JSON.stringify({ event: null, request_id: "r4" }),
       ].join("\n") + "\n");
 
@@ -92,7 +92,6 @@ describe("ollama-route telemetry parsing and event filtering", () => {
       expect(read.events[0]!.ts).toBeNull();
       expect(read.skippedLines).toBe(0);
 
-      // ollamaRouteEvents should NOT filter out the undated event when sinceMs is passed
       const routeEvents = ollamaRouteEvents(file, Date.now() - 3600_000);
       expect(routeEvents.events).toHaveLength(1);
       expect(routeEvents.events[0]!.ts).toBeNull();
