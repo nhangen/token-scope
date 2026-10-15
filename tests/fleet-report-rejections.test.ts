@@ -118,4 +118,68 @@ describe("fleet report contract rejections", () => {
     const rendered = renderFleetReport(res);
     expect(rendered).not.toContain("outside --since only because they carry no timestamp");
   });
+
+  it("surfaces olla.rejectedRoutes as an olla-routes partial source state", () => {
+    const result = fleetReportJson(
+      {
+        providers: { events: [event({ eventId: "claude:d1" })], unavailable: [], partial: {} },
+        orca: { records: [], metadata: {}, hosts: {}, sources: [], runtime: { id: null, version: null } },
+        olla: {
+          snapshots: [],
+          metadata: {},
+          sources: [{ path: "/internal/status", state: "available", reason: null, errorClass: null, provenance: { source: "/internal/status", locator: "http://router.local", collected_at: "2026-09-22T14:05:01.000Z", completeness: "complete" } }],
+          endpointChanges: { disappeared: null },
+          observedRoutes: [],
+          rejectedRoutes: [{ reason: "missing_endpoint" }],
+        },
+        ollaState: { source: "olla", state: "available", reason: null },
+      },
+      { window: "1d", sinceMs: 0, collectedAt: "2026-09-22T14:05:01.000Z", promptOriginHost: null },
+    );
+    expect(result.sources).toContainEqual({
+      source: "olla-routes",
+      state: "partial",
+      reason: "rejected route observation(s)",
+    });
+  });
+
+  it("surfaces token-shaped promptOriginHost as prompt-origin partial privacy source while keeping rows ok", () => {
+    const result = fleetReportJson(
+      {
+        providers: { events: [event({ eventId: "claude:d1" })], unavailable: [], partial: {} },
+        orca: { records: [], metadata: {}, hosts: {}, sources: [], runtime: { id: null, version: null } },
+        olla: null,
+        ollaState: { source: "olla", state: "unavailable", reason: "TOKEN_SCOPE_OLLA_URL not configured" },
+      },
+      { window: "1d", sinceMs: 0, collectedAt: "2026-09-22T14:05:01.000Z", promptOriginHost: "host-sk-ant-api03-abcdefghijklmnop" },
+    );
+    expect(result.sources).toContainEqual({
+      source: "prompt-origin",
+      state: "partial",
+      reason: "privacy",
+    });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]!.status).toBe("ok");
+    expect(result.rows[0]!.prompt_origin_host).toBeNull();
+  });
+
+  it("surfaces oversize promptOriginHost as prompt-origin partial oversize_label source", () => {
+    const result = fleetReportJson(
+      {
+        providers: { events: [event({ eventId: "claude:d1" })], unavailable: [], partial: {} },
+        orca: { records: [], metadata: {}, hosts: {}, sources: [], runtime: { id: null, version: null } },
+        olla: null,
+        ollaState: { source: "olla", state: "unavailable", reason: "TOKEN_SCOPE_OLLA_URL not configured" },
+      },
+      { window: "1d", sinceMs: 0, collectedAt: "2026-09-22T14:05:01.000Z", promptOriginHost: "a".repeat(257) },
+    );
+    expect(result.sources).toContainEqual({
+      source: "prompt-origin",
+      state: "partial",
+      reason: "oversize_label",
+    });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]!.status).toBe("ok");
+    expect(result.rows[0]!.prompt_origin_host).toBeNull();
+  });
 });

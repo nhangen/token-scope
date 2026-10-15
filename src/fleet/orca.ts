@@ -2,6 +2,7 @@ import {
   assertSafeLabelValue,
   FLEET_SCHEMA_VERSION,
   objectValue,
+  labelRejectionReason,
   parseFleetRecord,
   PrivacyError,
   type FleetOperationalSnapshot,
@@ -84,6 +85,7 @@ export type OrcaSourceReason =
   | "malformed"
   | "partial_records"
   | "privacy"
+  | "oversize_label"
   | null;
 
 export interface OrcaSourceObservation {
@@ -204,14 +206,17 @@ function orcaAgentIdentity(value: unknown, name: string): { value: string | null
 function orcaCorrelationIdentity(
   value: unknown,
   name: string,
-): { value: string | null; reason: "partial_records" | "privacy" | null } {
+): { value: string | null; reason: "partial_records" | "privacy" | "oversize_label" | null } {
   if (value === null || value === undefined || value === "") return { value: null, reason: null };
   if (typeof value !== "string") return { value: null, reason: "partial_records" };
   let candidate: string;
   try {
     candidate = safeString(value, name);
   } catch (error) {
-    return { value: null, reason: error instanceof PrivacyError ? "privacy" : "partial_records" };
+    return {
+      value: null,
+      reason: labelRejectionReason(error) ?? "partial_records",
+    };
   }
   const separator = candidate.indexOf(":");
   if (separator <= 0 || separator === candidate.length - 1) {
@@ -519,6 +524,7 @@ function hasCompleteScope(value: Record<string, unknown>): boolean {
 const PARTIAL_REASON_RANK: Partial<Record<NonNullable<OrcaSourceReason>, number>> = {
   partial_records: 1,
   malformed: 2,
+  oversize_label: 2,
   privacy: 3,
 };
 
@@ -683,7 +689,10 @@ function addTerminalRecords(
       // the adapter's own record arrives as OrcaInvariantError and must
       // propagate instead of surfacing as partial telemetry.
       if (error instanceof OrcaInvariantError) throw error;
-      markPartial(source, error instanceof PrivacyError ? "privacy" : "partial_records");
+      markPartial(
+        source,
+        labelRejectionReason(error) ?? "partial_records",
+      );
     }
   }
   if (source.state === "partial") {
@@ -737,7 +746,7 @@ export async function collectOrcaPlacement(
     }
   } catch (error) {
     status.observation.state = "partial";
-    status.observation.reason = error instanceof PrivacyError ? "privacy" : "malformed";
+    status.observation.reason = labelRejectionReason(error) ?? "malformed";
     status.observation.provenance.completeness = "partial";
     return empty(runtimeId, version);
   }
@@ -756,7 +765,10 @@ export async function collectOrcaPlacement(
       hosts = parsedHosts.hosts;
       if (parsedHosts.partial) markPartial(hostSource.observation, "partial_records");
     } catch (error) {
-      markPartial(hostSource.observation, error instanceof PrivacyError ? "privacy" : "malformed");
+      markPartial(
+        hostSource.observation,
+        labelRejectionReason(error) ?? "malformed",
+      );
     }
   }
 
@@ -769,7 +781,10 @@ export async function collectOrcaPlacement(
         markPartial(worktreeSource.observation, "partial_records");
       }
     } catch (error) {
-      markPartial(worktreeSource.observation, error instanceof PrivacyError ? "privacy" : "malformed");
+      markPartial(
+        worktreeSource.observation,
+        labelRejectionReason(error) ?? "malformed",
+      );
     }
   }
 
@@ -794,7 +809,10 @@ export async function collectOrcaPlacement(
     // Re-throw the adapter's own invariant failures instead of misreporting
     // a record-construction regression as a source data fault.
     if (error instanceof OrcaInvariantError) throw error;
-    markPartial(terminalSource.observation, error instanceof PrivacyError ? "privacy" : "malformed");
+    markPartial(
+      terminalSource.observation,
+      labelRejectionReason(error) ?? "malformed",
+    );
     return { ...empty(runtimeId, version), hosts };
   }
 }

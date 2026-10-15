@@ -671,4 +671,44 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     expect(report.untimed_excluded).toBe(1);
     expect(report.rows.filter((row: any) => row.harness === "ollama-route")).toHaveLength(1);
   });
+
+  it("surfaces credential-shaped TOKEN_SCOPE_PROMPT_ORIGIN_HOST as a prompt-origin partial source", async () => {
+    const jsonResult = await runFleet({ promptOriginHost: "host-sk-ant-api03-abcdefghijklmnop", json: true });
+    expect(jsonResult.code).toBe(0);
+    const report = JSON.parse(jsonResult.out);
+    expect(report.sources).toContainEqual({
+      source: "prompt-origin",
+      state: "partial",
+      reason: "privacy",
+    });
+    expect(report.rows.every((row: any) => row.prompt_origin_host === null)).toBe(true);
+
+    const textResult = await runFleet({ promptOriginHost: "host-sk-ant-api03-abcdefghijklmnop", json: false });
+    expect(textResult.code).toBe(0);
+    expect(textResult.out).toContain("prompt-origin=partial (privacy)");
+  });
+
+  it("surfaces oversize TOKEN_SCOPE_PROMPT_ORIGIN_HOST as a prompt-origin partial source", async () => {
+    const result = await runFleet({ promptOriginHost: "a".repeat(257), json: true });
+    expect(result.code).toBe(0);
+    const report = JSON.parse(result.out);
+    expect(report.sources).toContainEqual({
+      source: "prompt-origin",
+      state: "partial",
+      reason: "oversize_label",
+    });
+  });
+
+  it("surfaces routes rejected inside Olla collector in sources", async () => {
+    const routesPath = join(temp, "routes-missing-endpoint.json");
+    writeFileSync(routesPath, JSON.stringify([{ requestId: "req-1" }]));
+    const result = await runFleet({ routesPath });
+    expect(result.code).toBe(0);
+    const report = JSON.parse(result.out);
+    expect(report.sources).toContainEqual({
+      source: "olla-routes",
+      state: "partial",
+      reason: "rejected route observation(s)",
+    });
+  });
 });

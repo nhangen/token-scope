@@ -11,6 +11,7 @@ import {
 import {
   FLEET_SCHEMA_VERSION,
   FleetValueError,
+  labelRejectionReason,
   PrivacyError,
   assertSafeLabelValue,
   classifySnapshotFreshness,
@@ -94,6 +95,11 @@ interface FleetCollections {
 }
 
 const ORCA_MAX_AGE_MS = 5 * 60_000;
+const OLLA_ROUTES_PARTIAL: FleetSourceState = {
+  source: "olla-routes",
+  state: "partial",
+  reason: "rejected route observation(s)",
+};
 
 function canonicalTimestamp(value: string | null): string | null {
   if (value === null) return null;
@@ -264,7 +270,11 @@ interface ContractRejections {
   firstReason: string;
 }
 
-function sourceStates(collections: FleetCollections, rejected: Map<string, ContractRejections>): FleetSourceState[] {
+function sourceStates(
+  collections: FleetCollections,
+  rejected: Map<string, ContractRejections>,
+  promptOriginState: FleetSourceState | null = null,
+): FleetSourceState[] {
   const states: FleetSourceState[] = [];
   for (const [source, { count, firstReason }] of rejected) {
     states.push({
@@ -286,7 +296,13 @@ function sourceStates(collections: FleetCollections, rejected: Map<string, Contr
   for (const source of collections.orca.sources) {
     states.push({ source: source.command, state: source.state, reason: source.reason });
   }
-  if (collections.routeFileState) states.push(collections.routeFileState);
+  let ollaRoutesState = collections.routeFileState ?? null;
+  if (collections.olla && collections.olla.rejectedRoutes.length > 0) {
+    if (ollaRoutesState === null || ollaRoutesState.state !== "unavailable") {
+      ollaRoutesState = OLLA_ROUTES_PARTIAL;
+    }
+  }
+  if (ollaRoutesState) states.push(ollaRoutesState);
   if (collections.olla === null) {
     states.push(collections.ollaState);
   } else {
@@ -294,6 +310,7 @@ function sourceStates(collections: FleetCollections, rejected: Map<string, Contr
       states.push({ source: source.provenance.source, state: source.state, reason: source.reason });
     }
   }
+  if (promptOriginState) states.push(promptOriginState);
   return states
     .map((state) => ({
       ...state,
@@ -312,6 +329,22 @@ export function fleetReportJson(
     promptOriginHost: string | null;
   },
 ): FleetReportJson {
+  let effectivePromptOriginHost = options.promptOriginHost;
+  let promptOriginState: FleetSourceState | null = null;
+  if (effectivePromptOriginHost !== null) {
+    try {
+      assertSafeLabelValue(effectivePromptOriginHost);
+    } catch (error) {
+      const reason = labelRejectionReason(error);
+      if (reason !== null) {
+        promptOriginState = { source: "prompt-origin", state: "partial", reason };
+        effectivePromptOriginHost = null;
+      } else {
+        throw error;
+      }
+    }
+  }
+
   const rejected = new Map<string, ContractRejections>();
   const rows = collections.providers.events
     .filter((event) => {
@@ -321,13 +354,15 @@ export function fleetReportJson(
     .flatMap((event): FleetReportRow[] => {
       let usage: FleetUsageEvent;
       try {
-        usage = usageRecord(event, options.collectedAt, options.promptOriginHost);
+        usage = usageRecord(event, options.collectedAt, effectivePromptOriginHost);
       } catch (error) {
         if (!(error instanceof FleetValueError || error instanceof PrivacyError)) throw error;
         const prior = rejected.get(event.harness);
         rejected.set(event.harness, {
           count: (prior?.count ?? 0) + 1,
-          firstReason: prior?.firstReason ?? (error instanceof PrivacyError ? "privacy" : error.message),
+          firstReason: prior?.firstReason
+            ?? labelRejectionReason(error)
+            ?? error.message,
         });
         return [];
       }
@@ -379,7 +414,7 @@ export function fleetReportJson(
     schema_version: FLEET_SCHEMA_VERSION,
     window: options.window,
     rows,
-    sources: sourceStates(collections, rejected),
+    sources: sourceStates(collections, rejected, promptOriginState),
     untimed_excluded: collections.providers.events.filter((e) => tsMs(e) === null).length,
   };
 }
@@ -435,7 +470,7 @@ function readOllaRoutes(path: string | undefined): OllaRoutesRead {
   return {
     routes,
     partial,
-    state: partial ? { source: "olla-routes", state: "partial", reason: "rejected route observation(s)" } : null,
+    state: partial ? OLLA_ROUTES_PARTIAL : null,
   };
 }
 
@@ -455,7 +490,8 @@ function observedRoutesFromProviders(providers: Collected): OllaRouteObservation
 // collectOllaTelemetry turns network and HTTP faults into per-path source states,
 // so what reaches the caller is configuration, privacy, or a bug.
 function ollaFailureReason(error: unknown): string {
-  if (error instanceof PrivacyError) return "privacy";
+  const labelReason = labelRejectionReason(error);
+  if (labelReason !== null) return labelReason;
   if (error instanceof FleetValueError) return `invalid value: ${error.message}`;
   if (error instanceof Error && error.constructor === Error) return `invalid configuration: ${error.message}`;
   return `collection failed: ${error instanceof Error ? error.name : "unknown error"}`;
