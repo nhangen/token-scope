@@ -5,6 +5,7 @@ import {
   assertSafeLabelValue,
   FLEET_SCHEMA_VERSION,
   OversizeLabelError,
+  labelRejectionReason,
   PrivacyError,
   classifySnapshotFreshness,
   correlationKeys,
@@ -862,6 +863,16 @@ describe("shared label privacy check", () => {
 
   it("rejects labels longer than 256 characters with OversizeLabelError", () => {
     expect(() => assertSafeLabelValue("a".repeat(257))).toThrow(OversizeLabelError);
+  });
+
+  it("accepts a label of exactly 256 characters", () => {
+    expect(() => assertSafeLabelValue("a".repeat(256))).not.toThrow();
+  });
+
+  it("maps label rejections to source reasons", () => {
+    expect(labelRejectionReason(new OversizeLabelError("x"))).toBe("oversize_label");
+    expect(labelRejectionReason(new PrivacyError("x"))).toBe("privacy");
+    expect(labelRejectionReason(new Error("x"))).toBeNull();
   });
 
   it("rejects harmless labels with control characters with OversizeLabelError", () => {

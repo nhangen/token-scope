@@ -413,6 +413,32 @@ describe("Orca fleet placement adapter", () => {
     expect(JSON.stringify(collected)).not.toContain("leaked-secret");
   });
 
+  it("reports oversize_label on the host source when a host name exceeds 256 characters", async () => {
+    const source = fixture("local.json");
+    source.hosts.result.hosts[0].name = "a".repeat(257);
+    const { runner } = fixtureRunner(source);
+    const collected = await collectOrcaPlacement({ collectedAt: COLLECTED_AT, runner });
+
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      command: "orca host list --json",
+      state: "partial",
+      reason: "oversize_label",
+    }));
+  });
+
+  it("reports oversize_label on the worktree source when a worktree id exceeds 256 characters", async () => {
+    const source = fixture("local.json");
+    source.worktrees.result.worktrees[0].worktreeId = `repo-token::/${"a".repeat(300)}`;
+    const { runner } = fixtureRunner(source);
+    const collected = await collectOrcaPlacement({ collectedAt: COLLECTED_AT, runner });
+
+    expect(collected.sources).toContainEqual(expect.objectContaining({
+      command: "orca worktree ps --json",
+      state: "partial",
+      reason: "oversize_label",
+    }));
+  });
+
   it("reports oversize_label reason when a terminal handle exceeds 256 characters", async () => {
     const source = fixture("local.json");
     source.terminals.result.terminals[0].handle = "a".repeat(257);
