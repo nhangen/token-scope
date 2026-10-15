@@ -2,7 +2,7 @@ import {
   assertSafeLabelValue,
   FLEET_SCHEMA_VERSION,
   objectValue,
-  OversizeLabelError,
+  labelRejectionReason,
   parseFleetRecord,
   PrivacyError,
   type FleetOperationalSnapshot,
@@ -215,11 +215,7 @@ function orcaCorrelationIdentity(
   } catch (error) {
     return {
       value: null,
-      reason: error instanceof OversizeLabelError
-        ? "oversize_label"
-        : error instanceof PrivacyError
-          ? "privacy"
-          : "partial_records",
+      reason: labelRejectionReason(error) ?? "partial_records",
     };
   }
   const separator = candidate.indexOf(":");
@@ -695,11 +691,7 @@ function addTerminalRecords(
       if (error instanceof OrcaInvariantError) throw error;
       markPartial(
         source,
-        error instanceof OversizeLabelError
-          ? "oversize_label"
-          : error instanceof PrivacyError
-            ? "privacy"
-            : "partial_records",
+        labelRejectionReason(error) ?? "partial_records",
       );
     }
   }
@@ -754,11 +746,7 @@ export async function collectOrcaPlacement(
     }
   } catch (error) {
     status.observation.state = "partial";
-    status.observation.reason = error instanceof OversizeLabelError
-      ? "oversize_label"
-      : error instanceof PrivacyError
-        ? "privacy"
-        : "malformed";
+    status.observation.reason = labelRejectionReason(error) ?? "malformed";
     status.observation.provenance.completeness = "partial";
     return empty(runtimeId, version);
   }
@@ -779,11 +767,7 @@ export async function collectOrcaPlacement(
     } catch (error) {
       markPartial(
         hostSource.observation,
-        error instanceof OversizeLabelError
-          ? "oversize_label"
-          : error instanceof PrivacyError
-            ? "privacy"
-            : "malformed",
+        labelRejectionReason(error) ?? "malformed",
       );
     }
   }
@@ -799,11 +783,7 @@ export async function collectOrcaPlacement(
     } catch (error) {
       markPartial(
         worktreeSource.observation,
-        error instanceof OversizeLabelError
-          ? "oversize_label"
-          : error instanceof PrivacyError
-            ? "privacy"
-            : "malformed",
+        labelRejectionReason(error) ?? "malformed",
       );
     }
   }
@@ -831,11 +811,7 @@ export async function collectOrcaPlacement(
     if (error instanceof OrcaInvariantError) throw error;
     markPartial(
       terminalSource.observation,
-      error instanceof OversizeLabelError
-        ? "oversize_label"
-        : error instanceof PrivacyError
-          ? "privacy"
-          : "malformed",
+      labelRejectionReason(error) ?? "malformed",
     );
     return { ...empty(runtimeId, version), hosts };
   }

@@ -11,7 +11,7 @@ import {
 import {
   FLEET_SCHEMA_VERSION,
   FleetValueError,
-  OversizeLabelError,
+  labelRejectionReason,
   PrivacyError,
   assertSafeLabelValue,
   classifySnapshotFreshness,
@@ -95,6 +95,11 @@ interface FleetCollections {
 }
 
 const ORCA_MAX_AGE_MS = 5 * 60_000;
+const OLLA_ROUTES_PARTIAL: FleetSourceState = {
+  source: "olla-routes",
+  state: "partial",
+  reason: "rejected route observation(s)",
+};
 
 function canonicalTimestamp(value: string | null): string | null {
   if (value === null) return null;
@@ -294,7 +299,7 @@ function sourceStates(
   let ollaRoutesState = collections.routeFileState ?? null;
   if (collections.olla && collections.olla.rejectedRoutes.length > 0) {
     if (ollaRoutesState === null || ollaRoutesState.state !== "unavailable") {
-      ollaRoutesState = { source: "olla-routes", state: "partial", reason: "rejected route observation(s)" };
+      ollaRoutesState = OLLA_ROUTES_PARTIAL;
     }
   }
   if (ollaRoutesState) states.push(ollaRoutesState);
@@ -330,12 +335,9 @@ export function fleetReportJson(
     try {
       assertSafeLabelValue(effectivePromptOriginHost);
     } catch (error) {
-      if (error instanceof OversizeLabelError || error instanceof PrivacyError) {
-        promptOriginState = {
-          source: "prompt-origin",
-          state: "partial",
-          reason: error instanceof OversizeLabelError ? "oversize_label" : "privacy",
-        };
+      const reason = labelRejectionReason(error);
+      if (reason !== null) {
+        promptOriginState = { source: "prompt-origin", state: "partial", reason };
         effectivePromptOriginHost = null;
       } else {
         throw error;
@@ -359,11 +361,8 @@ export function fleetReportJson(
         rejected.set(event.harness, {
           count: (prior?.count ?? 0) + 1,
           firstReason: prior?.firstReason
-            ?? (error instanceof OversizeLabelError
-              ? "oversize_label"
-              : error instanceof PrivacyError
-                ? "privacy"
-                : error.message),
+            ?? labelRejectionReason(error)
+            ?? error.message,
         });
         return [];
       }
@@ -471,7 +470,7 @@ function readOllaRoutes(path: string | undefined): OllaRoutesRead {
   return {
     routes,
     partial,
-    state: partial ? { source: "olla-routes", state: "partial", reason: "rejected route observation(s)" } : null,
+    state: partial ? OLLA_ROUTES_PARTIAL : null,
   };
 }
 
@@ -491,8 +490,8 @@ function observedRoutesFromProviders(providers: Collected): OllaRouteObservation
 // collectOllaTelemetry turns network and HTTP faults into per-path source states,
 // so what reaches the caller is configuration, privacy, or a bug.
 function ollaFailureReason(error: unknown): string {
-  if (error instanceof OversizeLabelError) return "oversize_label";
-  if (error instanceof PrivacyError) return "privacy";
+  const labelReason = labelRejectionReason(error);
+  if (labelReason !== null) return labelReason;
   if (error instanceof FleetValueError) return `invalid value: ${error.message}`;
   if (error instanceof Error && error.constructor === Error) return `invalid configuration: ${error.message}`;
   return `collection failed: ${error instanceof Error ? error.name : "unknown error"}`;

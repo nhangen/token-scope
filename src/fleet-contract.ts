@@ -360,6 +360,12 @@ export function hasUserinfo(locator: string): boolean {
 export class PrivacyError extends Error {}
 export class OversizeLabelError extends PrivacyError {}
 
+export function labelRejectionReason(error: unknown): "oversize_label" | "privacy" | null {
+  if (error instanceof OversizeLabelError) return "oversize_label";
+  if (error instanceof PrivacyError) return "privacy";
+  return null;
+}
+
 /** An input value outside the contract, as opposed to a malformed record shape. */
 export class FleetValueError extends Error {}
 
@@ -645,6 +651,7 @@ export function assertSafeLabelValue(value: string): void {
   ) {
     throw new PrivacyError("credential-like label value rejected");
   }
+  // Credential scan first: a credential longer than 256 chars must report "privacy", not oversize.
   if (value.length > 256 || /[\u0000-\u001f\u007f-\u009f]/u.test(value)) {
     throw new OversizeLabelError("oversize label value rejected");
   }

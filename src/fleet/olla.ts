@@ -3,7 +3,7 @@ import {
   FLEET_SCHEMA_VERSION,
   hasUserinfo,
   objectValue,
-  OversizeLabelError,
+  labelRejectionReason,
   parseFleetRecord,
   PRIVATE_KEYS,
   PrivacyError,
@@ -958,11 +958,7 @@ export async function collectOllaTelemetry(
         return { path, body, value, observation };
       } catch (error) {
         observation.state = "partial";
-        observation.reason = error instanceof OversizeLabelError
-          ? "oversize_label"
-          : error instanceof PrivacyError
-            ? "privacy"
-            : "malformed";
+        observation.reason = labelRejectionReason(error) ?? "malformed";
         observation.errorClass = errorClassName(error);
         observation.provenance.completeness = "partial";
         return { path, body: null, value: null, observation };
@@ -1027,11 +1023,7 @@ export async function collectOllaTelemetry(
       setObservation(
         source,
         "partial",
-        error instanceof OversizeLabelError
-          ? "oversize_label"
-          : error instanceof PrivacyError
-            ? "privacy"
-            : "malformed",
+        labelRejectionReason(error) ?? "malformed",
         errorClassName(error),
       );
     }
