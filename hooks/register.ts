@@ -164,7 +164,7 @@ export const register: Register = (on, options) => {
   });
 
   on("turn.step", async function* ($, e, next) {
-    const r: any = yield* (next as unknown as (e: unknown) => AsyncGenerator<unknown, any, unknown>)(e);
+    const r: any = yield* next(e);
     if (!isEnabled || e.agentId !== undefined || !r?.usage) return r;
     const u = r.usage;
     const now = await $.clock.now();
