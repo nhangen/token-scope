@@ -147,7 +147,7 @@ export const register: Register = (on, options) => {
     timer = $.clock.every(1000, () => {
       $.clock
         .now()
-        .then(now => $.ui.status(label(now, lastAt, hit, effectiveTtl, is5mFallback)))
+        .then((now: number) => $.ui.status(label(now, lastAt, hit, effectiveTtl, is5mFallback)))
         .catch(() => {});
     });
 
@@ -164,7 +164,7 @@ export const register: Register = (on, options) => {
   });
 
   on("turn.step", async function* ($, e, next) {
-    const r = yield* next(e);
+    const r: any = yield* (next as unknown as (e: unknown) => AsyncGenerator<unknown, any, unknown>)(e);
     if (!isEnabled || e.agentId !== undefined || !r?.usage) return r;
     const u = r.usage;
     const now = await $.clock.now();
