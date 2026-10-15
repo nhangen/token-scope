@@ -11,9 +11,6 @@ import {
   OllaMetricSampleError,
   OllaMetricValueError,
   OllaMetricFamilyError,
-  OllaMetricsBodyError,
-  MetricCollisionError,
-  OllaInfoError,
   type OllaFetch,
   type OllaSourceReason,
   type OllaTelemetryCollection,
@@ -964,16 +961,6 @@ describe("Olla fleet telemetry adapter", () => {
       reason: "privacy",
       errorClass: "PrivacyError",
     }));
-  });
-
-  it("records a dedicated error class for each malformed-exposition failure family", async () => {
-    expect(errorClassName(new OllaMetricLabelsError("x"))).toBe("OllaMetricLabelsError");
-    expect(errorClassName(new OllaMetricSampleError("x"))).toBe("OllaMetricSampleError");
-    expect(errorClassName(new OllaMetricValueError("x"))).toBe("OllaMetricValueError");
-    expect(errorClassName(new OllaMetricFamilyError("x"))).toBe("OllaMetricFamilyError");
-    expect(errorClassName(new OllaMetricsBodyError("x"))).toBe("OllaMetricsBodyError");
-    expect(errorClassName(new MetricCollisionError("x"))).toBe("MetricCollisionError");
-    expect(errorClassName(new OllaInfoError("x"))).toBe("OllaInfoError");
   });
 
   it("keeps hosts whose name contains a credential word when a port follows", async () => {

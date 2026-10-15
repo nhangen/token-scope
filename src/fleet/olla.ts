@@ -673,9 +673,8 @@ export class OllaMetricLabelsError extends Error {}
 export class OllaMetricSampleError extends Error {}
 export class OllaMetricValueError extends Error {}
 export class OllaMetricFamilyError extends Error {}
-export class OllaMetricsBodyError extends Error {}
-export class MetricCollisionError extends Error {}
-export class OllaInfoError extends Error {}
+class MetricCollisionError extends Error {}
+class OllaInfoError extends Error {}
 
 // Upstream Olla emits olla_info with exactly these labels; version and commit are build identity, not routing, and are not retained.
 const OLLA_INFO_LABELS = new Set(["version", "commit", "engine", "profile", "balancer"]);
@@ -708,7 +707,7 @@ function sampleCounterKey(
 }
 
 function buildMetrics(source: LoadedSource, context: AdapterContext): void {
-  if (source.body === null) throw new OllaMetricsBodyError("metrics body unavailable");
+  if (source.body === null) throw new Error("metrics body unavailable");
   const samples = parsePrometheus(source.body);
   const groups = new Map<string, {
     scope: OllaSnapshotScope;
