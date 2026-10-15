@@ -37,7 +37,7 @@ describe("--providers production CLI path", () => {
     expect(code).toBe(0);
     expect(out).toContain("provider usage by harness / provider / billing route / model");
     expect(out).toMatch(/^claude\s+anthropic\s+subscription\s+claude-x\s+4\s/m);
-    expect(out).toContain("unavailable sources (volume unknown, not zero): opencode");
+    expect(out).toContain("unavailable sources (volume unknown, not zero): opencode [unreadable]");
     expect(out).toContain("unsupported sources (not ingested): google-ai-api, vertex-ai");
     expect(out).toContain("gemini-cli");
     expect(out).toContain("measurement incomplete:");
@@ -57,6 +57,8 @@ describe("--providers production CLI path", () => {
     expect(parsed.rows.length).toBeGreaterThan(0);
     expect(typeof parsed.untimedExcluded).toBe("number");
     expect(Array.isArray(parsed.unavailable)).toBe(true);
+    expect(parsed.unavailableReasons).toEqual({ opencode: ["unreadable"] });
+    expect(parsed.collectorErrors).toEqual({});
     expect(parsed.unsupported).toEqual(["google-ai-api", "vertex-ai"]);
     // Every row carries provenance and partial-class accounting (#37 AC).
     for (const row of parsed.rows) {

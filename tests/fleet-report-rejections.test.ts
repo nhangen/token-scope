@@ -52,4 +52,47 @@ describe("fleet report contract rejections", () => {
   it("propagates a record-shape fault in the adapter's own output", () => {
     expect(() => report([event({ runId: "unqualified" })])).toThrow("run_id must be source-qualified");
   });
+
+  it("carries provider unavailable reason into fleet source states", () => {
+    const result = fleetReportJson(
+      {
+        providers: {
+          events: [],
+          unavailable: ["gemini-cli"],
+          unavailableReasons: { "gemini-cli": ["collector_error"] },
+          partial: {},
+        },
+        orca: { records: [], metadata: {}, hosts: {}, sources: [], runtime: { id: null, version: null } },
+        olla: null,
+        ollaState: { source: "olla", state: "unavailable", reason: "TOKEN_SCOPE_OLLA_URL not configured" },
+      },
+      { window: "1d", sinceMs: 0, collectedAt: "2026-09-22T14:05:01.000Z", promptOriginHost: null },
+    );
+    expect(result.sources).toContainEqual({
+      source: "provider-gemini-cli",
+      state: "unavailable",
+      reason: "collector_error",
+    });
+  });
+
+  it("falls back to unreadable when no unavailable reason was recorded", () => {
+    const result = fleetReportJson(
+      {
+        providers: {
+          events: [],
+          unavailable: ["gemini-cli"],
+          partial: {},
+        },
+        orca: { records: [], metadata: {}, hosts: {}, sources: [], runtime: { id: null, version: null } },
+        olla: null,
+        ollaState: { source: "olla", state: "unavailable", reason: "TOKEN_SCOPE_OLLA_URL not configured" },
+      },
+      { window: "1d", sinceMs: 0, collectedAt: "2026-09-22T14:05:01.000Z", promptOriginHost: null },
+    );
+    expect(result.sources).toContainEqual({
+      source: "provider-gemini-cli",
+      state: "unavailable",
+      reason: "unreadable",
+    });
+  });
 });

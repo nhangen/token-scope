@@ -2,13 +2,18 @@ import { describe, expect, it, spyOn } from "bun:test";
 import { readFileSync } from "fs";
 import * as fs from "fs";
 import { join } from "path";
+import * as claudeModule from "@/providers/claude";
 import { claudeEvents, claudeEventsFromTranscript } from "@/providers/claude";
+import * as ollamaModule from "@/providers/ollama";
 import { ollamaEvents, ollamaEventsFromRuns } from "@/providers/ollama";
+import * as opencodeModule from "@/providers/opencode";
 import { opencodeEventsFromDb } from "@/providers/opencode";
 import type { LedgerRun } from "@/ledger";
+import * as codexModule from "@/providers/codex";
 import { codexEventsFromRollout } from "@/providers/codex";
 import * as geminiCliModule from "@/providers/gemini-cli";
-import { collectProviderEvents, dedupeEvents } from "@/providers";
+import * as ollamaRouteModule from "@/providers/ollama-route";
+import { collectProviderEvents, dedupeEvents, sanitizeErrorClass } from "@/providers";
 import { stableId } from "@/providers/types";
 import { providerRows, renderProviderReport, providerReportJson, untimedExcluded } from "@/reports/providers";
 import type { ProviderRow } from "@/reports/providers";
@@ -771,9 +776,209 @@ describe("dedup + report", () => {
         geminiRoot: "/nonexistent",
       });
       expect(c.unavailable).toContain("gemini-cli");
+      expect(c.unavailableReasons?.["gemini-cli"]).toEqual(["collector_error"]);
+      expect(c.collectorErrors?.["gemini-cli"]?.errorClass).toBe("Error");
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("isolates Claude collection failures when claudeEvents throws", () => {
+    const spy = spyOn(claudeModule, "claudeEvents").mockImplementationOnce(() => {
+      throw new TypeError("injected claude type error");
+    });
+    try {
+      const c = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: "/nonexistent",
+      });
+      expect(c.unavailable).toContain("claude");
+      expect(c.unavailableReasons?.["claude"]).toEqual(["collector_error"]);
+      expect(c.collectorErrors?.["claude"]?.errorClass).toBe("TypeError");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("isolates Codex collection failures when codexEvents throws", () => {
+    const spy = spyOn(codexModule, "codexEvents").mockImplementationOnce(() => {
+      throw new RangeError("injected codex range error");
+    });
+    try {
+      const c = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: "/nonexistent",
+      });
+      expect(c.unavailable).toContain("codex");
+      expect(c.unavailableReasons?.["codex"]).toEqual(["collector_error"]);
+      expect(c.collectorErrors?.["codex"]?.errorClass).toBe("RangeError");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("isolates Ollama collection failures when ollamaEvents throws", () => {
+    const spy = spyOn(ollamaModule, "ollamaEvents").mockImplementationOnce(() => {
+      throw new Error("injected ollama crash");
+    });
+    try {
+      const c = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: "/nonexistent",
+      });
+      expect(c.unavailable).toContain("ollama-claude");
+      expect(c.unavailableReasons?.["ollama-claude"]).toEqual(["collector_error"]);
+      expect(c.collectorErrors?.["ollama-claude"]?.errorClass).toBe("Error");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("isolates OpenCode collection failures when opencodeEvents throws", () => {
+    const spy = spyOn(opencodeModule, "opencodeEvents").mockImplementationOnce(() => {
+      throw new TypeError("injected opencode crash");
+    });
+    try {
+      const c = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: "/nonexistent",
+      });
+      expect(c.unavailable).toContain("opencode");
+      expect(c.unavailableReasons?.["opencode"]).toEqual(["collector_error"]);
+      expect(c.collectorErrors?.["opencode"]?.errorClass).toBe("TypeError");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("isolates Ollama-route collection failures when ollamaRouteEvents throws", () => {
+    const spy = spyOn(ollamaRouteModule, "ollamaRouteEvents").mockImplementationOnce(() => {
+      throw new Error("injected route crash");
+    });
+    try {
+      const c = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: "/nonexistent",
+        ollamaRoutingTelemetry: "/nonexistent/routing.jsonl",
+      });
+      expect(c.unavailable).toContain("ollama-route");
+      expect(c.unavailableReasons?.["ollama-route"]).toEqual(["collector_error"]);
+      expect(c.collectorErrors?.["ollama-route"]?.errorClass).toBe("Error");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("maps a gemini unsafe_path source to the unsafe_path reason", () => {
+    const spy = spyOn(geminiCliModule, "geminiCliEvents").mockImplementationOnce(
+      () => ({ events: [], source: { state: "unavailable", reason: "unsafe_path" } }) as never,
+    );
+    try {
+      const c = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: "/nonexistent",
+      });
+      expect(c.unavailable).toContain("gemini-cli");
+      expect(c.unavailableReasons?.["gemini-cli"]).toEqual(["unsafe_path"]);
+      expect(c.collectorErrors?.["gemini-cli"]).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("records unreadable when the ollama-route telemetry read fails", () => {
+    const spy = spyOn(ollamaRouteModule, "ollamaRouteEvents").mockImplementationOnce(
+      () => ({ events: [], path: "/x", exists: true, readError: "EACCES", skippedLines: 0 }),
+    );
+    try {
+      const c = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: "/nonexistent",
+        ollamaRoutingTelemetry: "/nonexistent/routing.jsonl",
+      });
+      expect(c.unavailable).toContain("ollama-route");
+      expect(c.unavailableReasons?.["ollama-route"]).toEqual(["unreadable"]);
+      expect(c.collectorErrors?.["ollama-route"]).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("never carries the thrown message into collectorErrors", () => {
+    const spy = spyOn(claudeModule, "claudeEvents").mockImplementationOnce(() => {
+      throw new TypeError("secret /home/user/.ssh/id_rsa token=abc123");
+    });
+    try {
+      const c = collectProviderEvents({
+        claudeRoot: "/nonexistent",
+        ledgerPath: "/nonexistent.jsonl",
+        codexHome: "/nonexistent",
+        opencodeDb: "/nonexistent.db",
+        geminiRoot: "/nonexistent",
+      });
+      const json = JSON.stringify(c.collectorErrors);
+      expect(json).toContain("TypeError");
+      expect(json).not.toContain("secret");
+      expect(json).not.toContain("id_rsa");
+      expect(json).not.toContain("abc123");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("records unreadable for absent/locked opencode DB without collectorErrors", () => {
+    const c = collectProviderEvents({
+      claudeRoot: "/nonexistent",
+      ledgerPath: "/nonexistent.jsonl",
+      codexHome: "/nonexistent",
+      opencodeDb: "/nonexistent.db",
+      geminiRoot: "/nonexistent",
+    });
+    expect(c.unavailable).toEqual(["opencode"]);
+    expect(c.unavailableReasons?.["opencode"]).toEqual(["unreadable"]);
+    expect(c.collectorErrors?.["opencode"]).toBeUndefined();
+  });
+
+  it("sanitizes error class names and strips unsafe characters / privacy labels", () => {
+    expect(sanitizeErrorClass(new TypeError("secret /path/to/key"))).toBe("TypeError");
+    expect(sanitizeErrorClass(new RangeError())).toBe("RangeError");
+    expect(sanitizeErrorClass(new Error("boom"))).toBe("Error");
+    expect(sanitizeErrorClass("string throw")).toBe("String");
+    expect(sanitizeErrorClass(42)).toBe("UnknownError");
+    expect(sanitizeErrorClass(null)).toBe("UnknownError");
+    expect(sanitizeErrorClass(undefined)).toBe("UnknownError");
+
+    const named = (name: string): Error => {
+      class Thrown extends Error {}
+      Object.defineProperty(Thrown, "name", { value: name });
+      return new Thrown("msg");
+    };
+    expect(sanitizeErrorClass(named("CustomFailure"))).toBe("CustomFailure");
+    expect(sanitizeErrorClass(named("Invalid Error Name"))).toBe("Error");
+    expect(sanitizeErrorClass(named("Err\nLine"))).toBe("Error");
+    expect(sanitizeErrorClass(named("E".repeat(65)))).toBe("Error");
+    expect(sanitizeErrorClass(named(["sk", "live", "abcdefghijklmnop1234567890"].join("_")))).toBe("Error");
   });
 });
 
@@ -879,6 +1084,39 @@ describe("partial reason rendering (#125)", () => {
       { "gemini-cli": ["unreadable", "malformed"] },
     );
     expect(json.partialReasons).toEqual({ "gemini-cli": ["unreadable", "malformed"] });
+  });
+});
+
+describe("unavailable reason rendering and crash reporting (#174)", () => {
+  it("reports unavailable reason codes and collector errors in text and JSON report", () => {
+    const rows = providerRows({ events: [], unavailable: [], partial: {} });
+    const text = renderProviderReport(
+      rows,
+      ["opencode", "gemini-cli"],
+      {},
+      [],
+      {},
+      { opencode: ["unreadable"], "gemini-cli": ["collector_error"] },
+    );
+    expect(text).toContain("unavailable sources (volume unknown, not zero): opencode [unreadable], gemini-cli [collector_error]");
+
+    const json = providerReportJson(
+      rows,
+      ["opencode", "gemini-cli"],
+      {},
+      0,
+      [],
+      {},
+      { opencode: ["unreadable"], "gemini-cli": ["collector_error"] },
+      { "gemini-cli": { errorClass: "TypeError" } },
+    );
+    expect(json.unavailableReasons).toEqual({
+      opencode: ["unreadable"],
+      "gemini-cli": ["collector_error"],
+    });
+    expect(json.collectorErrors).toEqual({
+      "gemini-cli": { errorClass: "TypeError" },
+    });
   });
 });
 
