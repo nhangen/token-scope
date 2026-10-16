@@ -1,3 +1,4 @@
+import { seedOpenCodeWindow } from "./helpers/opencode-window";
 import { describe, expect, it, spyOn } from "bun:test";
 import { readFileSync } from "fs";
 import * as fs from "fs";
@@ -161,6 +162,63 @@ describe("opencode cost/error/id mapping (#37 post-merge audit)", () => {
     expect(ev.length).toBe(2);
     expect(dedupeEvents(ev).length).toBe(2); // no silent collapse onto the shared JSON id
     db.close();
+  });
+
+  it("retains undated OpenCode usage while enforcing inclusive --since boundaries (#183)", () => {
+    const Database = require("bun:sqlite").Database;
+    const db = new Database(":memory:");
+    const cutoff = Date.parse("2026-09-22T00:00:00.000Z");
+    try {
+      seedOpenCodeWindow(db, cutoff);
+      const all = opencodeEventsFromDb(db);
+      expect(all).toHaveLength(5);
+      const windowed = opencodeEventsFromDb(db, cutoff);
+      expect(windowed.map((event) => event.eventId)).toEqual(
+        ["after", "at", "missing-time", "null-time"].map((id) => stableId("opencode", id)),
+      );
+      expect(windowed.filter((event) => event.ts === null)).toHaveLength(2);
+      for (const event of windowed) {
+        expect(event).toEqual(all.find((candidate) => candidate.eventId === event.eventId)!);
+      }
+      expect(windowed.find((event) => event.requestId === "opencode:at")!.ts)
+        .toBe(new Date(cutoff).toISOString());
+      expect(all.find((event) => event.requestId === "opencode:before")!.ts)
+        .toBe(new Date(cutoff - 1).toISOString());
+    } finally {
+      db.close();
+    }
+  });
+
+  it("reports two undated OpenCode exclusions through the real collector (#183)", () => {
+    const Database = require("bun:sqlite").Database;
+    const root = fs.mkdtempSync(join(require("os").tmpdir(), "opencode-window-"));
+    const path = join(root, "opencode.db");
+    const cutoff = Date.parse("2026-09-22T00:00:00.000Z");
+    try {
+      const db = new Database(path);
+      try {
+        seedOpenCodeWindow(db, cutoff);
+      } finally {
+        db.close();
+      }
+      const paths = {
+        claudeRoot: join(root, "claude"), codexHome: join(root, "codex"),
+        ledgerPath: join(root, "ledger.jsonl"), geminiRoot: join(root, "gemini"),
+        opencodeDb: path, ollamaRoutingTelemetry: join(root, "routing.jsonl"),
+      };
+      const collected = collectProviderEvents({ ...paths, sinceMs: cutoff });
+      expect(untimedExcluded(collected, cutoff)).toBe(2);
+      expect(providerRows(collected, cutoff)).toMatchObject([
+        { harness: "opencode", events: 2, input: 30, output: 3 },
+      ]);
+      const unbounded = collectProviderEvents(paths);
+      expect(untimedExcluded(unbounded)).toBe(0);
+      expect(providerRows(unbounded)).toMatchObject([
+        { harness: "opencode", events: 5, input: 7030, output: 703 },
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("prefilters by created time at the storage layer", () => {
