@@ -17,7 +17,7 @@ export function opencodeEventsFromDb(
       `SELECT m.id AS row_id, m.data, m.session_id FROM message m
        WHERE json_extract(m.data, '$.role') = 'assistant'
          AND json_extract(m.data, '$.tokens') IS NOT NULL
-         ${sinceMs !== undefined ? "AND json_extract(m.data, '$.time.created') >= $since" : ""}
+         ${sinceMs !== undefined ? "AND (json_extract(m.data, '$.time.created') IS NULL OR json_extract(m.data, '$.time.created') >= $since)" : ""}
        ORDER BY m.id`,
     )
     .all(...(sinceMs !== undefined ? [{ $since: sinceMs }] : [])) as Array<{
@@ -86,7 +86,8 @@ export function opencodeEvents(
     return null; // db absent or locked: caller reports unknown, never zero
   }
   try {
-    // The window filters at the storage layer — no full-store parse (#37 P2).
+    // Filter old dated rows at the storage layer, but retain undated usage
+    // so reports can count it as excluded from the requested window (#183).
     return opencodeEventsFromDb(db, sinceMs);
   } finally {
     db.close();

@@ -1,3 +1,4 @@
+import { seedOpenCodeWindow } from "./helpers/opencode-window";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
@@ -637,6 +638,29 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     expect(local.prompt_eval_duration).toEqual({ value: 987.654321, unit: "ms", scope: "request" });
     expect(local.decode_tps.scope).toBe("request");
     expect(local.decode_tps.value).toBeCloseTo(40 / 0.000654321, 3);
+  });
+
+  it("counts undated OpenCode exclusions without including their tokens (#183)", async () => {
+    const path = join(temp, "opencode-window.db");
+    const db = new Database(path);
+    try {
+      seedOpenCodeWindow(db, Date.parse("2026-09-22T00:00:00.000Z"));
+    } finally {
+      db.close();
+    }
+    const options = { opencodeDb: path, since: "1d", collectedAt: "2026-09-23T00:00:00.000Z" };
+    const result = await runFleet(options);
+    expect(result.code).toBe(0);
+    const report = JSON.parse(result.out);
+    expect(report.untimed_excluded).toBe(2);
+    const rows = report.rows.filter((row: any) => row.harness === "opencode");
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row: any) => row.request_id).sort()).toEqual(["opencode:after", "opencode:at"]);
+    expect(rows.reduce((sum: number, row: any) => sum + row.input_tokens, 0)).toBe(30);
+    expect(rows.reduce((sum: number, row: any) => sum + row.output_tokens, 0)).toBe(3);
+    const text = await runFleet({ ...options, json: false });
+    expect(text.code).toBe(0);
+    expect(text.out).toContain("2 event(s) outside --since only because they carry no timestamp");
   });
 
   it("counts undated route telemetry events in untimed_excluded and prints footer", async () => {
