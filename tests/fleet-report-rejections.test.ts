@@ -166,6 +166,32 @@ describe("fleet report contract rejections", () => {
     ]);
   });
 
+  it("keeps the unavailable olla-routes state alongside rejected route observations (#187)", () => {
+    const result = fleetReportJson(
+      {
+        providers: { events: [event({ eventId: "claude:d1" })], unavailable: [], partial: {} },
+        orca: { records: [], metadata: {}, hosts: {}, sources: [], runtime: { id: null, version: null } },
+        olla: {
+          snapshots: [],
+          metadata: {},
+          sources: [{ path: "/internal/status", state: "available", reason: null, errorClass: null, provenance: { source: "/internal/status", locator: "http://router.local", collected_at: "2026-09-22T14:05:01.000Z", completeness: "complete" } }],
+          endpointChanges: { disappeared: null },
+          observedRoutes: [],
+          rejectedRoutes: [{ reason: "missing_endpoint" }],
+        },
+        ollaState: { source: "olla", state: "available", reason: null },
+        routeFilePartial: true,
+        routeFileState: { source: "olla-routes", state: "unavailable", reason: "TOKEN_SCOPE_OLLA_ROUTES is unreadable or not JSON" },
+      },
+      { window: "1d", sinceMs: 0, collectedAt: "2026-09-22T14:05:01.000Z", promptOriginHost: null },
+    );
+    const routes = result.sources.filter((source) => source.source === "olla-routes");
+    expect(routes).toEqual([
+      { source: "olla-routes", state: "unavailable", reason: "TOKEN_SCOPE_OLLA_ROUTES is unreadable or not JSON" },
+      { source: "olla-routes", state: "partial", reason: "rejected route observation(s)" },
+    ]);
+  });
+
   it("surfaces token-shaped promptOriginHost as prompt-origin partial privacy source while keeping rows ok", () => {
     const result = fleetReportJson(
       {

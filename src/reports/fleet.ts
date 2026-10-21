@@ -298,7 +298,10 @@ function sourceStates(
   }
   let ollaRoutesState = collections.routeFileState ?? null;
   if (collections.olla && collections.olla.rejectedRoutes.length > 0) {
-    if (ollaRoutesState === null || ollaRoutesState.state !== "unavailable") {
+    if (ollaRoutesState !== null && ollaRoutesState.state === "unavailable") {
+      states.push(ollaRoutesState);
+      ollaRoutesState = OLLA_ROUTES_PARTIAL;
+    } else {
       ollaRoutesState ??= OLLA_ROUTES_PARTIAL;
     }
   }
