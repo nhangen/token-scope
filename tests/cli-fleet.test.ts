@@ -600,8 +600,7 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     for (const json of [true, false]) {
       const result = await runFleet({ routesPath, json });
       expect(result.code).toBe(0);
-      expect(result.out).toContain("oversize_label");
-      expect(result.out).toContain("privacy");
+      if (!json) expect(result.out).toContain("rejected route observation(s): oversize_label, privacy");
       expect(result.out).not.toContain(secret);
       expect(result.out).not.toContain("x".repeat(257));
       if (json) {
