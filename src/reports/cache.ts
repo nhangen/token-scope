@@ -2,6 +2,7 @@ import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, formatTokens, formatUsd, formatPct, bold, dim, renderFootnote } from "@/format";
 import { VERSION } from "@/version";
 import { analyzeCacheEconomics } from "@/cache-economics";
+import { promptCacheLogPath, readSnapshots, summarizeNative, type NativeCacheSummary } from "@/prompt-cache";
 import type { CacheEconomicsAnalysis, GapHistogramBucket } from "@/cache-economics";
 
 interface Options {
@@ -27,6 +28,8 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
     sinceSec: opts.since,
     nowMs: Date.now(),
   });
+
+  const native = summarizeNative(readSnapshots(promptCacheLogPath()), opts.since);
 
   const focus = opts.focus ?? "all";
   const showMisses = focus === "all" || focus === "misses";
@@ -58,8 +61,9 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
       token_mix: analysis.tokenMix,
       cost_mix: analysis.costMix,
       rows,
+      native_prompt_cache: native,
       ...(showMisses
-        ? { misses: analysis.misses, subagent_misses: analysis.subagentMisses, gap_histogram: analysis.gapHistogram }
+        ? { miss_provenance: "inferred", misses: analysis.misses, subagent_misses: analysis.subagentMisses, gap_histogram: analysis.gapHistogram }
         : {}),
       ...(showSim ? { simulations: analysis.simulations } : {}),
       reconciliation: analysis.reconciliation,
@@ -154,7 +158,7 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
       ])
     ));
 
-    console.log(`\n${bold("  Miss Classification & Extra Rebuild Costs")}`);
+    console.log(`\n${bold("  Miss Classification & Extra Rebuild Costs")} ${dim("(inferred from timing and token counts)")}`);
     console.log(renderTable(
       [
         { header: "Loop", align: "left", width: 14 },
@@ -174,6 +178,7 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
 
     console.log(`\n${bold("  Request Gap Distribution (Main Loop)")}`);
     console.log(renderGapHistogramTable(analysis.gapHistogram.buckets));
+    console.log(renderNativeSection(native));
   }
 
   if (showSim) {
@@ -259,5 +264,48 @@ function renderGapHistogramTable(buckets: GapHistogramBucket[]): string {
     }
   }
 
+  return lines.join("\n");
+}
+
+function renderNativeSection(native: NativeCacheSummary): string {
+  const title = `\n${bold("  Claude Code Reported Cache Diagnostics (main conversation)")}`;
+  if (native.sessions === 0) {
+    return `${title}\n  ${dim("No status-line snapshots in this window. Requires Claude Code 2.1.251+ and the collector; see README \"Native cache diagnostics\".")}`;
+  }
+  const n = (v: number | null): string => (v === null ? "n/a" : String(v));
+  const t = (v: number | null): string => (v === null ? "n/a" : formatTokens(v));
+  const lines = [title, renderKV([
+    ["Sessions", String(native.sessions)],
+    ["Requests", n(native.requests)],
+    ["Diagnosed Misses", `${n(native.misses)} ${dim("(re-processed cached content, no compaction to explain it)")}`],
+    ["Expected Rebuilds", `${n(native.expectedRebuilds)} ${dim("(after compaction or tool-result clearing)")}`],
+    ["Cache Write Tokens", t(native.cacheWriteTokens)],
+    ["Miss Rewrite Tokens", `${t(native.missRecacheTokens)} ${dim("(written by miss requests; not a billing-savings figure)")}`],
+  ])];
+  const causes = Object.entries(native.missCauses).sort((a, b) => b[1] - a[1]);
+  if (causes.length > 0) {
+    lines.push(`  Likely miss causes: ${causes.map(([c, k]) => `${c} ×${k}`).join(", ")}`);
+  }
+  lines.push(renderTable(
+    [
+      { header: "Session", align: "left", width: 10 },
+      { header: "Req", align: "right", width: 6 },
+      { header: "Misses", align: "right", width: 7 },
+      { header: "Rebuilds", align: "right", width: 9 },
+      { header: "Session Hit", align: "right", width: 12 },
+      { header: "Cold Rewrite", align: "right", width: 13 },
+      { header: "Last Likely Cause", align: "left", width: 28 },
+    ],
+    native.rows.slice(0, 10).map((r) => [
+      r.sessionId.slice(0, 8),
+      r.requests === undefined ? "n/a" : String(r.requests),
+      r.misses === undefined ? "n/a" : String(r.misses),
+      r.expectedRebuilds === undefined ? "n/a" : String(r.expectedRebuilds),
+      r.sessionHitRatio === null ? "n/a" : formatPct(r.sessionHitRatio * 100),
+      r.recacheTokensIfCold === null ? "n/a" : formatTokens(r.recacheTokensIfCold),
+      r.lastMissCause ? `${r.lastMissCause.causes.join("+")}${r.lastMissCause.toolsAdded || r.lastMissCause.toolsRemoved ? ` (+${r.lastMissCause.toolsAdded ?? 0}/-${r.lastMissCause.toolsRemoved ?? 0} tools)` : ""}${r.lastMissCause.systemCharDelta !== undefined ? ` (${r.lastMissCause.systemCharDelta >= 0 ? "+" : ""}${r.lastMissCause.systemCharDelta} chars)` : ""}` : "n/a",
+    ])
+  ));
+  lines.push(renderFootnote("Reported by Claude Code, not inferred. Session Hit is the session-wide ratio, not the last-request hit rate above. Counters are session-cumulative: a session appears whole if active in the window. Causes are Claude Code's likely cause; rewrite volumes are not exact per-plugin attribution."));
   return lines.join("\n");
 }
