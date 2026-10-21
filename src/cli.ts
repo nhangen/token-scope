@@ -46,7 +46,7 @@ REPORT MODES (mutually exclusive)
   --sessions              List recent sessions with stats
   --context               Context bloat analysis (sessions with 6+ turns)
   --cache                 Cache economics & efficiency: token/cost mix, misses, simulations
-  --cache-misses          Cache miss classification, rebuild costs, and request gap histogram
+  --cache-misses          Cache miss classification, rebuild costs, gap histogram, and Claude Code reported diagnostics
   --cache-sim             Cache policy simulations ("what would have saved")
   --efficiency            Session efficiency (per-turn cost by session length)
   --tools                 Tooling analysis by layer (plugin, MCP, skill, meta, built-in)
@@ -133,6 +133,7 @@ ENVIRONMENT
   TOKEN_SCOPE_OLLA_ROUTES  JSON file of exact request/run-to-endpoint observations
   TOKEN_SCOPE_OLLAMA_ROUTING_TELEMETRY Route telemetry JSONL (default $XDG_STATE_HOME/ollama-agent/routing.jsonl)
   TOKEN_SCOPE_FLEET_COLLECTED_AT Reproducible collection timestamp override
+  TOKEN_SCOPE_PROMPT_CACHE_LOG Status-line prompt_cache JSONL (default $XDG_STATE_HOME/token-scope/prompt-cache.jsonl)
   NO_COLOR                 Disable ANSI color output
 
 EXAMPLES

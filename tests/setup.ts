@@ -14,3 +14,4 @@ mock.module("claude-code/testing", () => ({
 
 process.env["TOKEN_SCOPE_DB"] = new URL("./fixtures/__store.db", import.meta.url).pathname;
 process.env["TOKEN_SCOPE_PROJECTS_DIR"] = new URL("./fixtures/projects", import.meta.url).pathname;
+process.env["TOKEN_SCOPE_PROMPT_CACHE_LOG"] = "/nonexistent/token-scope-test/prompt-cache.jsonl";

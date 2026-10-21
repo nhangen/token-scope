@@ -819,6 +819,34 @@ cache cold
   - Or via environment variable: `TOKEN_SCOPE_CACHE_TIMER=0` (or `TOKEN_SCOPE_DISABLE_CACHE_TIMER=1`)
 - **TTL configuration**: The countdown defaults to 1 hour. `FORCE_PROMPT_CACHING_5M` forces 5 minutes; otherwise the first valid value of `CLAUDE_CODE_PROMPT_CACHE_TTL` or settings `promptCacheTtl` wins (an unparseable value is skipped, not honored). Values take a unit (`5m`, `1h`, `300s`, `500ms`); a bare number is seconds. `DISABLE_PROMPT_CACHING` hides the status entry.
 
+## Native cache diagnostics (status-line collector)
+
+Claude Code 2.1.251+ passes a `prompt_cache` object to the status-line command (2.1.260+ adds `last_miss_cause` and `miss_causes`). token-scope can record it and show Claude Code's own cache diagnoses in `--cache` / `--cache-misses` (text and `--json`, under `native_prompt_cache`). The existing miss classification stays, labeled `inferred` (`miss_provenance` in JSON), and is the only source for older clients.
+
+### Setup
+
+The collector reads the status-line JSON on stdin, writes nothing to stdout, and never exits non-zero. If it cannot record a snapshot it prints one line to stderr naming the error class (for example `not recorded (EACCES)`), which reaches the terminal when you tee the payload. Put it in front of your status line, or use it alone:
+
+```json
+{ "statusLine": { "type": "command", "command": "bun /path/to/token-scope/src/statusline/collect.ts" } }
+```
+
+To keep an existing status line, tee the payload: `tee >(bun /path/to/token-scope/src/statusline/collect.ts) | ~/.claude/statusline.sh`. Set `refreshInterval` if you want snapshots while the session is idle.
+
+Snapshots go to `~/.local/state/token-scope/prompt-cache.jsonl` (`$XDG_STATE_HOME` or `TOKEN_SCOPE_PROMPT_CACHE_LOG` override). Only allowlisted fields are kept, plus the session id and capture time: no prompts, paths, cost, or transcript data. A snapshot identical to the session's previous one is skipped.
+
+### Reported fields
+
+`warm`, `caching_observed`, `ttl`, `expires_at`, `requests`, `misses`, `expected_rebuilds`, `hit_ratio`, `cache_write_tokens`, `miss_recache_tokens`, `last_miss_at`, `last_miss_cause` (with `tools_added`, `tools_removed`, `system_char_delta`), `miss_causes`, `recache_tokens_if_cold`. A missing field stays unknown (`n/a`), never zero.
+
+### Limitations
+
+- Main conversation only. Claude Code does not count subagent requests, and token-scope never attributes these numbers to subagents.
+- Counters are session-cumulative. Totals use each session's latest snapshot; a counter that drops (resume or restart) starts a new segment, and segments are summed. A session is included whole if it was active in the window.
+- `hit_ratio` is the session-wide ratio. It is shown as "Session Hit" and is never substituted for the last-request hit rate in the report or the status-line mod. Ratios are not merged across segments or sessions.
+- Miss causes are Claude Code's *likely* cause. `miss_recache_tokens` and `recache_tokens_if_cold` are rewrite volumes, not proven billing savings or per-plugin token attribution.
+- Field names come from the Claude Code documentation; they have not yet been verified against a captured payload from a live session.
+
 ---
 
 ## Flags
@@ -847,6 +875,7 @@ cache cold
 | `TOKEN_SCOPE_CHECKPOINT_DIR` | Checkpoint output dir (default `~/.claude/checkpoints`) |
 | `TOKEN_SCOPE_CACHE_TIMER` | Disable status-line cache timer mod (`0`, `false`, `no`, or `off` to opt out) |
 | `TOKEN_SCOPE_DISABLE_CACHE_TIMER` | Disable status-line cache timer mod (`1` to disable) |
+| `TOKEN_SCOPE_PROMPT_CACHE_LOG` | Override the status-line cache snapshot log path |
 | `NO_COLOR` | Disable ANSI color |
 
 ## Accuracy Notes
