@@ -57,7 +57,7 @@ export interface ProviderRow {
   provenance: string[];
   /** Event labels (model or provider, per event) withheld by the label screen (#126). */
   redactedLabels: number;
-  labelRejections?: LabelRejections;
+  labelRejections: LabelRejections;
 }
 
 interface ClassAgg {
@@ -242,8 +242,8 @@ export function renderProviderReport(
   } else {
     lines.push("all values measured from source records; no estimates");
   }
-  const oversize = rows.reduce((sum, row) => sum + (row.labelRejections?.oversize_label ?? 0), 0);
-  const redacted = rows.reduce((sum, row) => sum + row.redactedLabels, 0) - oversize;
+  const oversize = rows.reduce((sum, row) => sum + row.labelRejections.oversize_label, 0);
+  const redacted = rows.reduce((sum, row) => sum + row.labelRejections.privacy, 0);
   if (oversize > 0) {
     lines.push(`${oversize} event label(s) redacted: oversize_label (length or control characters)`);
   }
@@ -301,8 +301,8 @@ export function providerReportJson(
     unsupported,
     redactedLabels: rows.reduce((sum, row) => sum + row.redactedLabels, 0),
     labelRejections: {
-      privacy: rows.reduce((sum, row) => sum + (row.labelRejections?.privacy ?? row.redactedLabels), 0),
-      oversize_label: rows.reduce((sum, row) => sum + (row.labelRejections?.oversize_label ?? 0), 0),
+      privacy: rows.reduce((sum, row) => sum + (row.labelRejections.privacy), 0),
+      oversize_label: rows.reduce((sum, row) => sum + (row.labelRejections.oversize_label), 0),
     },
   };
 }

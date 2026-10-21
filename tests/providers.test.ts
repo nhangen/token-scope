@@ -412,6 +412,7 @@ describe("provider report", () => {
     partialClasses: [],
     provenance: ["p.jsonl"],
     redactedLabels: 0,
+    labelRejections: { privacy: 0, oversize_label: 0 },
   };
 
   it("marks measured false when source coverage is incomplete", () => {
@@ -703,7 +704,7 @@ describe("dedup + report", () => {
 
   it("renders nulls as em-dashes and lists unavailable sources", () => {
     const out = renderProviderReport(
-      [{ harness: "x", billingRoute: "local", model: "m", events: 1, input: 5, output: null, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, malformedEvents: 0, partialEvents: 0, legacyCumulativeEvents: 0, cashUsd: null, partialClasses: [], provenance: ["a.jsonl"], redactedLabels: 0 }],
+      [{ harness: "x", billingRoute: "local", model: "m", events: 1, input: 5, output: null, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, malformedEvents: 0, partialEvents: 0, legacyCumulativeEvents: 0, cashUsd: null, partialClasses: [], provenance: ["a.jsonl"], redactedLabels: 0, labelRejections: { privacy: 0, oversize_label: 0 } }],
       ["opencode"],
     );
     expect(out).toContain("—");
@@ -739,7 +740,7 @@ describe("dedup + report", () => {
 
   it("sum() treats genuine zero as measured and all-null as unknown (#38 panel)", () => {
     const rows = renderProviderReport(
-      [{ harness: "x", billingRoute: "local", model: "m", events: 2, input: 7, output: 0, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, malformedEvents: 0, partialEvents: 0, legacyCumulativeEvents: 0, cashUsd: null, partialClasses: ["output"], provenance: ["a"], redactedLabels: 0 }],
+      [{ harness: "x", billingRoute: "local", model: "m", events: 2, input: 7, output: 0, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, malformedEvents: 0, partialEvents: 0, legacyCumulativeEvents: 0, cashUsd: null, partialClasses: ["output"], provenance: ["a"], redactedLabels: 0, labelRejections: { privacy: 0, oversize_label: 0 } }],
       [],
     );
     expect(rows).toContain("  0  "); // zero renders as 0, not an em-dash
