@@ -11,8 +11,10 @@ async function main(): Promise<void> {
     const raw = await Bun.stdin.text();
     const snap = sanitizePayload(JSON.parse(raw), Math.floor(Date.now() / 1000));
     if (snap) appendSnapshot(promptCacheLogPath(), snap);
-  } catch {
-    // Malformed payloads and unwritable state dirs are dropped silently by design.
+  } catch (err) {
+    // Exit 0 regardless; the error class (never the payload) goes to stderr so a dead collector is diagnosable.
+    const code = (err as NodeJS.ErrnoException).code ?? (err as Error).name ?? "Error";
+    process.stderr.write(`token-scope collector: not recorded (${code})\n`);
   }
 }
 

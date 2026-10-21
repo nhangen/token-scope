@@ -821,7 +821,7 @@ Claude Code 2.1.251+ passes a `prompt_cache` object to the status-line command (
 
 ### Setup
 
-The collector reads the status-line JSON on stdin, writes nothing to stdout, and never exits non-zero. Put it in front of your status line, or use it alone:
+The collector reads the status-line JSON on stdin, writes nothing to stdout, and never exits non-zero. If it cannot record a snapshot it prints one line to stderr naming the error class (for example `not recorded (EACCES)`), which reaches the terminal when you tee the payload. Put it in front of your status line, or use it alone:
 
 ```json
 { "statusLine": { "type": "command", "command": "bun /path/to/token-scope/src/statusline/collect.ts" } }

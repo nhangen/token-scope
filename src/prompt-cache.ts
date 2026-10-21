@@ -1,4 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 /** Allowlisted subset of the status-line `prompt_cache` object; every field except `scope` is optional (unknown, never zero). */
@@ -35,6 +36,7 @@ export interface LastMissCause {
 
 const MAX_CAUSES = 16;
 const CAUSE_NAME = /^[a-z0-9_]{1,48}$/;
+const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
 function num(v: unknown, opts: { int?: boolean; min?: number } = {}): number | undefined {
   if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
@@ -84,7 +86,7 @@ export function sanitizePayload(payload: unknown, capturedAt: number): PromptCac
   const p = payload as Record<string, unknown>;
   const sessionId = p["session_id"];
   const pc = p["prompt_cache"];
-  if (typeof sessionId !== "string" || sessionId === "" || sessionId.length > 128) return null;
+  if (typeof sessionId !== "string" || !SESSION_ID.test(sessionId)) return null;
   if (typeof pc !== "object" || pc === null || Array.isArray(pc)) return null;
   const c = pc as Record<string, unknown>;
 
@@ -122,7 +124,7 @@ export function sanitizePayload(payload: unknown, capturedAt: number): PromptCac
 export function promptCacheLogPath(env: Record<string, string | undefined> = process.env): string {
   const override = env["TOKEN_SCOPE_PROMPT_CACHE_LOG"];
   if (override) return override;
-  const base = env["XDG_STATE_HOME"] || join(env["HOME"] ?? "~", ".local", "state");
+  const base = env["XDG_STATE_HOME"] || join(env["HOME"] || homedir(), ".local", "state");
   return join(base, "token-scope", "prompt-cache.jsonl");
 }
 
@@ -141,20 +143,76 @@ export function appendSnapshot(path: string, snap: PromptCacheSnapshot): boolean
   return true;
 }
 
-/** Reads the log, skipping malformed lines. */
-export function readSnapshots(path: string): PromptCacheSnapshot[] {
-  if (!existsSync(path)) return [];
-  const out: PromptCacheSnapshot[] = [];
-  for (const line of readFileSync(path, "utf8").split("\n")) {
-    if (!line) continue;
-    try {
-      const rec = JSON.parse(line) as PromptCacheSnapshot;
-      if (typeof rec.sessionId === "string" && typeof rec.capturedAt === "number") out.push(rec);
-    } catch {
-      continue;
-    }
+const INT_FIELDS = ["requests", "misses", "expectedRebuilds", "cacheWriteTokens", "missRecacheTokens"] as const;
+
+/** Re-checks a parsed log line field by field; a record that fails is skipped, never coerced. */
+function narrowRecord(rec: unknown): PromptCacheSnapshot | null {
+  if (typeof rec !== "object" || rec === null || Array.isArray(rec)) return null;
+  const r = rec as Record<string, unknown>;
+  if (typeof r["sessionId"] !== "string" || !SESSION_ID.test(r["sessionId"])) return null;
+  if (typeof r["capturedAt"] !== "number" || !Number.isFinite(r["capturedAt"])) return null;
+  if (r["scope"] !== "main") return null;
+  for (const k of INT_FIELDS) if (r[k] !== undefined && num(r[k], { int: true, min: 0 }) === undefined) return null;
+  if (r["sessionHitRatio"] !== undefined && r["sessionHitRatio"] !== null) {
+    const v = num(r["sessionHitRatio"]);
+    if (v === undefined || v < 0 || v > 1) return null;
   }
-  return out;
+  for (const k of ["expiresAt", "lastMissAt", "recacheTokensIfCold"] as const) {
+    if (r[k] !== undefined && nullableNum(r[k], { min: 0 }) === undefined) return null;
+  }
+  for (const k of ["warm", "cachingObserved"] as const) if (r[k] !== undefined && typeof r[k] !== "boolean") return null;
+  if (r["ttl"] !== undefined && r["ttl"] !== "5m" && r["ttl"] !== "1h") return null;
+  if (r["clientVersion"] !== undefined && typeof r["clientVersion"] !== "string") return null;
+  if (r["missCauses"] !== undefined) {
+    const mc = parseMissCauses(r["missCauses"]);
+    if (mc === undefined) return null;
+    r["missCauses"] = mc;
+  }
+  if (r["lastMissCause"] !== undefined && r["lastMissCause"] !== null) {
+    const c = r["lastMissCause"] as Record<string, unknown>;
+    if (typeof c !== "object" || !Array.isArray(c["causes"]) || !c["causes"].every((x) => typeof x === "string" && CAUSE_NAME.test(x))) return null;
+    for (const k of ["toolsAdded", "toolsRemoved"] as const) if (c[k] !== undefined && num(c[k], { int: true, min: 0 }) === undefined) return null;
+    if (c["systemCharDelta"] !== undefined && num(c["systemCharDelta"], { int: true }) === undefined) return null;
+  }
+  return r as unknown as PromptCacheSnapshot;
+}
+
+export interface SnapshotLog {
+  snapshots: PromptCacheSnapshot[];
+  exists: boolean;
+  /** Set when the log exists but could not be read; distinct from a log that was never created. */
+  readError?: string;
+  skippedLines: number;
+}
+
+export function readSnapshotLog(path: string): SnapshotLog {
+  if (!existsSync(path)) return { snapshots: [], exists: false, skippedLines: 0 };
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? "unknown";
+    return { snapshots: [], exists: true, readError: code, skippedLines: 0 };
+  }
+  const snapshots: PromptCacheSnapshot[] = [];
+  let skippedLines = 0;
+  for (const line of text.split("\n")) {
+    if (!line) continue;
+    let rec: PromptCacheSnapshot | null = null;
+    try {
+      rec = narrowRecord(JSON.parse(line));
+    } catch {
+      rec = null;
+    }
+    if (rec) snapshots.push(rec);
+    else skippedLines++;
+  }
+  return { snapshots, exists: true, skippedLines };
+}
+
+/** Snapshots only; an unreadable or missing log reads as empty. */
+export function readSnapshots(path: string): PromptCacheSnapshot[] {
+  return readSnapshotLog(path).snapshots;
 }
 
 export interface NativeSessionCache {
@@ -190,6 +248,7 @@ export interface NativeCacheSummary {
   missRecacheTokens: number | null;
   missCauses: Record<string, number>;
   rows: NativeSessionCache[];
+  log: { exists: boolean; readError: string | null; skippedLines: number };
 }
 
 const COUNTERS = ["requests", "misses", "expectedRebuilds", "cacheWriteTokens", "missRecacheTokens"] as const;
@@ -247,7 +306,12 @@ function sumOrNull(rows: NativeSessionCache[], k: (typeof COUNTERS)[number]): nu
 }
 
 /** Sessions are included whole when their latest snapshot falls in the window; counters are session-cumulative. */
-export function summarizeNative(snaps: PromptCacheSnapshot[], sinceSec: number): NativeCacheSummary {
+export function summarizeNative(
+  input: PromptCacheSnapshot[] | SnapshotLog,
+  sinceSec: number,
+): NativeCacheSummary {
+  const log: SnapshotLog = Array.isArray(input) ? { snapshots: input, exists: true, skippedLines: 0 } : input;
+  const snaps = log.snapshots;
   const bySession = new Map<string, PromptCacheSnapshot[]>();
   for (const s of snaps) {
     if (s.scope !== "main") continue;
@@ -272,5 +336,6 @@ export function summarizeNative(snaps: PromptCacheSnapshot[], sinceSec: number):
     missRecacheTokens: sumOrNull(rows, "missRecacheTokens"),
     missCauses,
     rows,
+    log: { exists: log.exists, readError: log.readError ?? null, skippedLines: log.skippedLines },
   };
 }

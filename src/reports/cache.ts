@@ -2,7 +2,7 @@ import type { Reader } from "@/reader";
 import { renderHeader, renderKV, renderTable, formatTokens, formatUsd, formatPct, bold, dim, renderFootnote } from "@/format";
 import { VERSION } from "@/version";
 import { analyzeCacheEconomics } from "@/cache-economics";
-import { promptCacheLogPath, readSnapshots, summarizeNative, type NativeCacheSummary } from "@/prompt-cache";
+import { promptCacheLogPath, readSnapshotLog, summarizeNative, type NativeCacheSummary } from "@/prompt-cache";
 import type { CacheEconomicsAnalysis, GapHistogramBucket } from "@/cache-economics";
 
 interface Options {
@@ -29,7 +29,7 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
     nowMs: Date.now(),
   });
 
-  const native = summarizeNative(readSnapshots(promptCacheLogPath()), opts.since);
+  const native = summarizeNative(readSnapshotLog(promptCacheLogPath()), opts.since);
 
   const focus = opts.focus ?? "all";
   const showMisses = focus === "all" || focus === "misses";
@@ -61,9 +61,8 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
       token_mix: analysis.tokenMix,
       cost_mix: analysis.costMix,
       rows,
-      native_prompt_cache: native,
       ...(showMisses
-        ? { miss_provenance: "inferred", misses: analysis.misses, subagent_misses: analysis.subagentMisses, gap_histogram: analysis.gapHistogram }
+        ? { native_prompt_cache: native, miss_provenance: "inferred", misses: analysis.misses, subagent_misses: analysis.subagentMisses, gap_histogram: analysis.gapHistogram }
         : {}),
       ...(showSim ? { simulations: analysis.simulations } : {}),
       reconciliation: analysis.reconciliation,
@@ -71,7 +70,7 @@ export function renderCacheReport(reader: Reader, opts: Options): void {
     return;
   }
 
-  if (rows.length === 0 && mainTurns.length === 0 && subagentTurns.length === 0) {
+  if (rows.length === 0 && mainTurns.length === 0 && subagentTurns.length === 0 && !(showMisses && (native.sessions > 0 || native.log.readError || native.log.skippedLines > 0))) {
     console.log(`No cache data found in the last ${opts.sinceStr}.`);
     return;
   }
@@ -269,8 +268,12 @@ function renderGapHistogramTable(buckets: GapHistogramBucket[]): string {
 
 function renderNativeSection(native: NativeCacheSummary): string {
   const title = `\n${bold("  Claude Code Reported Cache Diagnostics (main conversation)")}`;
+  const skipped = native.log.skippedLines > 0 ? `\n  ${dim(`${native.log.skippedLines} unreadable log line(s) skipped.`)}` : "";
+  if (native.log.readError) {
+    return `${title}\n  Collector log unreadable (${native.log.readError}); native diagnostics unavailable.`;
+  }
   if (native.sessions === 0) {
-    return `${title}\n  ${dim("No status-line snapshots in this window. Requires Claude Code 2.1.251+ and the collector; see README \"Native cache diagnostics\".")}`;
+    return `${title}${skipped}\n  ${dim("No status-line snapshots in this window. Requires Claude Code 2.1.251+ and the collector; see README \"Native cache diagnostics\".")}`;
   }
   const n = (v: number | null): string => (v === null ? "n/a" : String(v));
   const t = (v: number | null): string => (v === null ? "n/a" : formatTokens(v));
@@ -307,5 +310,6 @@ function renderNativeSection(native: NativeCacheSummary): string {
     ])
   ));
   lines.push(renderFootnote("Reported by Claude Code, not inferred. Session Hit is the session-wide ratio, not the last-request hit rate above. Counters are session-cumulative: a session appears whole if active in the window. Causes are Claude Code's likely cause; rewrite volumes are not exact per-plugin attribution."));
+  if (skipped) lines.push(skipped.trimStart());
   return lines.join("\n");
 }

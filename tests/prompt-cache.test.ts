@@ -1,10 +1,11 @@
 import { describe, it, expect } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   appendSnapshot,
   promptCacheLogPath,
+  readSnapshotLog,
   readSnapshots,
   reduceSession,
   sanitizePayload,
@@ -173,10 +174,56 @@ describe("log persistence", () => {
     }
   });
 
-  it("skips malformed lines and honors the path override", () => {
+  it("honors the path override and XDG fallback", () => {
     expect(promptCacheLogPath({ TOKEN_SCOPE_PROMPT_CACHE_LOG: "/x/y.jsonl" })).toBe("/x/y.jsonl");
     expect(promptCacheLogPath({ XDG_STATE_HOME: "/s", HOME: "/h" })).toBe("/s/token-scope/prompt-cache.jsonl");
-    expect(readSnapshots("/nonexistent/none.jsonl")).toEqual([]);
+    expect(promptCacheLogPath({ HOME: "/h" })).toBe("/h/.local/state/token-scope/prompt-cache.jsonl");
+    const missing = readSnapshotLog("/nonexistent/none.jsonl");
+    expect(missing).toEqual({ snapshots: [], exists: false, skippedLines: 0 });
+  });
+
+  it("rejects a last_miss_cause with non-numeric tool counts on read", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts-pc-"));
+    try {
+      const path = join(dir, "pc.jsonl");
+      writeFileSync(path, JSON.stringify({ sessionId: "s", capturedAt: 1, scope: "main", lastMissCause: { causes: ["tools_changed"], toolsAdded: "2" } }) + "\n");
+      expect(readSnapshotLog(path).skippedLines).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips and counts malformed or wrongly typed lines", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts-pc-"));
+    try {
+      const path = join(dir, "pc.jsonl");
+      const good = JSON.stringify({ sessionId: "ok", capturedAt: 5, scope: "main", requests: 3 });
+      writeFileSync(path, [
+        "garbage", "null", '{"sessionId":"a"}',
+        JSON.stringify({ sessionId: "s", capturedAt: 1, scope: "main", requests: "5" }),
+        JSON.stringify({ sessionId: "s", capturedAt: 1, scope: "main", missCauses: "abc" }),
+        JSON.stringify({ sessionId: "bad id!", capturedAt: 1, scope: "main" }),
+        good, "",
+      ].join("\n"));
+      const log = readSnapshotLog(path);
+      expect(log.snapshots.map((s) => s.sessionId)).toEqual(["ok"]);
+      expect(log.skippedLines).toBe(6);
+      expect(log.readError).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a directory at the log path as a read error, not an absent log", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts-pc-"));
+    try {
+      const log = readSnapshotLog(dir);
+      expect(log.exists).toBe(true);
+      expect(log.readError).toBe("EISDIR");
+      expect(log.snapshots).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -194,7 +241,7 @@ describe("cache report", () => {
       expect(json.native_prompt_cache.provenance).toBe("reported");
       expect(json.native_prompt_cache.misses).toBe(2);
       expect(json.miss_provenance).toBe("inferred");
-      expect(json.summary.overall_cache_hit_pct).not.toBe(0.91);
+      expect(json.native_prompt_cache.rows[0].sessionHitRatio).toBe(0.91);
       const text = capture(() => renderCacheReport(reader, { since: 0, sinceStr: "all", limit: 10, json: false, focus: "misses" }));
       expect(text).toContain("Claude Code Reported Cache Diagnostics");
       expect(text).toContain("tools_changed");
@@ -235,6 +282,137 @@ describe("collector entry point", () => {
       expect(await run("not json", log)).toBe(0);
       expect(await run(JSON.stringify({ session_id: "old" }), log)).toBe(0);
       expect(readSnapshots(log)).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("sanitizer bounds", () => {
+  const pc = (o: Record<string, unknown>) => sanitizePayload({ session_id: "x", prompt_cache: o }, 1)!;
+
+  it("accepts the ratio endpoints and rejects values outside 0..1", () => {
+    expect(pc({ hit_ratio: 0 }).sessionHitRatio).toBe(0);
+    expect(pc({ hit_ratio: 1 }).sessionHitRatio).toBe(1);
+    expect(pc({ hit_ratio: 1.01 }).sessionHitRatio).toBeUndefined();
+  });
+
+  it("keeps a negative system_char_delta and rejects an unknown ttl", () => {
+    expect(pc({ last_miss_cause: { causes: ["system_prompt_changed"], system_char_delta: -120 } }).lastMissCause?.systemCharDelta).toBe(-120);
+    expect(pc({ ttl: "2h" }).ttl).toBeUndefined();
+  });
+
+  it("rejects session ids over 128 chars or with unsafe characters", () => {
+    expect(sanitizePayload({ session_id: "a".repeat(129), prompt_cache: {} }, 1)).toBeNull();
+    expect(sanitizePayload({ session_id: "a\u001b[31m", prompt_cache: {} }, 1)).toBeNull();
+  });
+
+  it("caps the cause map at 16 entries", () => {
+    const causes = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`c${i}`, 1]));
+    expect(Object.keys(pc({ miss_causes: causes }).missCauses!)).toHaveLength(16);
+  });
+
+  it("records the client version", () => {
+    expect(sanitizePayload(full, 1)!.clientVersion).toBe("2.1.301");
+  });
+});
+
+describe("report degradation", () => {
+  it("renders n/a for absent counters in text output", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts-pc-"));
+    const path = join(dir, "pc.jsonl");
+    const prev = process.env["TOKEN_SCOPE_PROMPT_CACHE_LOG"];
+    try {
+      appendSnapshot(path, sanitizePayload({ session_id: "sparse", prompt_cache: { warm: true } }, Math.floor(Date.now() / 1000))!);
+      process.env["TOKEN_SCOPE_PROMPT_CACHE_LOG"] = path;
+      const reader = createReader();
+      const text = capture(() => renderCacheReport(reader, { since: 0, sinceStr: "all", limit: 10, json: false, focus: "misses" }));
+      expect(text).toContain("Diagnosed Misses");
+      expect(text).toContain("n/a");
+      reader.close();
+    } finally {
+      if (prev === undefined) delete process.env["TOKEN_SCOPE_PROMPT_CACHE_LOG"]; else process.env["TOKEN_SCOPE_PROMPT_CACHE_LOG"] = prev;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the inferred report when the log path is a directory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts-pc-"));
+    const prev = process.env["TOKEN_SCOPE_PROMPT_CACHE_LOG"];
+    try {
+      process.env["TOKEN_SCOPE_PROMPT_CACHE_LOG"] = dir;
+      const reader = createReader();
+      const json = JSON.parse(capture(() => renderCacheReport(reader, { since: 0, sinceStr: "all", limit: 10, json: true, focus: "all" })));
+      expect(json.native_prompt_cache.log.readError).toBe("EISDIR");
+      expect(json.misses).toBeDefined();
+      const text = capture(() => renderCacheReport(reader, { since: 0, sinceStr: "all", limit: 10, json: false, focus: "misses" }));
+      expect(text).toContain("Collector log unreadable (EISDIR)");
+      expect(text).toContain("Miss Classification");
+      reader.close();
+    } finally {
+      if (prev === undefined) delete process.env["TOKEN_SCOPE_PROMPT_CACHE_LOG"]; else process.env["TOKEN_SCOPE_PROMPT_CACHE_LOG"] = prev;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces an unreadable log even when there is no inferred data", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts-pc-"));
+    const empty = mkdtempSync(join(tmpdir(), "ts-pc-empty-"));
+    const prev = process.env["TOKEN_SCOPE_PROMPT_CACHE_LOG"];
+    try {
+      process.env["TOKEN_SCOPE_PROMPT_CACHE_LOG"] = dir;
+      const reader = createReader({ source: "jsonl", projectsDirs: [empty] });
+      const text = capture(() => renderCacheReport(reader, { since: 0, sinceStr: "all", limit: 10, json: false, focus: "misses" }));
+      expect(text).toContain("Collector log unreadable (EISDIR)");
+      reader.close();
+    } finally {
+      if (prev === undefined) delete process.env["TOKEN_SCOPE_PROMPT_CACHE_LOG"]; else process.env["TOKEN_SCOPE_PROMPT_CACHE_LOG"] = prev;
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  it("omits native_prompt_cache from --cache-sim JSON", () => {
+    const reader = createReader();
+    const json = JSON.parse(capture(() => renderCacheReport(reader, { since: 0, sinceStr: "all", limit: 10, json: true, focus: "sim" })));
+    expect(json.native_prompt_cache).toBeUndefined();
+    reader.close();
+  });
+});
+
+describe("reduceSession edges", () => {
+  it("is order-independent, resets on misses alone, and sums causes across segments", () => {
+    const row = reduceSession([
+      snap(3, { requests: 4, misses: 0, cacheWriteTokens: 40, missCauses: { b: 1 } }),
+      snap(1, { requests: 6, misses: 3, cacheWriteTokens: 60, missCauses: { a: 3 } }),
+    ]);
+    expect(row.segments).toBe(2);
+    expect(row.misses).toBe(3);
+    expect(row.cacheWriteTokens).toBe(100);
+    expect(row.missCauses).toEqual({ a: 3, b: 1 });
+  });
+
+  it("includes a session whose last snapshot is exactly at the window start", () => {
+    expect(summarizeNative([snap(100, { requests: 1 })], 100).sessions).toBe(1);
+    expect(summarizeNative([snap(99, { requests: 1 })], 100).sessions).toBe(0);
+  });
+});
+
+describe("collector failure path", () => {
+  it("exits 0 with empty stdout and names the error class on stderr when the log is unwritable", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts-pc-"));
+    try {
+      const blocker = join(dir, "file");
+      writeFileSync(blocker, "x");
+      const proc = Bun.spawn(["bun", join(import.meta.dir, "..", "src", "statusline", "collect.ts")], {
+        stdin: new Blob([JSON.stringify(full)]),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, TOKEN_SCOPE_PROMPT_CACHE_LOG: join(blocker, "nested", "pc.jsonl") },
+      });
+      expect(await new Response(proc.stdout).text()).toBe("");
+      expect(await new Response(proc.stderr).text()).toMatch(/not recorded \((ENOTDIR|EEXIST|ENOENT)\)/);
+      expect(await proc.exited).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
