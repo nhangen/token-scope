@@ -301,8 +301,8 @@ export function providerReportJson(
     unsupported,
     redactedLabels: rows.reduce((sum, row) => sum + row.redactedLabels, 0),
     labelRejections: {
-      privacy: rows.reduce((sum, row) => sum + (row.labelRejections.privacy), 0),
-      oversize_label: rows.reduce((sum, row) => sum + (row.labelRejections.oversize_label), 0),
+      privacy: rows.reduce((sum, row) => sum + row.labelRejections.privacy, 0),
+      oversize_label: rows.reduce((sum, row) => sum + row.labelRejections.oversize_label, 0),
     },
   };
 }
