@@ -139,11 +139,11 @@ describe("fleet report contract rejections", () => {
     expect(result.sources).toContainEqual({
       source: "olla-routes",
       state: "partial",
-      reason: "rejected route observation(s)",
+      reason: "rejected route observation(s): missing_endpoint",
     });
   });
 
-  it("keeps the route-file rejection reason when observedRoutes also reject", () => {
+  it("merges the distinct observed-route rejection reasons into the route-file rejection reason", () => {
     const result = fleetReportJson(
       {
         providers: { events: [event({ eventId: "claude:d1" })], unavailable: [], partial: {} },
@@ -154,15 +154,15 @@ describe("fleet report contract rejections", () => {
           sources: [{ path: "/internal/status", state: "available", reason: null, errorClass: null, provenance: { source: "/internal/status", locator: "http://router.local", collected_at: "2026-09-22T14:05:01.000Z", completeness: "complete" } }],
           endpointChanges: { disappeared: null },
           observedRoutes: [],
-          rejectedRoutes: [{ reason: "missing_endpoint" }],
+          rejectedRoutes: [{ reason: "missing_endpoint" }, { reason: "invalid_key" }, { reason: "missing_endpoint" }],
         },
         ollaState: { source: "olla", state: "available", reason: null },
-        routeFileState: { source: "olla-routes", state: "partial", reason: "rejected route observation(s): oversize_label" },
+        routeFileState: { source: "olla-routes", state: "partial", reason: "rejected route observation(s): oversize_label, privacy" },
       },
       { window: "1d", sinceMs: 0, collectedAt: "2026-09-22T14:05:01.000Z", promptOriginHost: null },
     );
     expect(result.sources.filter((source) => source.source === "olla-routes")).toEqual([
-      { source: "olla-routes", state: "partial", reason: "rejected route observation(s): oversize_label" },
+      { source: "olla-routes", state: "partial", reason: "rejected route observation(s): invalid_key, missing_endpoint, oversize_label, privacy" },
     ]);
   });
 
