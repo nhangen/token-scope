@@ -592,6 +592,26 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     });
   }
 
+  it("retains route rejection reasons through Olla collection and preserves valid routes", async () => {
+    const routesPath = join(temp, "routes-label-rejections.json");
+    const valid = JSON.parse(readFileSync(join(FLEET_FX, "olla-routes.json"), "utf8"));
+    const secret = `ghp_${"a".repeat(36)}`;
+    writeFileSync(routesPath, JSON.stringify([...valid, { requestId: "x".repeat(257) }, { requestId: secret }, null]));
+    for (const json of [true, false]) {
+      const result = await runFleet({ routesPath, json });
+      expect(result.code).toBe(0);
+      if (!json) expect(result.out).toContain("rejected route observation(s): oversize_label, privacy");
+      expect(result.out).not.toContain(secret);
+      expect(result.out).not.toContain("x".repeat(257));
+      if (json) {
+        const report = JSON.parse(result.out);
+        expect(report.rows.length).toBeGreaterThan(0);
+        expect(report.sources.find((source: any) => source.source === "olla-routes")).toMatchObject({ state: "partial", reason: "rejected route observation(s): oversize_label, privacy" });
+        expect(report.rows.find((row: any) => row.run_id === "ollama-agent:author%3A91")).toMatchObject({ router_host: "127.0.0.1", backend_host: "ml1", backend: "vllm" });
+      }
+    }
+  });
+
   it("ignores TOKEN_SCOPE_OLLA_ROUTES when Olla is not configured", async () => {
     const result = await runFleet({ routesPath: join(temp, "no-such-routes.json"), ollaUrl: null });
     expect(result.code).toBe(0);

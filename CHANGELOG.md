@@ -7,6 +7,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Oversize and control-character labels are no longer reported as credential redactions.** `--spend --json` adds `label_rejections` and `--providers --json` adds `labelRejections`, each with separate `privacy` and `oversize_label` counts; `redacted_labels` / `redactedLabels` totals are unchanged and the text footers name each reason. A route file with rejected labels now reports the `olla-routes` source as `rejected route observation(s): <reasons>`. This refines the 1.6.0 note that only a `PrivacyError` becomes a redaction. (#188)
+
 ## [1.6.0] — 2026-10-15
 
 ### Changed

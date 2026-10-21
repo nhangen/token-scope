@@ -31,6 +31,24 @@ describe("fleet schema v1 contract", () => {
   const usage = parsedUsage;
   const snapshot = parsedSnapshot;
 
+  it("preserves v1 fallback values for oversize labels without losing usage", () => {
+    const label = "x".repeat(257);
+    const record = parseFleetRecord({
+      ...fixture.usage_event, record_id: label, model: label, request_id: `request:${label}`,
+      provenance: { ...fixture.usage_event.provenance, source: label },
+    });
+    expect(record).toMatchObject({ model: null, request_id: null, status: "incomplete", provenance: { source: "unknown", completeness: "partial" } });
+    expect(record.record_id).toStartWith("record:opaque:");
+    expect(JSON.stringify(record)).not.toContain(label);
+    expect(record.record_type === "usage_event" && record.usage).toEqual(fixture.usage_event.usage);
+    const snapshot = parseFleetRecord({
+      ...fixture.operational_snapshot, process_id: `process:${label}`,
+      counters: { safe: 2, [label]: 1 },
+    });
+    expect(snapshot).toMatchObject({ process_id: null, status: "partial", counters: { safe: 2 } });
+    expect(JSON.stringify(snapshot)).not.toContain(label);
+  });
+
   it("distinguishes a request event from an aggregate snapshot", () => {
     expect(FLEET_SCHEMA_VERSION).toBe("1.0");
     expect(usage.record_type).toBe("usage_event");

@@ -412,6 +412,7 @@ describe("provider report", () => {
     partialClasses: [],
     provenance: ["p.jsonl"],
     redactedLabels: 0,
+    labelRejections: { privacy: 0, oversize_label: 0 },
   };
 
   it("marks measured false when source coverage is incomplete", () => {
@@ -703,7 +704,7 @@ describe("dedup + report", () => {
 
   it("renders nulls as em-dashes and lists unavailable sources", () => {
     const out = renderProviderReport(
-      [{ harness: "x", billingRoute: "local", model: "m", events: 1, input: 5, output: null, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, malformedEvents: 0, partialEvents: 0, legacyCumulativeEvents: 0, cashUsd: null, partialClasses: [], provenance: ["a.jsonl"], redactedLabels: 0 }],
+      [{ harness: "x", billingRoute: "local", model: "m", events: 1, input: 5, output: null, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, malformedEvents: 0, partialEvents: 0, legacyCumulativeEvents: 0, cashUsd: null, partialClasses: [], provenance: ["a.jsonl"], redactedLabels: 0, labelRejections: { privacy: 0, oversize_label: 0 } }],
       ["opencode"],
     );
     expect(out).toContain("—");
@@ -739,7 +740,7 @@ describe("dedup + report", () => {
 
   it("sum() treats genuine zero as measured and all-null as unknown (#38 panel)", () => {
     const rows = renderProviderReport(
-      [{ harness: "x", billingRoute: "local", model: "m", events: 2, input: 7, output: 0, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, malformedEvents: 0, partialEvents: 0, legacyCumulativeEvents: 0, cashUsd: null, partialClasses: ["output"], provenance: ["a"], redactedLabels: 0 }],
+      [{ harness: "x", billingRoute: "local", model: "m", events: 2, input: 7, output: 0, cacheRead: null, cacheWrite: null, reasoning: null, retries: 0, malformedEvents: 0, partialEvents: 0, legacyCumulativeEvents: 0, cashUsd: null, partialClasses: ["output"], provenance: ["a"], redactedLabels: 0, labelRejections: { privacy: 0, oversize_label: 0 } }],
       [],
     );
     expect(rows).toContain("  0  "); // zero renders as 0, not an em-dash
@@ -1266,5 +1267,31 @@ describe("credential-shaped labels in provider reports (#126)", () => {
 
   it("does not turn a non-privacy error into a redaction", () => {
     expect(() => providerRows(collect([ev({ model: 42 })]))).toThrow(TypeError);
+  });
+});
+
+
+describe("provider label rejection reasons", () => {
+  it("counts mixed rejections after redacted groups merge without changing usage", () => {
+    const events = claudeEventsFromTranscript(readFileSync(join(FX, "claude-sample.jsonl"), "utf8"), "sample.jsonl");
+    const template = events[0]!;
+    const secret = `ghp_${"a".repeat(36)}`;
+    const collected = { events: [
+      { ...template, modelProvider: "p".repeat(257), model: secret },
+      { ...template, modelProvider: secret, model: "m\nname" },
+    ], unavailable: [], partial: {} };
+    const rows = providerRows(collected);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.events).toBe(2);
+    expect(rows[0]!.redactedLabels).toBe(4);
+    expect(rows[0]!.labelRejections).toEqual({ privacy: 2, oversize_label: 2 });
+    expect(rows[0]!.output).toBe(template.outputTokens! * 2);
+    const json = providerReportJson(rows, []);
+    expect(json.labelRejections).toEqual({ privacy: 2, oversize_label: 2 });
+    expect(JSON.stringify(json)).not.toContain(secret);
+    const text = renderProviderReport(rows, []);
+    expect(text).toContain("2 event label(s) redacted: credential-shaped source values withheld");
+    expect(text).toContain("2 event label(s) redacted: oversize_label");
+    expect(text).not.toContain(secret);
   });
 });
