@@ -139,11 +139,11 @@ describe("fleet report contract rejections", () => {
     expect(result.sources).toContainEqual({
       source: "olla-routes",
       state: "partial",
-      reason: "rejected route observation(s)",
+      reason: "rejected route observation(s): missing_endpoint",
     });
   });
 
-  it("keeps the route-file rejection reason when observedRoutes also reject", () => {
+  it("merges the distinct observed-route rejection reasons into the route-file rejection reason", () => {
     const result = fleetReportJson(
       {
         providers: { events: [event({ eventId: "claude:d1" })], unavailable: [], partial: {} },
@@ -154,15 +154,15 @@ describe("fleet report contract rejections", () => {
           sources: [{ path: "/internal/status", state: "available", reason: null, errorClass: null, provenance: { source: "/internal/status", locator: "http://router.local", collected_at: "2026-09-22T14:05:01.000Z", completeness: "complete" } }],
           endpointChanges: { disappeared: null },
           observedRoutes: [],
-          rejectedRoutes: [{ reason: "missing_endpoint" }],
+          rejectedRoutes: [{ reason: "missing_endpoint" }, { reason: "invalid_key" }, { reason: "missing_endpoint" }],
         },
         ollaState: { source: "olla", state: "available", reason: null },
-        routeFileState: { source: "olla-routes", state: "partial", reason: "rejected route observation(s): oversize_label" },
+        routeFileState: { source: "olla-routes", state: "partial", reason: "rejected route observation(s): oversize_label, privacy" },
       },
       { window: "1d", sinceMs: 0, collectedAt: "2026-09-22T14:05:01.000Z", promptOriginHost: null },
     );
     expect(result.sources.filter((source) => source.source === "olla-routes")).toEqual([
-      { source: "olla-routes", state: "partial", reason: "rejected route observation(s): oversize_label" },
+      { source: "olla-routes", state: "partial", reason: "rejected route observation(s): invalid_key, missing_endpoint, oversize_label, privacy" },
     ]);
   });
 
@@ -188,8 +188,62 @@ describe("fleet report contract rejections", () => {
     const routes = result.sources.filter((source) => source.source === "olla-routes");
     expect(routes).toEqual([
       { source: "olla-routes", state: "unavailable", reason: "TOKEN_SCOPE_OLLA_ROUTES is unreadable or not JSON" },
-      { source: "olla-routes", state: "partial", reason: "rejected route observation(s)" },
+      { source: "olla-routes", state: "partial", reason: "rejected route observation(s): missing_endpoint" },
     ]);
+  });
+
+  function ollaRoutesSources(
+    rejectedReasons: Array<"malformed_timestamp" | "invalid_key" | "missing_endpoint">,
+    routeFileState?: { source: "olla-routes"; state: "partial" | "unavailable"; reason: string | null },
+  ) {
+    const result = fleetReportJson(
+      {
+        providers: { events: [event({ eventId: "claude:d1" })], unavailable: [], partial: {} },
+        orca: { records: [], metadata: {}, hosts: {}, sources: [], runtime: { id: null, version: null } },
+        olla: {
+          snapshots: [],
+          metadata: {},
+          sources: [{ path: "/internal/status", state: "available", reason: null, errorClass: null, provenance: { source: "/internal/status", locator: "http://router.local", collected_at: "2026-09-22T14:05:01.000Z", completeness: "complete" } }],
+          endpointChanges: { disappeared: null },
+          observedRoutes: [],
+          rejectedRoutes: rejectedReasons.map((reason) => ({ reason })),
+        },
+        ollaState: { source: "olla", state: "available", reason: null },
+        ...(routeFileState ? { routeFileState } : {}),
+      },
+      { window: "1d", sinceMs: 0, collectedAt: "2026-09-22T14:05:01.000Z", promptOriginHost: null },
+    );
+    return result.sources.filter((source) => source.source === "olla-routes");
+  }
+
+  it("merges all observed-route kinds into the partial state kept beside an unavailable route file", () => {
+    expect(
+      ollaRoutesSources(["malformed_timestamp", "invalid_key"], { source: "olla-routes", state: "unavailable", reason: "route file unreadable" }),
+    ).toEqual([
+      { source: "olla-routes", state: "unavailable", reason: "route file unreadable" },
+      { source: "olla-routes", state: "partial", reason: "rejected route observation(s): invalid_key, malformed_timestamp" },
+    ]);
+  });
+
+  it("surfaces malformed_timestamp alongside the other observed-route rejection kinds", () => {
+    expect(ollaRoutesSources(["malformed_timestamp", "invalid_key"])).toEqual([
+      { source: "olla-routes", state: "partial", reason: "rejected route observation(s): invalid_key, malformed_timestamp" },
+    ]);
+  });
+
+  it("collapses a reason shared by the route-file label reasons and the observed-route rejections", () => {
+    expect(
+      ollaRoutesSources(["invalid_key"], { source: "olla-routes", state: "partial", reason: "rejected route observation(s): invalid_key, privacy" }),
+    ).toEqual([{ source: "olla-routes", state: "partial", reason: "rejected route observation(s): invalid_key, privacy" }]);
+  });
+
+  it("merges observed-route rejections into a partial route file whose reason carries no labels", () => {
+    expect(
+      ollaRoutesSources(["missing_endpoint"], { source: "olla-routes", state: "partial", reason: "rejected route observation(s)" }),
+    ).toEqual([{ source: "olla-routes", state: "partial", reason: "rejected route observation(s): missing_endpoint" }]);
+    expect(
+      ollaRoutesSources(["missing_endpoint"], { source: "olla-routes", state: "partial", reason: null }),
+    ).toEqual([{ source: "olla-routes", state: "partial", reason: "rejected route observation(s): missing_endpoint" }]);
   });
 
   it("surfaces token-shaped promptOriginHost as prompt-origin partial privacy source while keeping rows ok", () => {

@@ -752,7 +752,7 @@ describe("--fleet degrades bad input to partial instead of failing", () => {
     expect(report.sources).toContainEqual({
       source: "olla-routes",
       state: "partial",
-      reason: "rejected route observation(s)",
+      reason: "rejected route observation(s): missing_endpoint",
     });
   });
 });

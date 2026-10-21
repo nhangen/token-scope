@@ -95,11 +95,19 @@ interface FleetCollections {
 }
 
 const ORCA_MAX_AGE_MS = 5 * 60_000;
+const OLLA_ROUTES_REASON = "rejected route observation(s)";
 const OLLA_ROUTES_PARTIAL: FleetSourceState = {
   source: "olla-routes",
   state: "partial",
-  reason: "rejected route observation(s)",
+  reason: OLLA_ROUTES_REASON,
 };
+
+function ollaRoutesReason(reasons: Iterable<string>): string {
+  const distinct = new Set(reasons);
+  return distinct.size > 0
+    ? `${OLLA_ROUTES_REASON}: ${[...distinct].sort().join(", ")}`
+    : OLLA_ROUTES_REASON;
+}
 
 function canonicalTimestamp(value: string | null): string | null {
   if (value === null) return null;
@@ -300,9 +308,23 @@ function sourceStates(
   if (collections.olla && collections.olla.rejectedRoutes.length > 0) {
     if (ollaRoutesState !== null && ollaRoutesState.state === "unavailable") {
       states.push(ollaRoutesState);
-      ollaRoutesState = OLLA_ROUTES_PARTIAL;
+      ollaRoutesState = {
+        ...OLLA_ROUTES_PARTIAL,
+        reason: ollaRoutesReason(collections.olla.rejectedRoutes.map((rejected) => rejected.reason)),
+      };
     } else {
-      ollaRoutesState ??= OLLA_ROUTES_PARTIAL;
+      const labelPrefix = `${OLLA_ROUTES_REASON}: `;
+      const labelReasons: string[] = [];
+      if (ollaRoutesState?.state === "partial" && ollaRoutesState.reason?.startsWith(labelPrefix)) {
+        labelReasons.push(...ollaRoutesState.reason.slice(labelPrefix.length).split(", "));
+      }
+      ollaRoutesState = {
+        ...OLLA_ROUTES_PARTIAL,
+        reason: ollaRoutesReason([
+          ...labelReasons,
+          ...collections.olla.rejectedRoutes.map((rejected) => rejected.reason),
+        ]),
+      };
     }
   }
   if (ollaRoutesState) states.push(ollaRoutesState);
@@ -476,12 +498,7 @@ function readOllaRoutes(path: string | undefined): OllaRoutesRead {
   return {
     routes,
     partial,
-    state: partial ? {
-      ...OLLA_ROUTES_PARTIAL,
-      reason: labelReasons.size > 0
-        ? `${OLLA_ROUTES_PARTIAL.reason}: ${[...labelReasons].sort().join(", ")}`
-        : OLLA_ROUTES_PARTIAL.reason,
-    } : null,
+    state: partial ? { ...OLLA_ROUTES_PARTIAL, reason: ollaRoutesReason(labelReasons) } : null,
   };
 }
 
