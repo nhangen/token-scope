@@ -132,6 +132,25 @@ describe("credential-shaped model labels in spend reports (#144)", () => {
     });
   }
 
+  it("reports both rejection reasons and both footers when a session mixes them", () => {
+    const mixed = new Proxy(reader, {
+      get(target, property, receiver) {
+        if (property === "querySessionTurns") {
+          return (sessionId: string) => target.querySessionTurns(sessionId).map((turn, index) =>
+            sessionId === "sess-spend" && index < 2 ? { ...turn, model: index === 0 ? SECRET_MODEL : "m".repeat(257) } : turn,
+          );
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const json = JSON.parse(capture(() => renderSpendReport(mixed, { ...base, sessionId: "sess-spend" })));
+    expect(json.label_rejections).toEqual({ privacy: 1, oversize_label: 1 });
+    expect(json.redacted_labels).toBe(2);
+    const text = capture(() => renderSpendReport(mixed, { ...base, sessionId: "sess-spend", json: false }));
+    expect(text.indexOf("1 model label(s) redacted: oversize_label")).toBeGreaterThan(-1);
+    expect(text.indexOf("1 model label(s) redacted: oversize_label")).toBeLessThan(text.indexOf("1 model label(s) redacted: credential-shaped"));
+  });
+
   it("preserves null model labels without counting them as redactions", () => {
     const out = capture(() => renderSpendReport(
       readerWithModelOverride(null),

@@ -92,12 +92,11 @@ export function renderSpendReport(reader: Reader, opts: SpendOptions): void {
   }
 
   const displayTurns = selected.map((x) => ({ ...x, model: screenModel(x.t.model) }));
-  const redactedLabels = displayTurns.reduce((sum, x) => sum + Number(x.model.redacted), 0);
-
-  const labelRejections = {
-    privacy: displayTurns.filter((x) => x.model.reason === "privacy").length,
-    oversize_label: displayTurns.filter((x) => x.model.reason === "oversize_label").length,
-  };
+  const labelRejections = { privacy: 0, oversize_label: 0 };
+  for (const x of displayTurns) {
+    if (x.model.reason) labelRejections[x.model.reason] += 1;
+  }
+  const redactedLabels = labelRejections.privacy + labelRejections.oversize_label;
 
   const directTurns = selected.map((x) => x.t);
   const direct = sumTurns(directTurns);
