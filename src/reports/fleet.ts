@@ -299,7 +299,7 @@ function sourceStates(
   let ollaRoutesState = collections.routeFileState ?? null;
   if (collections.olla && collections.olla.rejectedRoutes.length > 0) {
     if (ollaRoutesState === null || ollaRoutesState.state !== "unavailable") {
-      ollaRoutesState = OLLA_ROUTES_PARTIAL;
+      ollaRoutesState ??= OLLA_ROUTES_PARTIAL;
     }
   }
   if (ollaRoutesState) states.push(ollaRoutesState);
@@ -442,6 +442,7 @@ function readOllaRoutes(path: string | undefined): OllaRoutesRead {
   }
   if (!Array.isArray(value)) return unavailable("TOKEN_SCOPE_OLLA_ROUTES must contain a JSON array");
   let partial = false;
+  const labelReasons = new Set<string>();
   const routes: OllaRouteObservation[] = [];
   for (const item of value as unknown[]) {
     if (typeof item !== "object" || item === null || Array.isArray(item)) {
@@ -460,7 +461,9 @@ function readOllaRoutes(path: string | undefined): OllaRoutesRead {
       }
       routes.push(item as OllaRouteObservation);
     } catch (error) {
-      if (error instanceof PrivacyError) {
+      const reason = labelRejectionReason(error);
+      if (reason) {
+        labelReasons.add(reason);
         partial = true;
         continue;
       }
@@ -470,7 +473,12 @@ function readOllaRoutes(path: string | undefined): OllaRoutesRead {
   return {
     routes,
     partial,
-    state: partial ? OLLA_ROUTES_PARTIAL : null,
+    state: partial ? {
+      ...OLLA_ROUTES_PARTIAL,
+      reason: labelReasons.size > 0
+        ? `${OLLA_ROUTES_PARTIAL.reason}: ${[...labelReasons].sort().join(", ")}`
+        : OLLA_ROUTES_PARTIAL.reason,
+    } : null,
   };
 }
 

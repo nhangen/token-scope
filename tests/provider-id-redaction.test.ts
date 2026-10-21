@@ -63,3 +63,16 @@ describe("credential-shaped provider ids mark the event partial", () => {
     expect(events[0]!.partial).toContain("privacy-redaction");
   });
 });
+
+
+it("keeps oversize provider identities null and usage partial", () => {
+  const label = "x".repeat(257);
+  const events = claudeEventsFromTranscript(JSON.stringify({
+    type: "assistant", sessionId: label, timestamp: "2026-09-22T14:02:00.000Z",
+    message: { id: label, model: "claude-opus-4-8", usage: { input_tokens: 1, output_tokens: 1 } },
+  }), "session.jsonl");
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({ sessionId: null, requestId: null, inputTokens: 1, outputTokens: 1 });
+  expect(events[0]!.partial).toContain("privacy-redaction");
+  expect(JSON.stringify(events)).not.toContain(label);
+});

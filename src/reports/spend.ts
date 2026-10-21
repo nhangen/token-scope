@@ -4,19 +4,18 @@ import {
   formatTokens, formatUsd, formatTimestamp, truncate, dim, bold,
 } from "@/format";
 import { VERSION } from "@/version";
-import { assertSafeLabelValue, PrivacyError } from "@/fleet-contract";
+import { assertSafeLabelValue, labelRejectionReason } from "@/fleet-contract";
 
 const REDACTED = "[redacted]";
 
-/** Keep credential-shaped model labels out of reports; only the contract's
- * explicit privacy rejection becomes a redaction. Other errors still surface. */
-function screenModel(value: string | null): { value: string | null; redacted: boolean } {
+function screenModel(value: string | null): { value: string | null; redacted: boolean; reason?: "privacy" | "oversize_label" } {
   if (value === null) return { value: null, redacted: false };
   try {
     assertSafeLabelValue(value);
     return { value, redacted: false };
   } catch (e) {
-    if (e instanceof PrivacyError) return { value: REDACTED, redacted: true };
+    const reason = labelRejectionReason(e);
+    if (reason) return { value: REDACTED, redacted: true, reason };
     throw e;
   }
 }
@@ -95,6 +94,11 @@ export function renderSpendReport(reader: Reader, opts: SpendOptions): void {
   const displayTurns = selected.map((x) => ({ ...x, model: screenModel(x.t.model) }));
   const redactedLabels = displayTurns.reduce((sum, x) => sum + Number(x.model.redacted), 0);
 
+  const labelRejections = {
+    privacy: displayTurns.filter((x) => x.model.reason === "privacy").length,
+    oversize_label: displayTurns.filter((x) => x.model.reason === "oversize_label").length,
+  };
+
   const directTurns = selected.map((x) => x.t);
   const direct = sumTurns(directTurns);
 
@@ -142,6 +146,7 @@ export function renderSpendReport(reader: Reader, opts: SpendOptions): void {
       since_floor_applied: sinceFloorApplied,
       agent_filter: opts.agentId ?? null,
       redacted_labels: redactedLabels,
+      label_rejections: labelRejections,
       turns: displayTurns.map((x) => ({
         turn: x.turnNo, timestamp: x.t.timestamp, model: x.model.value,
         output: x.t.outputTokens, input: x.t.inputTokens,
@@ -233,8 +238,11 @@ export function renderSpendReport(reader: Reader, opts: SpendOptions): void {
   if (combined.costPartial) {
     console.log(renderFootnote("Some turns used a model with no known pricing; their tokens are counted but cost is excluded."));
   }
-  if (redactedLabels > 0) {
-    console.log(renderFootnote(`${redactedLabels} model label(s) redacted: credential-shaped source values withheld`));
+  if (labelRejections.oversize_label > 0) {
+    console.log(renderFootnote(`${labelRejections.oversize_label} model label(s) redacted: oversize_label (length or control characters)`));
+  }
+  if (labelRejections.privacy > 0) {
+    console.log(renderFootnote(`${labelRejections.privacy} model label(s) redacted: credential-shaped source values withheld`));
   }
   console.log(renderFootnote("Cost is Claude billed spend. Local (ollama) authoring runs off-transcript and is not counted here."));
   console.log("");

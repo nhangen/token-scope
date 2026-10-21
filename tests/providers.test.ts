@@ -1268,3 +1268,29 @@ describe("credential-shaped labels in provider reports (#126)", () => {
     expect(() => providerRows(collect([ev({ model: 42 })]))).toThrow(TypeError);
   });
 });
+
+
+describe("provider label rejection reasons", () => {
+  it("counts mixed rejections after redacted groups merge without changing usage", () => {
+    const events = claudeEventsFromTranscript(readFileSync(join(FX, "claude-sample.jsonl"), "utf8"), "sample.jsonl");
+    const template = events[0]!;
+    const secret = `ghp_${"a".repeat(36)}`;
+    const collected = { events: [
+      { ...template, modelProvider: "p".repeat(257), model: secret },
+      { ...template, modelProvider: secret, model: "m\nname" },
+    ], unavailable: [], partial: {} };
+    const rows = providerRows(collected);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.events).toBe(2);
+    expect(rows[0]!.redactedLabels).toBe(4);
+    expect(rows[0]!.labelRejections).toEqual({ privacy: 2, oversize_label: 2 });
+    expect(rows[0]!.output).toBe(template.outputTokens! * 2);
+    const json = providerReportJson(rows, []);
+    expect(json.labelRejections).toEqual({ privacy: 2, oversize_label: 2 });
+    expect(JSON.stringify(json)).not.toContain(secret);
+    const text = renderProviderReport(rows, []);
+    expect(text).toContain("2 event label(s) redacted: credential-shaped source values withheld");
+    expect(text).toContain("2 event label(s) redacted: oversize_label");
+    expect(text).not.toContain(secret);
+  });
+});
