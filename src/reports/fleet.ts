@@ -309,8 +309,7 @@ function sourceStates(
     if (ollaRoutesState !== null && ollaRoutesState.state === "unavailable") {
       states.push(ollaRoutesState);
       ollaRoutesState = {
-        source: OLLA_ROUTES_PARTIAL.source,
-        state: "partial",
+        ...OLLA_ROUTES_PARTIAL,
         reason: ollaRoutesReason(collections.olla.rejectedRoutes.map((rejected) => rejected.reason)),
       };
     } else {
@@ -320,8 +319,7 @@ function sourceStates(
         labelReasons.push(...ollaRoutesState.reason.slice(labelPrefix.length).split(", "));
       }
       ollaRoutesState = {
-        source: OLLA_ROUTES_PARTIAL.source,
-        state: "partial",
+        ...OLLA_ROUTES_PARTIAL,
         reason: ollaRoutesReason([
           ...labelReasons,
           ...collections.olla.rejectedRoutes.map((rejected) => rejected.reason),
